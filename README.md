@@ -10,6 +10,13 @@ it pastes.
 - the first run downloads a speech model; after that nothing leaves your machine
 - experimental features live in Labs, at the bottom of the sidebar
 
+## Personal fork additions
+
+| Feature | What it does | Where to find it |
+| --- | --- | --- |
+| Wrap code terms in backticks | Terms you mark as code paste wrapped in backticks, so dictated code words land ready formatted. The Try preview shows the same result a dictation would paste. | Vocabulary sheet: the per-row `Wrap in backticks` switch, plus the sheet-level `Wrap code terms in backticks` switch |
+| Paste where dictation started (Windows) | When enabled, Hex remembers the window you were in when you pressed the shortcut. Even if you alt-tab away mid-dictation, it returns there to paste. Paste Last still pastes into the window you are in now. | General pane, in the basics card beside the microphone rows |
+
 ## Downloads
 
 Stable is the current release. Dev is the newest build of `dev` and updates
