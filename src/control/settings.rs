@@ -275,6 +275,11 @@ const KEYS: &[Key] = &[
         "Wrap a vocabulary term marked code in backticks",
     ),
     key(
+        "dictation_processing.paste_to_start_window",
+        Kind::Bool,
+        "Paste into the window where the dictation started",
+    ),
+    key(
         "history_retention",
         Kind::Choice(&["off", "day", "week", "month", "forever"]),
         "How long dictation history is kept",

@@ -2708,6 +2708,24 @@ mod tests {
     }
 
     #[test]
+    fn paste_to_start_window_defaults_on_and_round_trips() {
+        let legacy: AppSettings = serde_json::from_str("{}").unwrap();
+        assert!(legacy.dictation_processing.paste_to_start_window);
+
+        let mut settings = AppSettings::default();
+        settings.dictation_processing.paste_to_start_window = false;
+        let decoded: AppSettings =
+            serde_json::from_str(&serde_json::to_string(&settings).unwrap()).unwrap();
+        assert!(!decoded.dictation_processing.paste_to_start_window);
+
+        // A file written before the switch existed keeps it on.
+        let old: AppSettings =
+            serde_json::from_str(r#"{"dictation_processing":{"wrap_code_terms":true}}"#).unwrap();
+        assert!(old.dictation_processing.paste_to_start_window);
+        assert!(old.dictation_processing.wrap_code_terms);
+    }
+
+    #[test]
     fn modifier_sides_round_trip_and_legacy_booleans_decode_as_either() {
         let settings = AppSettings {
             dictation_hotkey: HotkeyBinding {

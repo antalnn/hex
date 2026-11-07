@@ -6,6 +6,7 @@ pub(crate) mod gpu_fallback;
 pub(crate) mod input;
 pub(crate) mod login_item;
 pub(crate) mod paste;
+pub(crate) mod paste_target;
 pub(crate) mod rune;
 pub(crate) mod vulkan;
 
