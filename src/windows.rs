@@ -6,6 +6,7 @@ pub(crate) mod gpu_fallback;
 pub(crate) mod input;
 pub(crate) mod login_item;
 pub(crate) mod paste;
+pub(crate) mod paste_target;
 pub(crate) mod rune;
 pub(crate) mod vulkan;
 
@@ -554,6 +555,19 @@ fn fail_capture(events: &EventLog, device: &str, error: &str) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn vocabulary_add_parses_the_code_flag() {
+        use clap::Parser;
+        let cli = Cli::try_parse_from(["hex", "vocabulary", "add", "useState", "--code"])
+            .expect("the flag parses");
+        match cli.command {
+            Some(Command::Control(crate::control::cli::ControlCli::Vocabulary {
+                command: crate::control::cli::VocabularyCommand::Add { code, .. },
+            })) => assert!(code),
+            _ => panic!("expected vocabulary add"),
+        }
+    }
 
     #[test]
     fn polish_selection_uses_the_multilingual_parakeet_model() {

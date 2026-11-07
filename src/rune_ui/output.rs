@@ -18,7 +18,7 @@ use super::modes::{application_icon, monogram};
 use super::spark::{Spark, spark};
 use super::{ShortcutTarget, Ui};
 use crate::app_settings::DictationMode;
-use crate::desktop::i18n::{tr, tr_fill};
+use crate::desktop::i18n::{tr, tr_fill, tr_named};
 use crate::dictation::text_replacements::ReplacementSet;
 
 mod examples;
@@ -93,12 +93,55 @@ struct Step {
     title: String,
     detail: Option<String>,
     runner: Runner,
+    action: Option<StepAction>,
 }
 
-/// A mode's steps in the order they run: the names it hears, its
-/// corrections, OpenCode rewriting when it is on, then its transformations.
+/// A step's button, for the steps changed somewhere else.
+#[derive(Clone, Copy, PartialEq)]
+enum StepAction {
+    /// Opens General › Vocabulary, where terms and their spellings live.
+    Vocabulary,
+}
+
+/// A mode's steps in the order they run: the vocabulary, its own names and
+/// swaps, OpenCode rewriting when it is on, then its transformations.
 fn steps(ui: &Ui, mode: &DictationMode) -> Vec<Step> {
     let mut steps = Vec::new();
+    // The shared vocabulary corrects every dictation: each "sounds like"
+    // spelling becomes its term. The pane leads to where terms are added, so
+    // the list itself is never printed here.
+    let shared = crate::dictation::vocabulary::entries();
+    if !shared.is_empty() {
+        let heard = shared
+            .iter()
+            .filter(|entry| !entry.sounds_like.is_empty())
+            .count();
+        let code = shared.iter().filter(|entry| entry.code).count();
+        let detail = if code > 0 {
+            tr_named(
+                "{terms} terms · {heard} heard as other words · {code} code",
+                &[
+                    ("terms", &shared.len().to_string()),
+                    ("heard", &heard.to_string()),
+                    ("code", &code.to_string()),
+                ],
+            )
+        } else {
+            tr_named(
+                "{terms} terms · {heard} heard as other words",
+                &[
+                    ("terms", &shared.len().to_string()),
+                    ("heard", &heard.to_string()),
+                ],
+            )
+        };
+        steps.push(Step {
+            title: tr("Vocabulary").into(),
+            detail: Some(detail),
+            runner: Runner::BuiltIn,
+            action: Some(StepAction::Vocabulary),
+        });
+    }
     if !mode.vocabulary.is_empty() {
         let terms = mode
             .vocabulary
@@ -107,9 +150,10 @@ fn steps(ui: &Ui, mode: &DictationMode) -> Vec<Step> {
             .collect::<Vec<_>>()
             .join(" · ");
         steps.push(Step {
-            title: tr("Vocabulary").into(),
+            title: tr("This mode's terms").into(),
             detail: Some(terms),
             runner: Runner::BuiltIn,
+            action: None,
         });
     }
     if !mode.replacements.is_empty() {
@@ -128,9 +172,10 @@ fn steps(ui: &Ui, mode: &DictationMode) -> Vec<Step> {
             .collect::<Vec<_>>()
             .join(" · ");
         steps.push(Step {
-            title: tr("Replace words").into(),
+            title: tr("Custom swaps").into(),
             detail: (!pairs.is_empty()).then_some(pairs),
             runner: Runner::BuiltIn,
+            action: None,
         });
     }
     if mode.post_processing.enabled {
@@ -138,6 +183,7 @@ fn steps(ui: &Ui, mode: &DictationMode) -> Vec<Step> {
             title: tr("Rewrite with OpenCode").into(),
             detail: mode.post_processing.model.clone(),
             runner: Runner::Rewrite,
+            action: None,
         });
     }
     for id in &mode.transformations {
@@ -146,6 +192,7 @@ fn steps(ui: &Ui, mode: &DictationMode) -> Vec<Step> {
                 title: title.into(),
                 detail: Some(detail.into()),
                 runner: Runner::BuiltIn,
+                action: None,
             },
             None => {
                 let script = ui
@@ -158,6 +205,7 @@ fn steps(ui: &Ui, mode: &DictationMode) -> Vec<Step> {
                     title: script.map_or_else(|| id.clone(), |script| script.name.clone()),
                     detail: script.and_then(|script| script.description.clone()),
                     runner: Runner::Script,
+                    action: None,
                 }
             }
         });
@@ -177,12 +225,26 @@ fn builtin(id: &str) -> Option<(&'static str, &'static str)> {
 
 /// The Try field's sentence after every dictation's corrections and
 /// built-in steps. Scripts and rewriting run only when dictating.
-fn preview(mode: &DictationMode, input: &str) -> String {
-    let mut output = ReplacementSet::new(&mode.replacements).replace(input);
+fn preview(mode: &DictationMode, wrap_code: bool, input: &str) -> String {
+    // The shared vocabulary's spellings, then the mode's own terms and swaps:
+    // the same order the listener applies them in.
+    let mut pairs =
+        crate::dictation::vocabulary::replacements(&crate::dictation::vocabulary::entries());
+    pairs.extend(crate::dictation::vocabulary::replacements(&mode.vocabulary));
+    pairs.extend(mode.replacements.iter().cloned());
+    let mut output = ReplacementSet::new(&pairs).replace(input);
     for id in &mode.transformations {
         if let Some(next) = crate::personal_commands::apply_builtin_transformation(id, &output) {
             output = next;
         }
+    }
+    // After the steps, as the listener does: a case-changing step runs before
+    // the wrap, so the Try field shows the same text a dictation would paste.
+    if wrap_code {
+        output = crate::dictation::vocabulary::wrap_code_terms(
+            &output,
+            &crate::dictation::vocabulary::entries(),
+        );
     }
     output
 }
@@ -194,6 +256,7 @@ pub(super) fn pane(ui: &Ui, p: Paint, reduced: bool) -> El {
     let processing = &ui.settings.dictation_processing;
     let mut content = page("output-content")
         .children(trust_card(ui, p))
+        .children(local_model_card(ui, p))
         .child(agent_card(ui, p, reduced))
         .child(every_dictation(ui, p, &processing.default_mode))
         .child(try_card(ui, p, &processing.default_mode));
@@ -262,6 +325,95 @@ fn agent_card(ui: &Ui, p: Paint, reduced: bool) -> El {
                     .child(edit),
             ),
     )
+}
+
+/// The local model server: whether it answers, and the one control that
+/// starts or stops the process Hex owns. Absent where the build has none.
+#[cfg(target_os = "windows")]
+fn local_model_card(ui: &Ui, p: Paint) -> Option<El> {
+    use crate::desktop::host::DesktopAction;
+    use crate::local_model::State;
+
+    let snapshot = ui.view.as_ref()?.local_model.as_ref()?;
+    let (title, hint) = match snapshot.state {
+        State::Stopped => (
+            tr("Local model server off"),
+            tr("The rewrite calls the cloud"),
+        ),
+        State::Starting => (tr("Local model server starting"), tr("Loading the model")),
+        State::Ready => (tr("Local model server running"), tr("Started by Hex")),
+        State::External => (
+            tr("Local model server running"),
+            tr("Started outside Hex and left running"),
+        ),
+        State::Failed => (tr("Local model server failed"), tr("See the message below")),
+    };
+    let port = format!("127.0.0.1:{}", ui.settings.llm.port);
+    let detail = match &snapshot.detail {
+        Some(detail) => format!("{port} · {detail}"),
+        None => port,
+    };
+    let control = match snapshot.state {
+        State::Stopped | State::Failed => Some(button(
+            p,
+            "local-model-start",
+            tr("Start server"),
+            ButtonKind::Secondary,
+            |ui: &mut Ui, _: &mut Tx| {
+                ui.send(crate::windows::rune::Request::Desktop(
+                    DesktopAction::StartLocalModel,
+                ));
+            },
+        )),
+        State::Ready => Some(button(
+            p,
+            "local-model-stop",
+            tr("Stop server"),
+            ButtonKind::Secondary,
+            |ui: &mut Ui, _: &mut Tx| {
+                ui.send(crate::windows::rune::Request::Desktop(
+                    DesktopAction::StopLocalModel,
+                ));
+            },
+        )),
+        State::Starting | State::External => None,
+    };
+    let row = row()
+        .key("local-model-row")
+        .min_h(METRICS.row_h_described)
+        .px(METRICS.row_px)
+        .py(8.0)
+        .gap(12.0)
+        .center_y()
+        .label(hint)
+        .child(
+            col()
+                .key("copy")
+                .grow(1.0)
+                .shrink()
+                .gap(2.0)
+                .child(text(title).key("title").font(p.k.ty.ui).color(p.text()))
+                .child(
+                    text(detail)
+                        .key("detail")
+                        .font(DESCRIPTION)
+                        .color(p.muted())
+                        .wrap(),
+                ),
+        )
+        .children(control);
+    Some(labeled(
+        p,
+        "local-model",
+        tr("Local model"),
+        hint,
+        vec![row.into()],
+    ))
+}
+
+#[cfg(not(target_os = "windows"))]
+fn local_model_card(_: &Ui, _: Paint) -> Option<El> {
+    None
 }
 
 /// The trust prompt: the config can reach the network or run programs, and
@@ -452,6 +604,18 @@ fn step_row(p: Paint, key: &str, index: usize, step: &Step) -> El {
                 })),
         )
         .child(tag)
+        .children(step.action.map(|action| match action {
+            StepAction::Vocabulary => button(
+                p,
+                "add-words",
+                tr("Add words"),
+                ButtonKind::Secondary,
+                |ui: &mut Ui, _: &mut Tx| {
+                    ui.pane = super::Pane::General;
+                    super::vocabulary::open(ui);
+                },
+            ),
+        }))
 }
 
 /// A sentence in, and what Hex would paste for it out.
@@ -467,7 +631,14 @@ fn try_card(ui: &Ui, p: Paint, mode: &DictationMode) -> El {
     let (result, ink) = if trial.is_empty() {
         (tr("What Hex pastes").to_string(), p.faint())
     } else {
-        (preview(mode, trial), p.text())
+        (
+            preview(
+                mode,
+                ui.settings.dictation_processing.wrap_code_terms,
+                trial,
+            ),
+            p.text(),
+        )
     };
     let result = row()
         .key("try-result")
@@ -695,7 +866,11 @@ fn fix_this(ui: &mut Ui, tx: &mut Tx) {
     if trial.is_empty() {
         return;
     }
-    let result = preview(&ui.settings.dictation_processing.default_mode, &trial);
+    let result = preview(
+        &ui.settings.dictation_processing.default_mode,
+        ui.settings.dictation_processing.wrap_code_terms,
+        &trial,
+    );
     tx.copy(agent_prompt(Some((&trial, &result))));
     ui.output.prompt_copied = true;
     ui.output.fix_copied = Some(trial);
@@ -740,12 +915,16 @@ fn agent_prompt(fix: Option<(&str, &str)>) -> String {
          (run `hex commands init` for its typings; the API, including fetch and \
          node:child_process, is documented at {TRANSFORMS_DOCS}).\n\
          \n\
-         Names Hex should know (people, products, projects) go in a vocabulary, not in \
-         replacements. Hex hears them better and the AI rewrite spells them right. The \
-         shared list covers every app: `hex vocabulary add <term> --sounds-like a,b` \
-         (and `list`, `remove`). A mode can add its own in `vocabulary`, a list of \
-         terms (\"Rune\") or {{\"term\", \"sounds_like\": [...]}} for words it's often \
-         heard as. Use replacements for fixed swaps and deletions, such as a word to an \
+         Names Hex should know (people, products, projects) go in the vocabulary: \
+         `hex vocabulary add <term> --sounds-like a,b [--code]` (and `list`, `remove`). \
+         Each \"sounds like\" spelling is corrected to its term on every dictation, before \
+         the rewrite, so add the words the transcriber gets wrong, not the words it \
+         already hears. The shared list covers every app; a mode can add its own in \
+         `vocabulary`, a list of terms (\"Rune\") or {{\"term\", \"sounds_like\": [...], \
+         \"code\": true}}. A code term is wrapped in backticks when \
+         `dictation_processing.wrap_code_terms` is on: {{\"term\": \"useState\", \
+         \"sounds_like\": [\"use state\"], \"code\": true}} pastes `useState`. Use a \
+         mode's `replacements` only for what a term can't express, such as a word to an \
          emoji or dropping \"um\".\n\
          \n\
          Read the current value with `hex settings get dictation_processing`, then \
@@ -826,7 +1005,44 @@ mod tests {
             ],
             ..DictationMode::default()
         };
-        assert_eq!(preview(&mode, "Open code shipped."), "opencode shipped");
+        assert_eq!(
+            preview(&mode, false, "Open code shipped."),
+            "opencode shipped"
+        );
+    }
+
+    #[test]
+    fn the_preview_wraps_a_code_term_only_when_the_switch_is_on() {
+        use crate::dictation::vocabulary::{VocabularyBoost, VocabularyEntry};
+
+        crate::dictation::vocabulary::apply(
+            &[VocabularyEntry {
+                term: "useState".into(),
+                sounds_like: vec!["use state".into()],
+                code: true,
+            }],
+            VocabularyBoost::Normal,
+        );
+        let mode = DictationMode::default();
+        assert_eq!(
+            preview(&mode, false, "I called use state"),
+            "I called useState"
+        );
+        assert_eq!(
+            preview(&mode, true, "I called use state"),
+            "I called `useState`"
+        );
+        // A case-changing step runs before the wrap, as it does when
+        // dictating, so the switch cannot wrap a term that no longer matches.
+        let lowercase = DictationMode {
+            transformations: vec!["lowercase".into()],
+            ..DictationMode::default()
+        };
+        assert_eq!(
+            preview(&lowercase, true, "I called use state"),
+            "i called usestate"
+        );
+        crate::dictation::vocabulary::apply(&[], VocabularyBoost::Normal);
     }
 
     #[test]

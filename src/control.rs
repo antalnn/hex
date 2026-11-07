@@ -163,6 +163,9 @@ pub enum ControlCommand {
         term: String,
         #[serde(default)]
         sounds_like: Vec<String>,
+        /// Wrap the term in backticks when it replaces a heard spelling.
+        #[serde(default)]
+        code: bool,
     },
     VocabularyRemove {
         term: String,
@@ -922,14 +925,18 @@ pub fn edit_vocabulary(
 ) -> Result<ControlReply, ControlError> {
     let invalid = |message: String| ControlError::new("invalid-value", message);
     match command {
-        ControlCommand::VocabularyAdd { term, sounds_like } => {
+        ControlCommand::VocabularyAdd {
+            term,
+            sounds_like,
+            code,
+        } => {
             let sounds_like: Vec<String> = sounds_like
                 .iter()
                 .flat_map(|spellings| vocabulary::parse_sounds_like(spellings))
                 .collect();
             let existed = vocabulary::contains(list, term);
             Ok(
-                match vocabulary::add(list, term, &sounds_like).map_err(invalid)? {
+                match vocabulary::add(list, term, &sounds_like, *code).map_err(invalid)? {
                     false => ControlReply::unchanged(format!(
                         "“{}” is already in the vocabulary",
                         term.trim()
@@ -1115,6 +1122,7 @@ mod tests {
             ControlCommand::VocabularyAdd {
                 term: "cappuccino".into(),
                 sounds_like: vec!["capuchin".into()],
+                code: false,
             },
             ControlCommand::VocabularyRemove {
                 term: "cappuccino".into(),
@@ -1130,6 +1138,7 @@ mod tests {
             ControlCommand::VocabularyAdd {
                 term: "Rune".into(),
                 sounds_like: vec![],
+                code: false,
             }
         );
     }
@@ -1139,6 +1148,7 @@ mod tests {
         let add = |term: &str, sounds_like: &[&str]| ControlCommand::VocabularyAdd {
             term: term.into(),
             sounds_like: sounds_like.iter().map(|&text| text.into()).collect(),
+            code: false,
         };
         let remove = |term: &str| ControlCommand::VocabularyRemove { term: term.into() };
         let mut list = Vec::new();
@@ -1230,6 +1240,7 @@ mod tests {
                 entries: vec![VocabularyEntry {
                     term: "cappuccino".into(),
                     sounds_like: vec!["capuchin".into()],
+                    code: false,
                 }],
             },
             ControlReply::ScrawlCapture(Box::new(ScrawlCaptureReport {

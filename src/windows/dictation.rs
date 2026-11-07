@@ -55,6 +55,8 @@ struct Job {
     language: String,
     /// The clip, kept for History while Labs › Keep recordings is on.
     recording: Option<crate::history::Recording>,
+    /// The window dictation started in, for the paste to return to.
+    target: Option<crate::windows::paste_target::PasteTarget>,
     /// Dictate without processing: paste the transcript as heard.
     raw: bool,
     /// `hex dictation stop --print`: the text goes here, never pasted.
@@ -66,6 +68,7 @@ struct Finishing {
     release: ReleaseWait,
     print: Option<PrintReply>,
     raw: bool,
+    target: Option<crate::windows::paste_target::PasteTarget>,
 }
 
 enum OutputJob {
@@ -113,6 +116,8 @@ pub struct WindowsDictationConfig {
     pub fallback_to_default_device: bool,
     /// Terminal paste: Ctrl+Shift+V instead of Ctrl+V.
     pub paste_with_shift: bool,
+    /// Paste into the window dictation started in.
+    pub paste_to_start_window: bool,
     /// Where the listener reports a model change that failed to load.
     pub swap_failures: Option<mpsc::Sender<crate::transcription::local_transcriber::SwapFailed>>,
     /// What the tray asks of the listener.
@@ -173,6 +178,7 @@ impl WindowsDictationConfig {
             transformations: Arc::new(crate::personal_commands::TransformationClient::default()),
             fallback_to_default_device: true,
             paste_with_shift: settings.paste_with_shift,
+            paste_to_start_window: settings.dictation_processing.paste_to_start_window,
             swap_failures: None,
             commands: None,
             dictations: DictationQueue::default(),
@@ -212,12 +218,14 @@ pub fn run(
         transformations,
         fallback_to_default_device,
         paste_with_shift,
+        paste_to_start_window,
         swap_failures,
         commands,
         dictations,
     } = config;
     // Read by the output worker at each paste, so a change applies in place.
     let paste_with_shift = Arc::new(AtomicBool::new(paste_with_shift));
+    let paste_to_start_window = Arc::new(AtomicBool::new(paste_to_start_window));
     let _indicator_guard = IndicatorGuard(indicator.clone());
     let _woken = Woken::register();
     crate::feedback::set_enabled(feedback_volume > 0);
@@ -257,6 +265,9 @@ pub fn run(
     // A hotkey press that arrived while the released microphone was still
     // opening; recording begins at the first chunk.
     let mut start_pending = false;
+    // The window the current dictation started in, captured on its press so a
+    // later Alt-Tab does not move its text.
+    let mut paste_target = None;
     if shutdown.load(Ordering::Relaxed) {
         return Ok(());
     }
@@ -296,10 +307,12 @@ pub fn run(
     let (jobs, job_receiver) = mpsc::sync_channel::<OutputJob>(2);
     let (result_sender, results) = mpsc::channel();
     let worker_paste_with_shift = paste_with_shift.clone();
+    let worker_paste_to_start_window = paste_to_start_window.clone();
     let worker = thread::Builder::new()
         .name("windows-dictation-output".into())
         .spawn(move || {
-            let mut paster = WindowsPaster::new(worker_paste_with_shift);
+            let mut paster =
+                WindowsPaster::new(worker_paste_with_shift, worker_paste_to_start_window);
             while let Ok(job) = job_receiver.recv() {
                 let result = match job {
                     OutputJob::Dictation(job) => process_dictation_job(
@@ -361,6 +374,7 @@ pub fn run(
         {
             let next_config = WindowsDictationConfig::from_settings(&next);
             paste_with_shift.store(next_config.paste_with_shift, Ordering::Relaxed);
+            paste_to_start_window.store(next_config.paste_to_start_window, Ordering::Relaxed);
             let next_shortcuts = Shortcuts {
                 hotkey: next_config.hotkey,
                 paste_last_hotkey: next_config.paste_last_hotkey,
@@ -503,7 +517,7 @@ pub fn run(
                 release,
                 print,
                 raw,
-                ..
+                target,
             }) = finishing.take()
             else {
                 unreachable!("checked above");
@@ -517,6 +531,7 @@ pub fn run(
                 &mut events,
                 &mut pending,
                 print,
+                target,
                 raw,
             )?;
             if submitted {
@@ -648,6 +663,9 @@ pub fn run(
                 HotkeyAction::Start
                     if !recording && (audio_ready || (release_while_idle && !start_pending)) =>
                 {
+                    // Taken on the press, before the HUD and before any
+                    // switch away: this is where the text belongs.
+                    paste_target = crate::windows::paste_target::PasteTarget::capture();
                     recording_raw = raw;
                     if audio_ready {
                         capture.start_hotkey_at(
@@ -682,6 +700,7 @@ pub fn run(
                     // Released before the opening microphone produced audio:
                     // nothing was captured, so treat it as a discard.
                     start_pending = false;
+                    paste_target = None;
                     audio_suppressor.restore();
                     if !timeline.wants_audio() {
                         input.close();
@@ -726,12 +745,14 @@ pub fn run(
                     finishing = Some(Finishing {
                         raw: recording_raw,
                         print: print.take(),
+                        target: paste_target.take(),
                         ..begin_finishing(&capture, occurred_at)
                     });
                 }
                 HotkeyAction::Cancel if recording => {
                     audio_suppressor.restore();
                     crate::feedback::retract_start();
+                    paste_target = None;
                     if recording_feedback_started {
                         crate::feedback::play(crate::feedback::Tone::Cancel);
                     }
@@ -984,6 +1005,7 @@ pub fn run(
                     );
                     service.lost(MICROPHONE_LOST);
                 }
+                paste_target = None;
                 audio_suppressor.restore();
                 let error = format!("could not open microphone: {error}");
                 fail(&events, error.clone())?;
@@ -1071,7 +1093,7 @@ fn process_dictation_job(
             paster
                 .as_mut()
                 .map_err(|error| format!("{error:#}"))?
-                .paste(&text)
+                .paste(&text, job.target.take())
                 .map_err(|error| format!("{error:#}"))?;
             *last_dictation
                 .lock()
@@ -1128,7 +1150,9 @@ fn process_paste_last(
             paster
                 .as_mut()
                 .map_err(|error| format!("{error:#}"))?
-                .paste(&text)
+                // Paste Last belongs where the person is now, not where the
+                // original dictation started.
+                .paste(&text, None)
                 .map_err(|error| format!("{error:#}"))?;
             Ok(text)
         });
@@ -1323,6 +1347,7 @@ fn begin_finishing(capture: &DictationCapture, ended_at: CaptureInstant) -> Fini
         release: ReleaseWait::new(capture, ended_at),
         print: None,
         raw: false,
+        target: None,
     }
 }
 
@@ -1336,6 +1361,7 @@ fn submit_capture(
     events: &mut EventLog,
     pending: &mut usize,
     print: Option<PrintReply>,
+    target: Option<crate::windows::paste_target::PasteTarget>,
     raw: bool,
 ) -> Result<bool> {
     let mut submitted = false;
@@ -1367,6 +1393,7 @@ fn submit_capture(
                 audio_ms,
                 language,
                 recording,
+                target,
                 print,
                 raw,
             });

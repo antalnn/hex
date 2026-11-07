@@ -16,6 +16,9 @@ pub(crate) struct DesktopSnapshot {
     /// What the staged dev build changed, while Restart to update shows.
     #[serde(default)]
     pub(crate) update_notes: Option<UpdateNotes>,
+    /// The local model server. `None` where the build has none.
+    #[serde(default)]
+    pub(crate) local_model: Option<crate::local_model::Snapshot>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -144,6 +147,11 @@ pub(crate) enum DesktopAction {
     ConfigureShortcuts,
     StartListening,
     StopListening,
+    /// Starts the local model server Hex owns, or adopts one already answering
+    /// its port.
+    StartLocalModel,
+    /// Stops the server Hex started. An external one is left running.
+    StopLocalModel,
 }
 
 #[cfg(test)]

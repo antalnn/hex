@@ -11,6 +11,19 @@ use crate::dictation::vocabulary::{VocabularyEntry, serialize_saved};
 pub struct DictationProcessingSettings {
     pub default_mode: DictationMode,
     pub modes: Vec<DictationMode>,
+    /// Wrap a vocabulary term marked `code` in backticks when it replaces a
+    /// heard spelling. Off by default: backticks are right in a chat and wrong
+    /// in an email, so the person turns this on.
+    pub wrap_code_terms: bool,
+    /// Return to the window dictation started in before pasting, even when the
+    /// finishing keystroke landed elsewhere. On by default: a dictation almost
+    /// always belongs where it was started.
+    #[serde(default = "default_true")]
+    pub paste_to_start_window: bool,
+}
+
+fn default_true() -> bool {
+    true
 }
 
 impl Default for DictationProcessingSettings {
@@ -21,6 +34,8 @@ impl Default for DictationProcessingSettings {
                 ..Default::default()
             },
             modes: Vec::new(),
+            wrap_code_terms: false,
+            paste_to_start_window: true,
         }
     }
 }

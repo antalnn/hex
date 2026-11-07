@@ -53,7 +53,7 @@ impl Feature {
             }
             Self::SmartSpacing => "Add a space before a dictation pasted right after a word",
             Self::SpokenSymbols => {
-                "Turn spoken \"comma\", \"colon\", \"hashtag\", \"underscore\", and similar words into symbols joined to their words"
+                "Turn spoken \"comma\", \"hashtag\", \"underscore\", and similar words into symbols joined to their words (this build leaves \"colon\" as a word)"
             }
             Self::PickerSortFilter => {
                 "Sort the Local transcription picker by size or name and show only models for the saved language"

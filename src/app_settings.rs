@@ -20,6 +20,7 @@ mod capture;
 mod dictation_processing;
 mod hotkeys;
 mod labs;
+mod llm;
 mod meeting_folder;
 mod meetings;
 mod persistence;
@@ -36,6 +37,7 @@ pub use dictation_processing::{
 };
 pub use hotkeys::*;
 pub use labs::*;
+pub use llm::*;
 pub use meeting_folder::default_meeting_output_folder;
 pub use meetings::*;
 #[cfg_attr(not(target_os = "macos"), allow(unused_imports))]
@@ -306,6 +308,8 @@ pub struct AppSettings {
     pub experimental: ExperimentalSettings,
     /// The Labs features' own switches (`crate::labs`).
     pub labs: LabsSettings,
+    /// The local model server (`crate::local_model`).
+    pub llm: LlmSettings,
     /// Labs › Screenshots' shortcut and folder (macOS).
     pub screenshots: ScreenshotSettings,
     /// Start listening when Hex opens (Windows and Linux, where the
@@ -363,6 +367,7 @@ const MIGRATIONS: &[&str] = &[
     ANOMALY_IDENTITY_MIGRATION,
     MEETING_RETENTION_DEFAULT_MIGRATION,
     MEETING_SUMMARIES_MIGRATION,
+    VOCABULARY_REPLACEMENTS_MIGRATION,
 ];
 #[cfg(not(hex_capture))]
 const MIGRATIONS: &[&str] = &[
@@ -370,6 +375,7 @@ const MIGRATIONS: &[&str] = &[
     ANOMALY_IDENTITY_MIGRATION,
     MEETING_RETENTION_DEFAULT_MIGRATION,
     MEETING_SUMMARIES_MIGRATION,
+    VOCABULARY_REPLACEMENTS_MIGRATION,
 ];
 /// Scrawl's settings were read into `capture` once. Left out of
 /// `MIGRATIONS` so new settings import them too.
@@ -385,6 +391,10 @@ const MEETING_RETENTION_DEFAULT_MIGRATION: &str = "meeting-retention-default";
 /// Summarize with Apple Intelligence and Summarize with OpenCode became one
 /// choice, `meetings.summaries`.
 const MEETING_SUMMARIES_MIGRATION: &str = "meeting-summaries-choice";
+/// The default mode's replacement list and the vocabulary held the same
+/// corrections. The list is folded into the vocabulary's "sounds like"
+/// spellings once, so terms correct the transcript on every model.
+const VOCABULARY_REPLACEMENTS_MIGRATION: &str = "vocabulary-replacements";
 
 fn deserialize_retired_value<'de, D>(
     deserializer: D,
@@ -432,6 +442,7 @@ impl Default for AppSettings {
             capture_from_other_build: None,
             experimental: ExperimentalSettings::default(),
             labs: LabsSettings::default(),
+            llm: LlmSettings::default(),
             screenshots: ScreenshotSettings::default(),
             enable_on_launch: true,
             paste_with_shift: false,
@@ -899,11 +910,45 @@ impl AppSettings {
                 .push(MEETING_RETENTION_DEFAULT_MIGRATION.into());
         }
         self.migrate_meeting_summaries();
+        if !self.has_migration(VOCABULARY_REPLACEMENTS_MIGRATION) {
+            self.fold_replacements_into_vocabulary();
+            self.migrations
+                .push(VOCABULARY_REPLACEMENTS_MIGRATION.into());
+        }
         #[cfg(hex_capture)]
         if !self.has_migration(ANNOTATE_DEFAULT_MIGRATION) {
             self.capture.enabled = true;
             self.migrations.push(ANNOTATE_DEFAULT_MIGRATION.into());
         }
+    }
+
+    /// The default mode's replacement list becomes the vocabulary's "sounds
+    /// like" spellings: each heard phrase is appended to its term, and a term
+    /// the list names that the vocabulary lacks is added. A rule with no output
+    /// (a deletion) is not a term, so it stays in the list.
+    fn fold_replacements_into_vocabulary(&mut self) {
+        let mut kept = Vec::new();
+        for pair in std::mem::take(&mut self.dictation_processing.default_mode.replacements) {
+            let term = pair.output.trim().to_owned();
+            let heard = pair.matched_phrase.trim().to_owned();
+            if term.is_empty() || heard.is_empty() {
+                kept.push(pair);
+                continue;
+            }
+            // A vocabulary that refuses the spelling (too long, full, or 16
+            // spellings already) keeps the rule as a swap instead of losing it.
+            if crate::dictation::vocabulary::add(
+                &mut self.vocabulary,
+                &term,
+                std::slice::from_ref(&heard),
+                false,
+            )
+            .is_err()
+            {
+                kept.push(pair);
+            }
+        }
+        self.dictation_processing.default_mode.replacements = kept;
     }
 
     /// The two retired summary switches become `meetings.summaries` once.
@@ -1462,6 +1507,105 @@ mod tests {
         assert!(!settings.capture.enabled, "only once");
     }
 
+    /// The default mode's replacement pairs become vocabulary spellings once,
+    /// merging into terms it already has and leaving deletions alone.
+    #[test]
+    fn replacements_fold_into_the_vocabulary_once() {
+        use crate::dictation::text_replacements::TextReplacement;
+        use crate::dictation::vocabulary::VocabularyEntry;
+
+        let mut settings = AppSettings::default();
+        settings
+            .migrations
+            .retain(|id| id != VOCABULARY_REPLACEMENTS_MIGRATION);
+        settings.vocabulary = vec![VocabularyEntry {
+            term: "Cappuccino".into(),
+            sounds_like: vec!["capuchin".into()],
+            code: false,
+        }];
+        settings.dictation_processing.default_mode.replacements = vec![
+            TextReplacement {
+                matched_phrase: "cap a chino".into(),
+                output: "cappuccino".into(),
+            },
+            TextReplacement {
+                matched_phrase: "dot net".into(),
+                output: ".NET".into(),
+            },
+            TextReplacement {
+                matched_phrase: "um".into(),
+                output: String::new(),
+            },
+        ];
+
+        settings.apply_one_time_migrations_with(|_| true);
+
+        assert_eq!(settings.vocabulary.len(), 2, "the new term is added");
+        assert_eq!(settings.vocabulary[0].term, "Cappuccino");
+        assert_eq!(
+            settings.vocabulary[0].sounds_like,
+            ["capuchin", "cap a chino"],
+            "the heard phrase joins the existing term"
+        );
+        assert_eq!(settings.vocabulary[1].term, ".NET");
+        assert_eq!(settings.vocabulary[1].sounds_like, ["dot net"]);
+        assert_eq!(
+            settings
+                .dictation_processing
+                .default_mode
+                .replacements
+                .len(),
+            1,
+            "only the deletion stays"
+        );
+        assert!(
+            settings.dictation_processing.default_mode.replacements[0]
+                .output
+                .is_empty()
+        );
+
+        let before = settings.vocabulary.clone();
+        settings.apply_one_time_migrations_with(|_| true);
+        assert_eq!(settings.vocabulary, before, "only once");
+    }
+
+    /// A vocabulary that cannot take a term (it is full here) leaves the pair
+    /// in the mode's list, so the correction still runs.
+    #[test]
+    fn a_refused_term_stays_a_replacement() {
+        use crate::dictation::text_replacements::TextReplacement;
+        use crate::dictation::vocabulary::{MAX_ENTRIES, VocabularyEntry};
+
+        let mut settings = AppSettings::default();
+        settings
+            .migrations
+            .retain(|id| id != VOCABULARY_REPLACEMENTS_MIGRATION);
+        settings.vocabulary = (0..MAX_ENTRIES)
+            .map(|index| VocabularyEntry {
+                term: format!("term{index}"),
+                sounds_like: Vec::new(),
+                code: false,
+            })
+            .collect();
+        settings.dictation_processing.default_mode.replacements = vec![TextReplacement {
+            matched_phrase: "new thing".into(),
+            output: "NewTerm".into(),
+        }];
+
+        settings.apply_one_time_migrations_with(|_| true);
+
+        assert_eq!(settings.vocabulary.len(), MAX_ENTRIES, "nothing was added");
+        assert_eq!(
+            settings
+                .dictation_processing
+                .default_mode
+                .replacements
+                .len(),
+            1,
+            "the rule stays a swap"
+        );
+    }
+
     /// The two retired summary switches become one choice once; On this Mac
     /// wins over the old OpenCode fallback.
     #[test]
@@ -1579,6 +1723,7 @@ mod tests {
             vocabulary: vec![VocabularyEntry {
                 term: "Rune".into(),
                 sounds_like: vec!["rune's".into()],
+                code: false,
             }],
             sound_effect_volume: 0.25,
             ..AppSettings::default()
@@ -2016,10 +2161,12 @@ mod tests {
                 VocabularyEntry {
                     term: "Cappuccino".into(),
                     sounds_like: vec!["capuchin".into(), "cap a chino".into()],
+                    code: false,
                 },
                 VocabularyEntry {
                     term: "Rune".into(),
                     sounds_like: vec![],
+                    code: false,
                 },
             ],
             ..settings
@@ -2558,6 +2705,24 @@ mod tests {
             decoded.shortcut_mode,
             crate::dictation::ShortcutMode::Toggle
         );
+    }
+
+    #[test]
+    fn paste_to_start_window_defaults_on_and_round_trips() {
+        let legacy: AppSettings = serde_json::from_str("{}").unwrap();
+        assert!(legacy.dictation_processing.paste_to_start_window);
+
+        let mut settings = AppSettings::default();
+        settings.dictation_processing.paste_to_start_window = false;
+        let decoded: AppSettings =
+            serde_json::from_str(&serde_json::to_string(&settings).unwrap()).unwrap();
+        assert!(!decoded.dictation_processing.paste_to_start_window);
+
+        // A file written before the switch existed keeps it on.
+        let old: AppSettings =
+            serde_json::from_str(r#"{"dictation_processing":{"wrap_code_terms":true}}"#).unwrap();
+        assert!(old.dictation_processing.paste_to_start_window);
+        assert!(old.dictation_processing.wrap_code_terms);
     }
 
     #[test]

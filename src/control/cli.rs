@@ -362,6 +362,9 @@ pub enum VocabularyCommand {
         /// (`--sounds-like "capuchin,cap a chino"`).
         #[arg(long, value_name = "SPELLINGS")]
         sounds_like: Option<String>,
+        /// Wrap the term in backticks when it replaces a heard spelling.
+        #[arg(long)]
+        code: bool,
         #[command(flatten)]
         output: Output,
     },
@@ -508,11 +511,13 @@ pub fn run(command: ControlCli) -> u8 {
             VocabularyCommand::Add {
                 term,
                 sounds_like,
+                code,
                 output,
             } => send(
                 ControlCommand::VocabularyAdd {
                     term,
                     sounds_like: sounds_like.into_iter().collect(),
+                    code,
                 },
                 output,
             ),
@@ -1416,10 +1421,12 @@ mod tests {
             VocabularyEntry {
                 term: "cappuccino".into(),
                 sounds_like: vec!["capuchin".into(), "cap a chino".into()],
+                code: false,
             },
             VocabularyEntry {
                 term: "Rune".into(),
                 sounds_like: vec![],
+                code: false,
             },
         ];
         assert_eq!(

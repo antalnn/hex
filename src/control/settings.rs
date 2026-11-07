@@ -270,6 +270,16 @@ const KEYS: &[Key] = &[
         "Modes for specific apps and websites, as a JSON array",
     ),
     key(
+        "dictation_processing.wrap_code_terms",
+        Kind::Bool,
+        "Wrap a vocabulary term marked code in backticks",
+    ),
+    key(
+        "dictation_processing.paste_to_start_window",
+        Kind::Bool,
+        "Paste into the window where the dictation started",
+    ),
+    key(
         "history_retention",
         Kind::Choice(&["off", "day", "week", "month", "forever"]),
         "How long dictation history is kept",
@@ -347,7 +357,7 @@ const KEYS: &[Key] = &[
     key(
         "labs.spoken_symbols",
         Kind::Bool,
-        "Labs: turn spoken \"comma\", \"colon\", \"hashtag\", \"underscore\", and similar words into symbols joined to their words",
+        "Labs: turn spoken \"comma\", \"hashtag\", \"underscore\", and similar words into symbols joined to their words (this build leaves \"colon\" as a word)",
     ),
     key(
         "labs.filler_words",
@@ -666,6 +676,34 @@ const KEYS: &[Key] = &[
         "updates.channel",
         Kind::Choice(&["stable", "dev"]),
         "Update channel; none follows the build (dev builds use dev, others stable)",
+    ),
+    key(
+        "llm.enabled",
+        Kind::Bool,
+        "Start the local llama.cpp server when Hex opens, and stop it when Hex quits",
+    ),
+    optional(
+        "llm.program",
+        Kind::Path,
+        "The llama-server program Hex starts; none uses ~/tools/llama-cpp/llama-server.exe",
+    ),
+    optional(
+        "llm.model",
+        Kind::Path,
+        "The GGUF model the server loads; none uses the copy in Hex's models folder",
+    ),
+    key(
+        "llm.port",
+        Kind::Integer {
+            min: 1024,
+            max: 65535,
+        },
+        "The port the local model server listens on, which the local rewrite calls",
+    ),
+    key(
+        "llm.args",
+        Kind::Json,
+        "Extra llama-server flags as a JSON array of strings; empty uses the tuned defaults",
     ),
 ];
 
@@ -1578,6 +1616,7 @@ mod tests {
             vocabulary: vec![crate::dictation::vocabulary::VocabularyEntry {
                 term: "Rune".into(),
                 sounds_like: vec!["roon".into()],
+                code: false,
             }],
             meetings: crate::app_settings::MeetingSettings {
                 retention: Some(crate::app_settings::MeetingRetention::Day),
@@ -1733,6 +1772,7 @@ mod tests {
             vocabulary: vec![crate::dictation::vocabulary::VocabularyEntry {
                 term: "Rune".into(),
                 sounds_like: Vec::new(),
+                code: false,
             }],
             ..Default::default()
         };

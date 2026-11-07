@@ -200,6 +200,28 @@ pub(super) fn basics(ui: &Ui, p: Paint, layer: &mut Vec<El>, query: &str) -> Opt
         Some(description),
         row,
     );
+    if ui.platform.caps.os == super::platform::Os::Windows {
+        rows.push_described(
+            tr("Paste where dictation started"),
+            Some(tr(
+                "Return to the window you were in when you pressed the shortcut",
+            )),
+            icon_toggle_row(
+                p,
+                "paste-to-start-window",
+                &PASTE,
+                tr("Paste where dictation started"),
+                tr("Return to the window you were in when you pressed the shortcut"),
+                ui.settings.dictation_processing.paste_to_start_window,
+                |ui: &mut Ui| {
+                    let enabled = !ui.settings.dictation_processing.paste_to_start_window;
+                    ui.update(|settings| {
+                        settings.dictation_processing.paste_to_start_window = enabled;
+                    });
+                },
+            ),
+        );
+    }
     rows.extend(tr("Launch at login"), launch_at_login_rows(ui, p));
     (!rows.is_empty()).then(|| card(p, "basics", rows.into_rows()))
 }

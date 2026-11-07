@@ -15,6 +15,8 @@ use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
 };
 use windows_sys::Win32::UI::WindowsAndMessaging::{GetForegroundWindow, GetWindowThreadProcessId};
 
+use crate::windows::paste_target::PasteTarget;
+
 const CLIPBOARD_RESTORE_DELAY: Duration = Duration::from_millis(500);
 
 /// Remote desktop clients (#866) forward a clipboard change to the remote
@@ -92,6 +94,9 @@ pub struct WindowsPaster {
     /// Terminal paste: send Ctrl+Shift+V instead of Ctrl+V. Shared so a
     /// settings change applies to the next paste without a new paster.
     paste_with_shift: Arc<AtomicBool>,
+    /// Return to the window where the dictation started before pasting.
+    /// Shared for the same reason.
+    paste_to_start_window: Arc<AtomicBool>,
 }
 
 #[derive(Default)]
@@ -118,16 +123,22 @@ impl ClipboardRestore {
 }
 
 impl WindowsPaster {
-    pub fn new(paste_with_shift: Arc<AtomicBool>) -> Result<Self> {
+    pub fn new(
+        paste_with_shift: Arc<AtomicBool>,
+        paste_to_start_window: Arc<AtomicBool>,
+    ) -> Result<Self> {
         Ok(Self {
             clipboard: arboard::Clipboard::new()
                 .wrap_err("could not open the Windows clipboard")?,
             clipboard_restore: Arc::new(Mutex::new(ClipboardRestore::default())),
             paste_with_shift,
+            paste_to_start_window,
         })
     }
 
-    pub fn paste(&mut self, text: &str) -> Result<()> {
+    /// Puts `text` into the focused window, or into `target` when it is given
+    /// and still open: the window dictation started in.
+    pub fn paste(&mut self, text: &str, target: Option<PasteTarget>) -> Result<()> {
         if text.trim().is_empty() {
             return Err(eyre!("refusing to paste an empty transcript"));
         }
@@ -163,6 +174,20 @@ impl WindowsPaster {
         let transcript_sequence = clipboard_sequence();
         let generation = restore.register(snapshot, original_sequence, transcript_sequence);
         drop(restore);
+
+        // Restoring waits for the modifiers (a held Alt would undo the
+        // switch) and happens before the stem is read: the terminal-paste
+        // choice and the keyboard layout both belong to the window that
+        // receives the text.
+        if self.paste_to_start_window.load(Ordering::Relaxed)
+            && let Some(target) = target
+            && !target.restore()
+        {
+            // The window closed, or the desktop refused the change (an
+            // elevated window, say). The transcript still goes in, where the
+            // person is now.
+            tracing::warn!("could not return to the window where dictation started");
+        }
 
         let stem = crate::windows::input::foreground_process_stem();
         let remote_desktop = is_remote_desktop(stem.as_deref());

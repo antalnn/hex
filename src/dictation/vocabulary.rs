@@ -33,10 +33,14 @@ pub struct VocabularyEntry {
     pub term: String,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub sounds_like: Vec<String>,
+    /// Wrap the term in backticks when it replaces a heard spelling. It only
+    /// acts while the processing setting asks for it.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub code: bool,
 }
 
 /// An entry as `settings.json` holds it: a plain term, or the term with its
-/// "sounds like" spellings.
+/// "sounds like" spellings and its code flag.
 #[derive(Deserialize, Serialize)]
 #[serde(untagged)]
 enum SavedEntry {
@@ -45,6 +49,8 @@ enum SavedEntry {
         term: String,
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         sounds_like: Vec<String>,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        code: bool,
     },
 }
 
@@ -54,8 +60,17 @@ impl From<SavedEntry> for VocabularyEntry {
             SavedEntry::Term(term) => Self {
                 term,
                 sounds_like: Vec::new(),
+                code: false,
             },
-            SavedEntry::Entry { term, sounds_like } => Self { term, sounds_like },
+            SavedEntry::Entry {
+                term,
+                sounds_like,
+                code,
+            } => Self {
+                term,
+                sounds_like,
+                code,
+            },
         }
     }
 }
@@ -67,12 +82,13 @@ pub(crate) fn serialize_saved<S: serde::Serializer>(
     serializer: S,
 ) -> Result<S::Ok, S::Error> {
     serializer.collect_seq(entries.iter().map(|entry| {
-        if entry.sounds_like.is_empty() {
+        if entry.sounds_like.is_empty() && !entry.code {
             SavedEntry::Term(entry.term.clone())
         } else {
             SavedEntry::Entry {
                 term: entry.term.clone(),
                 sounds_like: entry.sounds_like.clone(),
+                code: entry.code,
             }
         }
     }))
@@ -305,7 +321,7 @@ fn prompt_terms(entries: &[VocabularyEntry], max_chars: usize) -> usize {
 pub(crate) fn fold_hints(list: &mut Vec<VocabularyEntry>, hints: &str) -> bool {
     let before = list.len();
     for hint in hints.split([',', ';', '\n']) {
-        add_clamped(list, hint, &[]);
+        add_clamped(list, hint, &[], false);
     }
     list.len() != before
 }
@@ -370,12 +386,110 @@ fn same(left: &str, right: &str) -> bool {
     left.to_lowercase() == right.to_lowercase()
 }
 
-/// Adds `term`, or adds new `sounds_like` spellings to an existing entry with
-/// the same term in any case. Returns whether the list changed.
+/// The corrections the vocabulary implies: every "sounds like" spelling maps
+/// to its term. A spelling equal to the term would only rewrite itself, and an
+/// entry with no spellings corrects nothing, so both are skipped.
+///
+/// The output is always the plain term. Backticks for a term marked `code` are
+/// added once, after the rewrite, by [`wrap_code_terms`].
+pub(crate) fn replacements(
+    entries: &[VocabularyEntry],
+) -> Vec<super::text_replacements::TextReplacement> {
+    let mut pairs = Vec::new();
+    for entry in entries {
+        let term = entry.term.trim();
+        if term.is_empty() {
+            continue;
+        }
+        for spelling in &entry.sounds_like {
+            let heard = spelling.trim();
+            if heard.is_empty() || same(heard, term) {
+                continue;
+            }
+            pairs.push(super::text_replacements::TextReplacement {
+                matched_phrase: heard.to_owned(),
+                output: term.to_owned(),
+            });
+        }
+    }
+    pairs
+}
+
+/// Wraps every standalone occurrence of a term marked `code` in backticks.
+///
+/// Runs on the finished text, so the model cannot strip the backticks, and it
+/// covers a term the transcriber already spelled right, which a correction
+/// never touches. Leaves a code fence alone, and the boundary checks keep it
+/// out of an occurrence already in backticks, a path, and a longer identifier.
+pub(crate) fn wrap_code_terms(text: &str, entries: &[VocabularyEntry]) -> String {
+    if text.contains("```") || text.contains("~~~") {
+        return text.to_owned();
+    }
+    let mut terms: Vec<&str> = Vec::new();
+    for entry in entries {
+        let term = entry.term.trim();
+        if entry.code && !term.is_empty() && !terms.contains(&term) {
+            terms.push(term);
+        }
+    }
+    // Longest first, so a short term cannot match inside a longer one.
+    terms.sort_by_key(|term| std::cmp::Reverse(term.chars().count()));
+    let mut output = text.to_owned();
+    for term in terms {
+        output = wrap_term(&output, term);
+    }
+    output
+}
+
+/// Backticks every standalone `term` in `text`. A boundary is the start or end
+/// of the text, or a character that cannot be part of the same word: the
+/// checks also catch a term already between backticks and one inside a path.
+fn wrap_term(text: &str, term: &str) -> String {
+    let Ok(pattern) = regex::Regex::new(&regex::escape(term)) else {
+        return text.to_owned();
+    };
+    let mut output = String::with_capacity(text.len());
+    let mut last = 0;
+    let mut wrapped = false;
+    for found in pattern.find_iter(text) {
+        let (start, end) = (found.start(), found.end());
+        let before = text[..start].chars().next_back();
+        let after = text[end..].chars().next();
+        let joins_before = |character: Option<char>| {
+            character.is_some_and(|character| {
+                character.is_alphanumeric() || matches!(character, '_' | '`' | '\\' | '/')
+            })
+        };
+        let joins_after = |character: Option<char>| {
+            character.is_some_and(|character| {
+                character.is_alphanumeric() || matches!(character, '_' | '`')
+            })
+        };
+        if joins_before(before) || joins_after(after) {
+            continue;
+        }
+        output.push_str(&text[last..start]);
+        output.push('`');
+        output.push_str(&text[start..end]);
+        output.push('`');
+        last = end;
+        wrapped = true;
+    }
+    if !wrapped {
+        return text.to_owned();
+    }
+    output.push_str(&text[last..]);
+    output
+}
+
+/// Adds `term`, or adds new `sounds_like` spellings and the code flag to an
+/// existing entry with the same term in any case. Returns whether the list
+/// changed.
 pub fn add(
     list: &mut Vec<VocabularyEntry>,
     term: &str,
     sounds_like: &[String],
+    code: bool,
 ) -> Result<bool, String> {
     let term = clean(term);
     if term.is_empty() {
@@ -419,13 +533,16 @@ pub fn add(
     }
     match existing {
         Some(index) => {
+            let code_changed = code && !list[index].code;
+            list[index].code |= code;
             list[index].sounds_like = merged;
-            Ok(list[index].sounds_like.len() != before)
+            Ok(list[index].sounds_like.len() != before || code_changed)
         }
         None => {
             list.push(VocabularyEntry {
                 term,
                 sounds_like: merged,
+                code,
             });
             Ok(true)
         }
@@ -436,7 +553,12 @@ pub fn add(
 /// to its first 64 characters, and a long spelling or one past the 16th is
 /// left out. A full list still takes no new term. Returns whether anything
 /// was cut or left out.
-pub fn add_clamped(list: &mut Vec<VocabularyEntry>, term: &str, sounds_like: &[String]) -> bool {
+pub fn add_clamped(
+    list: &mut Vec<VocabularyEntry>,
+    term: &str,
+    sounds_like: &[String],
+    code: bool,
+) -> bool {
     let mut term = clean(term);
     let mut clamped = false;
     if term.chars().count() > MAX_TERM_CHARS {
@@ -446,11 +568,11 @@ pub fn add_clamped(list: &mut Vec<VocabularyEntry>, term: &str, sounds_like: &[S
     if term.is_empty() {
         return clamped;
     }
-    if add(list, &term, &[]).is_err() {
+    if add(list, &term, &[], code).is_err() {
         return true;
     }
     for spelling in sounds_like {
-        clamped |= add(list, &term, std::slice::from_ref(spelling)).is_err();
+        clamped |= add(list, &term, std::slice::from_ref(spelling), code).is_err();
     }
     clamped
 }
@@ -477,6 +599,7 @@ mod tests {
         VocabularyEntry {
             term: term.into(),
             sounds_like: sounds_like.iter().map(|&text| text.into()).collect(),
+            code: false,
         }
     }
 
@@ -541,15 +664,23 @@ mod tests {
     #[test]
     fn adding_dedupes_by_case_and_merges_spellings() {
         let mut list = Vec::new();
-        assert!(add(&mut list, "  Cappuccino ", &["capuchin".into(), "".into()]).unwrap());
+        assert!(
+            add(
+                &mut list,
+                "  Cappuccino ",
+                &["capuchin".into(), "".into()],
+                false
+            )
+            .unwrap()
+        );
         assert_eq!(list, [entry("Cappuccino", &["capuchin"])]);
-        assert!(!add(&mut list, "cappuccino", &["Capuchin".into()]).unwrap());
-        assert!(add(&mut list, "CAPPUCCINO", &["cap a chino".into()]).unwrap());
+        assert!(!add(&mut list, "cappuccino", &["Capuchin".into()], false).unwrap());
+        assert!(add(&mut list, "CAPPUCCINO", &["cap a chino".into()], false).unwrap());
         assert_eq!(list, [entry("Cappuccino", &["capuchin", "cap a chino"])]);
         // A spelling identical to its term adds nothing.
-        assert!(!add(&mut list, "Cappuccino", &["cappuccino".into()]).unwrap());
-        assert!(add(&mut list, "   ", &[]).is_err());
-        assert!(add(&mut list, &"x".repeat(65), &[]).is_err());
+        assert!(!add(&mut list, "Cappuccino", &["cappuccino".into()], false).unwrap());
+        assert!(add(&mut list, "   ", &[], false).is_err());
+        assert!(add(&mut list, &"x".repeat(65), &[], false).is_err());
         assert_eq!(list.len(), 1);
     }
 
@@ -559,15 +690,20 @@ mod tests {
         let mut list = Vec::new();
         let mut with_long = spellings[..2].to_vec();
         with_long.push("y".repeat(65));
-        assert!(add_clamped(&mut list, "Cappuccino", &with_long));
+        assert!(add_clamped(&mut list, "Cappuccino", &with_long, false));
         assert_eq!(list, [entry("Cappuccino", &["spelling 0", "spelling 1"])]);
-        assert!(add_clamped(&mut list, "cappuccino", &spellings));
+        assert!(add_clamped(&mut list, "cappuccino", &spellings, false));
         assert_eq!(list[0].sounds_like, spellings[..MAX_SOUNDS_LIKE]);
 
-        assert!(add_clamped(&mut list, &"x".repeat(70), &["ex".into()]));
+        assert!(add_clamped(
+            &mut list,
+            &"x".repeat(70),
+            &["ex".into()],
+            false
+        ));
         assert_eq!(list[1], entry(&"x".repeat(MAX_TERM_CHARS), &["ex"]));
-        assert!(!add_clamped(&mut list, "Rune", &["roon".into()]));
-        assert!(!add_clamped(&mut list, "  ", &[]));
+        assert!(!add_clamped(&mut list, "Rune", &["roon".into()], false));
+        assert!(!add_clamped(&mut list, "  ", &[], false));
         assert_eq!(list.len(), 3);
     }
 
@@ -710,5 +846,135 @@ mod tests {
         std::fs::write(&path, "{").unwrap();
         assert!(read_from(&path).is_err());
         std::fs::remove_dir_all(&directory).unwrap();
+    }
+
+    #[test]
+    fn spellings_become_replacements() {
+        let entries = [
+            entry(
+                "cappuccino",
+                &["capuchin", "cap a chino", "Cappuccino", "  "],
+            ),
+            entry("Rune", &[]),
+        ];
+        let pairs = replacements(&entries);
+        assert_eq!(pairs.len(), 2, "only real, different spellings survive");
+        assert_eq!(pairs[0].matched_phrase, "capuchin");
+        assert_eq!(pairs[0].output, "cappuccino");
+        assert_eq!(pairs[1].matched_phrase, "cap a chino");
+        assert_eq!(pairs[1].output, "cappuccino");
+    }
+
+    fn code(term: &str) -> VocabularyEntry {
+        VocabularyEntry {
+            term: term.into(),
+            sounds_like: Vec::new(),
+            code: true,
+        }
+    }
+
+    #[test]
+    fn a_correction_never_adds_backticks() {
+        let entries = [VocabularyEntry {
+            term: "useState".into(),
+            sounds_like: vec!["use state".into()],
+            code: true,
+        }];
+        assert_eq!(replacements(&entries)[0].output, "useState");
+    }
+
+    #[test]
+    fn a_code_term_wraps_where_it_stands() {
+        let entries = [code(".gitignore")];
+        assert_eq!(
+            wrap_code_terms("edit the .gitignore file", &entries),
+            "edit the `.gitignore` file"
+        );
+        // Already wrapped: the backtick on either side blocks a second pass.
+        assert_eq!(
+            wrap_code_terms("edit the `.gitignore` file", &entries),
+            "edit the `.gitignore` file"
+        );
+        // A path is left alone.
+        assert_eq!(
+            wrap_code_terms(r"C:\project\.gitignore", &entries),
+            r"C:\project\.gitignore"
+        );
+        // At the very start and the very end.
+        assert_eq!(wrap_code_terms(".gitignore", &entries), "`.gitignore`");
+        assert_eq!(
+            wrap_code_terms("write .gitignore", &entries),
+            "write `.gitignore`"
+        );
+    }
+
+    #[test]
+    fn a_longer_identifier_and_a_fence_are_untouched() {
+        let entries = [code("useState")];
+        assert_eq!(
+            wrap_code_terms("const useStateValue = 1", &entries),
+            "const useStateValue = 1"
+        );
+        let fenced = "```ts\nconst useState = 1\n```";
+        assert_eq!(wrap_code_terms(fenced, &entries), fenced);
+        let tildes = "~~~\nuseState\n~~~";
+        assert_eq!(wrap_code_terms(tildes, &entries), tildes);
+    }
+
+    #[test]
+    fn the_longest_code_term_wins_inside_a_shared_name() {
+        let entries = [code("use"), code("useState")];
+        assert_eq!(
+            wrap_code_terms("call useState now", &entries),
+            "call `useState` now"
+        );
+    }
+
+    #[test]
+    fn a_term_not_marked_code_is_never_wrapped() {
+        let entries = [VocabularyEntry {
+            term: "useState".into(),
+            sounds_like: Vec::new(),
+            code: false,
+        }];
+        assert_eq!(wrap_code_terms("call useState", &entries), "call useState");
+    }
+
+    #[test]
+    fn a_code_term_without_spellings_saves_as_an_object() {
+        let entry = VocabularyEntry {
+            term: "useState".into(),
+            sounds_like: Vec::new(),
+            code: true,
+        };
+        let saved = serde_json::to_string(&entry).unwrap();
+        assert_eq!(saved, r#"{"term":"useState","code":true}"#);
+        assert_eq!(
+            serde_json::from_str::<VocabularyEntry>(&saved).unwrap(),
+            entry
+        );
+    }
+
+    #[test]
+    fn adding_code_marks_an_existing_term() {
+        let mut list = Vec::new();
+        assert!(add(&mut list, "useState", &[], false).unwrap());
+        assert!(!list[0].code);
+        assert!(add(&mut list, "usestate", &[], true).unwrap());
+        assert!(list[0].code);
+        assert!(
+            !add(&mut list, "useState", &[], true).unwrap(),
+            "already code"
+        );
+    }
+
+    #[test]
+    fn wrap_code_terms_defaults_off_and_round_trips() {
+        let mut settings = crate::app_settings::AppSettings::default();
+        assert!(!settings.dictation_processing.wrap_code_terms);
+        settings.dictation_processing.wrap_code_terms = true;
+        let saved = serde_json::to_string(&settings).unwrap();
+        let loaded: crate::app_settings::AppSettings = serde_json::from_str(&saved).unwrap();
+        assert!(loaded.dictation_processing.wrap_code_terms);
     }
 }

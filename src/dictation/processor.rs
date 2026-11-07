@@ -99,9 +99,13 @@ impl Profile {
         } else {
             &mode.name
         };
+        // A mode's own terms correct the transcript exactly as the shared ones
+        // do, ahead of the mode's explicit swaps.
+        let mut pairs = crate::dictation::vocabulary::replacements(&mode.vocabulary);
+        pairs.extend(mode.replacements.iter().cloned());
         Self::configured(
             name,
-            ReplacementSet::new(&mode.replacements),
+            ReplacementSet::new(&pairs),
             mode.transformations.clone(),
             &mode.post_processing,
         )
@@ -1415,10 +1419,12 @@ mod tests {
             VocabularyEntry {
                 term: "cappuccino".into(),
                 sounds_like: vec!["capuchin".into(), "cap a chino".into()],
+                code: false,
             },
             VocabularyEntry {
                 term: "Rune".into(),
                 sounds_like: vec![],
+                code: false,
             },
         ];
         let prompt = prompt(

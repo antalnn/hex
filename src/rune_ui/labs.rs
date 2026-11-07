@@ -635,7 +635,7 @@ fn rows(ui: &Ui) -> Vec<Row> {
         Feature::SpokenSymbols,
         None,
         tr("Spoken symbols"),
-        tr("Say \"comma\", \"colon\", \"hashtag\", \"underscore\", or \"slash\" to insert the symbol joined to its words"),
+        tr("Say \"comma\", \"hashtag\", \"underscore\", or \"slash\" to insert the symbol joined to its words"),
     ));
     rows.push(row(
         Feature::FillerWords,

@@ -257,6 +257,8 @@ struct CallbackState {
     annotate_trigger_down: bool,
     /// Escape went down to stop Annotate's drawing; its release is ours too.
     drawing_escape_down: bool,
+    /// Escape went down to cancel a dictation; its release is ours too.
+    dictation_escape_down: bool,
     /// Toggle mode's cancel shortcut, Hex's only while a recording runs.
     cancel: Option<WindowsHotkey>,
     cancel_vk: Option<u32>,
@@ -393,6 +395,15 @@ impl CaptureState {
     }
 }
 
+/// Whether this key event cancels a dictation: Escape while a capture records,
+/// or the release of one Hex already took. Hold and Toggle both count, and the
+/// key is Hex's either way, so the app in front never acts on the Escape that
+/// discarded a recording. Modifiers are allowed because a hold recording keeps
+/// the dictation key down, so Escape arrives with Control held.
+fn takes_dictation_escape(vk: u32, is_down: bool, capture: &CaptureState, held: bool) -> bool {
+    vk == u32::from(VK_ESCAPE) && (held || (is_down && (capture.active || capture.locked)))
+}
+
 #[derive(Default)]
 struct ModifierState {
     left_control: bool,
@@ -504,6 +515,7 @@ impl WindowsHotkeyMonitor {
             annotate_trigger_vk,
             annotate_trigger_down: false,
             drawing_escape_down: false,
+            dictation_escape_down: false,
             cancel,
             cancel_vk,
             cancel_down: false,
@@ -923,6 +935,22 @@ fn process_button(vk: u32, is_down: bool, time: u32) -> Disposition {
                     }
                 } else if is_up {
                     state.cancel_down = false;
+                }
+                return Disposition::Suppress;
+            }
+            // Escape cancels a dictation while it records, hold or toggle:
+            // nothing is transcribed, and the app in front never sees the key.
+            // Its release is Hex's too, so the app gets no stray key-up.
+            if takes_dictation_escape(vk, is_down, &state.capture, state.dictation_escape_down) {
+                if is_down {
+                    if !state.dictation_escape_down {
+                        state.dictation_escape_down = true;
+                        if let Some(action) = state.capture.cancel() {
+                            send_event(state, action, time);
+                        }
+                    }
+                } else {
+                    state.dictation_escape_down = false;
                 }
                 return Disposition::Suppress;
             }
@@ -1949,6 +1977,37 @@ mod tests {
         state.release(true, 120);
         assert_eq!(state.cancel(), Some(HotkeyAction::Cancel));
         assert!(!state.active && !state.locked);
+    }
+
+    /// Escape cancels while a capture records, in Hold and Toggle alike, and
+    /// its release stays Hex's; with nothing recording it belongs to the app.
+    #[test]
+    fn escape_cancels_only_while_a_capture_records() {
+        let escape = u32::from(VK_ESCAPE);
+        let state = CaptureState::default();
+        assert!(!takes_dictation_escape(escape, true, &state, false));
+        assert!(!state.active, "a fresh capture is idle");
+
+        let mut hold = CaptureState::default();
+        assert_eq!(hold.press(true, false, 100), Some(HotkeyAction::Start));
+        assert!(takes_dictation_escape(escape, true, &hold, false));
+        assert!(takes_dictation_escape(escape, false, &hold, true));
+        assert!(
+            !takes_dictation_escape(0x41, true, &hold, true),
+            "only Escape"
+        );
+        assert_eq!(hold.cancel(), Some(HotkeyAction::Cancel));
+        assert!(!takes_dictation_escape(escape, true, &hold, false));
+
+        let mut toggled = CaptureState {
+            toggle: true,
+            ..CaptureState::default()
+        };
+        assert_eq!(toggled.press(true, false, 100), Some(HotkeyAction::Start));
+        toggled.release(true, 120);
+        assert!(toggled.locked);
+        assert!(takes_dictation_escape(escape, true, &toggled, false));
+        assert_eq!(toggled.cancel(), Some(HotkeyAction::Cancel));
     }
 
     /// Toggle's cancel key is Hex's only while a toggled capture records:

@@ -29,13 +29,15 @@ const SYMBOLS: &[(&[&str], char, Join)] = &[
     (&["slash"], '/', Join::Both),
     (&["comma"], ',', Join::Previous),
     (&["semicolon"], ';', Join::Previous),
-    (&["colon"], ':', Join::Previous),
+    // "colon" is deliberately absent in this build: the word is used in
+    // ordinary speech ("the word colon", "like this: :"), and turning it into
+    // ":" before the rewrite runs destroys the sentence. The local rewrite
+    // decides from context instead.
     (&["arroba"], '@', Join::Next),
     (&["guion", "bajo"], '_', Join::Both),
     (&["guion"], '-', Join::Both),
     (&["punto", "y", "coma"], ';', Join::Previous),
     (&["coma"], ',', Join::Previous),
-    (&["dos", "puntos"], ':', Join::Previous),
 ];
 
 /// `transcript` with its spoken symbols applied.
@@ -152,9 +154,11 @@ mod tests {
         assert_eq!(apply("well hyphen known"), "well-known");
         assert_eq!(apply("and slash or"), "and/or");
         assert_eq!(apply("one semicolon two"), "one; two");
-        assert_eq!(apply("the list colon apples"), "the list: apples");
+        // "colon" is a word, not a symbol, in this build: the rewrite decides
+        // from context whether a colon belongs there.
+        assert_eq!(apply("the list colon apples"), "the list colon apples");
         assert_eq!(apply("Done, Comma, thanks."), "Done, thanks.");
-        assert_eq!(apply("the list COLON."), "the list:");
+        assert_eq!(apply("the list COLON."), "the list COLON.");
         assert_eq!(apply("a comma comma b"), "a,, b");
     }
 
@@ -166,7 +170,10 @@ mod tests {
         assert_eq!(apply("bien guión conocido"), "bien-conocido");
         assert_eq!(apply("uno punto y coma dos"), "uno; dos");
         assert_eq!(apply("hola coma gracias"), "hola, gracias");
-        assert_eq!(apply("la lista dos puntos manzanas"), "la lista: manzanas");
+        assert_eq!(
+            apply("la lista dos puntos manzanas"),
+            "la lista dos puntos manzanas"
+        );
         assert_eq!(apply("hola comma gracias"), "hola, gracias");
     }
 

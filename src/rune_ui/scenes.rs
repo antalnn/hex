@@ -416,6 +416,7 @@ pub(super) const SCENES: &[Scene] = &[
             .map(|n| crate::dictation::vocabulary::VocabularyEntry {
                 term: format!("Project codename {n}"),
                 sounds_like: Vec::new(),
+                code: false,
             })
             .collect();
         ui.settings.vocabulary = entries;
@@ -943,6 +944,7 @@ pub(super) fn fixture(shortcuts: DesktopShortcuts) -> Ui {
         update_status: DesktopUpdateStatus::Current,
         update_notes: None,
         update_blocked: None,
+        local_model: None,
         editing: false,
     });
     ui

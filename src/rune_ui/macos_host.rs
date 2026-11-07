@@ -143,6 +143,7 @@ impl Backend {
                 update_status: published.update_status.clone(),
                 update_notes: published.update_notes.clone(),
                 update_blocked: None,
+                local_model: None,
                 editing: false,
             },
             settings: published.settings.clone(),
