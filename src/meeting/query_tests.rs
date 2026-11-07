@@ -661,6 +661,7 @@ fn entry(term: &str, sounds_like: &[&str]) -> VocabularyEntry {
     VocabularyEntry {
         term: term.into(),
         sounds_like: sounds_like.iter().map(|&text| text.into()).collect(),
+        code: false,
     }
 }
 

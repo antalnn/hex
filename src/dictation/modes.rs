@@ -29,7 +29,10 @@ impl ModeRuntime {
         let processing = &settings.dictation_processing;
         // The vocabulary's "sounds like" spellings correct the transcript on
         // every model, so they run here with the default mode's own swaps.
-        let mut global = crate::dictation::vocabulary::replacements(&settings.vocabulary);
+        let mut global = crate::dictation::vocabulary::replacements(
+            &settings.vocabulary,
+            processing.wrap_code_terms,
+        );
         global.extend(processing.default_mode.replacements.iter().cloned());
         Self {
             replacements: ReplacementSet::new(&global),
@@ -79,6 +82,7 @@ impl ModeRuntime {
                     "Global",
                     ReplacementSet::new(&crate::dictation::vocabulary::replacements(
                         &self.default_vocabulary,
+                        false,
                     )),
                     self.default_transformations.clone(),
                     &self.default,
@@ -239,6 +243,7 @@ mod tests {
             settings.vocabulary = vec![VocabularyEntry {
                 term: "OpenCode".into(),
                 sounds_like: vec!["open code".into()],
+                code: false,
             }];
             settings
                 .dictation_processing
@@ -264,6 +269,43 @@ mod tests {
             &crate::personal_commands::TransformationClient::default(),
         );
         assert_eq!(processed.text, "I opened OpenCode today");
+    }
+
+    #[test]
+    fn a_code_term_wraps_in_backticks_when_the_setting_is_on() {
+        use crate::dictation::vocabulary::VocabularyEntry;
+
+        let runtime = runtime(|settings| {
+            settings.vocabulary = vec![VocabularyEntry {
+                term: "useState".into(),
+                sounds_like: vec!["use state".into()],
+                code: true,
+            }];
+            settings.dictation_processing.wrap_code_terms = true;
+            settings
+                .dictation_processing
+                .default_mode
+                .transformations
+                .clear();
+            settings
+                .dictation_processing
+                .default_mode
+                .post_processing
+                .enabled = false;
+        });
+        let context = crate::dictation::context::ContextSnapshot {
+            application: None,
+            browser_url: None,
+            window_title: None,
+            input_revision: None,
+        };
+        let processed = runtime.process(
+            "I called use state today",
+            "en",
+            &context,
+            &crate::personal_commands::TransformationClient::default(),
+        );
+        assert_eq!(processed.text, "I called `useState` today");
     }
 
     #[test]

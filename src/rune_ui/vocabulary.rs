@@ -5,11 +5,12 @@
 
 use rune::tok::motion::{SETTLE, SETTLE_EXIT};
 use rune::{El, SpringPair, TextEdit, Transition, Tx, col, edit_access, el, row, text};
-use rune_kit::{ControlSize, TextInput};
+use rune_kit::{ControlSize, Switch, TextInput};
 
 use super::Ui;
 use super::controls::{
     ButtonKind, DESCRIPTION, Paint, button, modal_scrim_transition, modal_transition, note,
+    toggle_row,
 };
 use super::lists::remove_button;
 use crate::desktop::i18n::{tr, tr_fill, tr_named};
@@ -37,6 +38,8 @@ struct TermRow {
     id: u64,
     term: TextEdit,
     sounds_like: TextEdit,
+    /// Wrap this term in backticks when it replaces a heard spelling.
+    code: bool,
 }
 
 /// The term rows, and whether the sheet is open.
@@ -64,23 +67,36 @@ impl VocabularyEditor {
         self.rows.clear();
         self.added = None;
         for entry in entries {
-            self.push(
+            self.push_with_code(
                 TextEdit::new(entry.term.clone()),
                 TextEdit::new(entry.sounds_like.join(", ")),
+                entry.code,
             );
         }
     }
 
     /// Adds a row at the end and returns its identity.
     pub(super) fn push(&mut self, term: TextEdit, sounds_like: TextEdit) -> u64 {
+        self.push_with_code(term, sounds_like, false)
+    }
+
+    fn push_with_code(&mut self, term: TextEdit, sounds_like: TextEdit, code: bool) -> u64 {
         let id = self.next_id;
         self.next_id += 1;
         self.rows.push(TermRow {
             id,
             term,
             sounds_like,
+            code,
         });
         id
+    }
+
+    /// Whether row `id` wraps its term in backticks, and the setter.
+    fn set_code(&mut self, id: u64, code: bool) {
+        if let Some(row) = self.rows.iter_mut().find(|row| row.id == id) {
+            row.code = code;
+        }
     }
 
     /// The term (or, with `sounds_like`, the spellings) field of row `id`.
@@ -121,6 +137,7 @@ impl VocabularyEditor {
                 &mut entries,
                 &row.term.text,
                 &vocabulary::parse_sounds_like(&row.sounds_like.text),
+                row.code,
             );
         }
         (entries, clamped)
@@ -262,6 +279,19 @@ fn term_row(p: Paint, entry: &TermRow, added: bool) -> El {
                 .grow(1.0)
                 .shrink(),
         )
+        .child(
+            Switch::new(entry.code)
+                .on_toggle({
+                    let code = entry.code;
+                    move |ui: &mut Ui| {
+                        ui.vocabulary.set_code(id, !code);
+                        ui.flush_drafts();
+                    }
+                })
+                .build(p.k)
+                .key("code")
+                .label(tr("Wrap in backticks")),
+        )
         .child(remove_button(
             p,
             ControlSize::Regular,
@@ -338,7 +368,19 @@ pub(super) fn modal(ui: &Ui, p: Paint) -> Option<[El; 2]> {
                 .font(DESCRIPTION)
                 .color(p.muted())
                 .wrap(),
-        );
+        )
+        .child(toggle_row(
+            p,
+            "wrap-code",
+            tr("Wrap code terms in backticks"),
+            Some(tr("Only terms marked with the switch in their row")),
+            ui.settings.dictation_processing.wrap_code_terms,
+            |ui: &mut Ui| {
+                ui.settings.dictation_processing.wrap_code_terms =
+                    !ui.settings.dictation_processing.wrap_code_terms;
+                ui.flush_drafts();
+            },
+        ));
     let biases = crate::transcription::models::definition(ui.settings.transcription.model)
         .vocabulary_use()
         == crate::transcription::models::VocabularyUse::Bias;
@@ -424,6 +466,7 @@ pub(super) fn fixture(ui: &mut Ui, filled: bool) {
                 &mut entries,
                 term,
                 &vocabulary::parse_sounds_like(sounds_like),
+                false,
             );
         }
         entries
@@ -472,10 +515,23 @@ mod tests {
     }
 
     #[test]
+    fn a_row_can_be_marked_code() {
+        let mut editor = VocabularyEditor::new(&[VocabularyEntry {
+            term: "useState".into(),
+            sounds_like: vec!["use state".into()],
+            code: false,
+        }]);
+        let id = editor.rows[0].id;
+        editor.set_code(id, true);
+        assert!(editor.project()[0].code);
+    }
+
+    #[test]
     fn rows_project_to_cleaned_merged_entries() {
         let mut editor = VocabularyEditor::new(&[VocabularyEntry {
             term: "cappuccino".into(),
             sounds_like: vec!["capuchin".into(), "cap a chino".into()],
+            code: false,
         }]);
         assert_eq!(editor.rows[0].sounds_like.text, "capuchin, cap a chino");
         editor.push(TextEdit::default(), TextEdit::new("ignored"));
@@ -494,10 +550,12 @@ mod tests {
                         "cap a chino".into(),
                         "cap you chino".into()
                     ],
+                    code: false,
                 },
                 VocabularyEntry {
                     term: "Rune".into(),
                     sounds_like: vec!["roon".into()],
+                    code: false,
                 },
             ]
         );
@@ -602,6 +660,7 @@ mod tests {
             .map(|n| VocabularyEntry {
                 term: format!("A longer project name {n}"),
                 sounds_like: Vec::new(),
+                code: false,
             })
             .collect();
         ui.vocabulary = VocabularyEditor::new(&entries);
@@ -632,6 +691,7 @@ mod tests {
         ui.vocabulary.reload(&[VocabularyEntry {
             term: "Rune".into(),
             sounds_like: vec!["roon".into()],
+            code: false,
         }]);
         ui.vocabulary.field(ids[0], false).text = "late".into();
         assert_eq!(terms(&ui), ["Rune"]);

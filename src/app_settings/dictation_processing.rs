@@ -11,6 +11,10 @@ use crate::dictation::vocabulary::{VocabularyEntry, serialize_saved};
 pub struct DictationProcessingSettings {
     pub default_mode: DictationMode,
     pub modes: Vec<DictationMode>,
+    /// Wrap a vocabulary term marked `code` in backticks when it replaces a
+    /// heard spelling. Off by default: backticks are right in a chat and wrong
+    /// in an email, so the person turns this on.
+    pub wrap_code_terms: bool,
 }
 
 impl Default for DictationProcessingSettings {
@@ -21,6 +25,7 @@ impl Default for DictationProcessingSettings {
                 ..Default::default()
             },
             modes: Vec::new(),
+            wrap_code_terms: false,
         }
     }
 }

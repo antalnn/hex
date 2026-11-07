@@ -270,6 +270,11 @@ const KEYS: &[Key] = &[
         "Modes for specific apps and websites, as a JSON array",
     ),
     key(
+        "dictation_processing.wrap_code_terms",
+        Kind::Bool,
+        "Wrap a vocabulary term marked code in backticks",
+    ),
+    key(
         "history_retention",
         Kind::Choice(&["off", "day", "week", "month", "forever"]),
         "How long dictation history is kept",
@@ -1596,6 +1601,7 @@ mod tests {
             vocabulary: vec![crate::dictation::vocabulary::VocabularyEntry {
                 term: "Rune".into(),
                 sounds_like: vec!["roon".into()],
+                code: false,
             }],
             meetings: crate::app_settings::MeetingSettings {
                 retention: Some(crate::app_settings::MeetingRetention::Day),
@@ -1751,6 +1757,7 @@ mod tests {
             vocabulary: vec![crate::dictation::vocabulary::VocabularyEntry {
                 term: "Rune".into(),
                 sounds_like: Vec::new(),
+                code: false,
             }],
             ..Default::default()
         };

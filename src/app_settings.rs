@@ -941,6 +941,7 @@ impl AppSettings {
                 &mut self.vocabulary,
                 &term,
                 std::slice::from_ref(&heard),
+                false,
             )
             .is_err()
             {
@@ -1520,6 +1521,7 @@ mod tests {
         settings.vocabulary = vec![VocabularyEntry {
             term: "Cappuccino".into(),
             sounds_like: vec!["capuchin".into()],
+            code: false,
         }];
         settings.dictation_processing.default_mode.replacements = vec![
             TextReplacement {
@@ -1582,6 +1584,7 @@ mod tests {
             .map(|index| VocabularyEntry {
                 term: format!("term{index}"),
                 sounds_like: Vec::new(),
+                code: false,
             })
             .collect();
         settings.dictation_processing.default_mode.replacements = vec![TextReplacement {
@@ -1720,6 +1723,7 @@ mod tests {
             vocabulary: vec![VocabularyEntry {
                 term: "Rune".into(),
                 sounds_like: vec!["rune's".into()],
+                code: false,
             }],
             sound_effect_volume: 0.25,
             ..AppSettings::default()
@@ -2157,10 +2161,12 @@ mod tests {
                 VocabularyEntry {
                     term: "Cappuccino".into(),
                     sounds_like: vec!["capuchin".into(), "cap a chino".into()],
+                    code: false,
                 },
                 VocabularyEntry {
                     term: "Rune".into(),
                     sounds_like: vec![],
+                    code: false,
                 },
             ],
             ..settings

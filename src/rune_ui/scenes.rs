@@ -416,6 +416,7 @@ pub(super) const SCENES: &[Scene] = &[
             .map(|n| crate::dictation::vocabulary::VocabularyEntry {
                 term: format!("Project codename {n}"),
                 sounds_like: Vec::new(),
+                code: false,
             })
             .collect();
         ui.settings.vocabulary = entries;

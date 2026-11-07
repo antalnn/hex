@@ -116,15 +116,28 @@ fn steps(ui: &Ui, mode: &DictationMode) -> Vec<Step> {
             .iter()
             .filter(|entry| !entry.sounds_like.is_empty())
             .count();
-        steps.push(Step {
-            title: tr("Vocabulary").into(),
-            detail: Some(tr_named(
+        let code = shared.iter().filter(|entry| entry.code).count();
+        let detail = if code > 0 {
+            tr_named(
+                "{terms} terms · {heard} heard as other words · {code} code",
+                &[
+                    ("terms", &shared.len().to_string()),
+                    ("heard", &heard.to_string()),
+                    ("code", &code.to_string()),
+                ],
+            )
+        } else {
+            tr_named(
                 "{terms} terms · {heard} heard as other words",
                 &[
                     ("terms", &shared.len().to_string()),
                     ("heard", &heard.to_string()),
                 ],
-            )),
+            )
+        };
+        steps.push(Step {
+            title: tr("Vocabulary").into(),
+            detail: Some(detail),
             runner: Runner::BuiltIn,
             action: Some(StepAction::Vocabulary),
         });
@@ -212,12 +225,17 @@ fn builtin(id: &str) -> Option<(&'static str, &'static str)> {
 
 /// The Try field's sentence after every dictation's corrections and
 /// built-in steps. Scripts and rewriting run only when dictating.
-fn preview(mode: &DictationMode, input: &str) -> String {
+fn preview(mode: &DictationMode, wrap_code: bool, input: &str) -> String {
     // The shared vocabulary's spellings, then the mode's own terms and swaps:
     // the same order the listener applies them in.
-    let mut pairs =
-        crate::dictation::vocabulary::replacements(&crate::dictation::vocabulary::entries());
-    pairs.extend(crate::dictation::vocabulary::replacements(&mode.vocabulary));
+    let mut pairs = crate::dictation::vocabulary::replacements(
+        &crate::dictation::vocabulary::entries(),
+        wrap_code,
+    );
+    pairs.extend(crate::dictation::vocabulary::replacements(
+        &mode.vocabulary,
+        false,
+    ));
     pairs.extend(mode.replacements.iter().cloned());
     let mut output = ReplacementSet::new(&pairs).replace(input);
     for id in &mode.transformations {
@@ -610,7 +628,14 @@ fn try_card(ui: &Ui, p: Paint, mode: &DictationMode) -> El {
     let (result, ink) = if trial.is_empty() {
         (tr("What Hex pastes").to_string(), p.faint())
     } else {
-        (preview(mode, trial), p.text())
+        (
+            preview(
+                mode,
+                ui.settings.dictation_processing.wrap_code_terms,
+                trial,
+            ),
+            p.text(),
+        )
     };
     let result = row()
         .key("try-result")
@@ -838,7 +863,11 @@ fn fix_this(ui: &mut Ui, tx: &mut Tx) {
     if trial.is_empty() {
         return;
     }
-    let result = preview(&ui.settings.dictation_processing.default_mode, &trial);
+    let result = preview(
+        &ui.settings.dictation_processing.default_mode,
+        ui.settings.dictation_processing.wrap_code_terms,
+        &trial,
+    );
     tx.copy(agent_prompt(Some((&trial, &result))));
     ui.output.prompt_copied = true;
     ui.output.fix_copied = Some(trial);
@@ -884,13 +913,16 @@ fn agent_prompt(fix: Option<(&str, &str)>) -> String {
          node:child_process, is documented at {TRANSFORMS_DOCS}).\n\
          \n\
          Names Hex should know (people, products, projects) go in the vocabulary: \
-         `hex vocabulary add <term> --sounds-like a,b` (and `list`, `remove`). Each \
-         \"sounds like\" spelling is corrected to its term on every dictation, before the \
-         rewrite, so add the words the transcriber gets wrong, not the words it already \
-         hears. The shared list covers every app; a mode can add its own in `vocabulary`, \
-         a list of terms (\"Rune\") or {{\"term\", \"sounds_like\": [...]}}. Use a mode's \
-         `replacements` only for what a term can't express, such as a word to an emoji or \
-         dropping \"um\".\n\
+         `hex vocabulary add <term> --sounds-like a,b [--code]` (and `list`, `remove`). \
+         Each \"sounds like\" spelling is corrected to its term on every dictation, before \
+         the rewrite, so add the words the transcriber gets wrong, not the words it \
+         already hears. The shared list covers every app; a mode can add its own in \
+         `vocabulary`, a list of terms (\"Rune\") or {{\"term\", \"sounds_like\": [...], \
+         \"code\": true}}. A code term is wrapped in backticks when \
+         `dictation_processing.wrap_code_terms` is on: {{\"term\": \"useState\", \
+         \"sounds_like\": [\"use state\"], \"code\": true}} pastes `useState`. Use a \
+         mode's `replacements` only for what a term can't express, such as a word to an \
+         emoji or dropping \"um\".\n\
          \n\
          Read the current value with `hex settings get dictation_processing`, then \
          change it with `hex settings set dictation_processing.default_mode '<json>'` \
@@ -970,7 +1002,34 @@ mod tests {
             ],
             ..DictationMode::default()
         };
-        assert_eq!(preview(&mode, "Open code shipped."), "opencode shipped");
+        assert_eq!(
+            preview(&mode, false, "Open code shipped."),
+            "opencode shipped"
+        );
+    }
+
+    #[test]
+    fn the_preview_wraps_a_code_term_only_when_the_switch_is_on() {
+        use crate::dictation::vocabulary::{VocabularyBoost, VocabularyEntry};
+
+        crate::dictation::vocabulary::apply(
+            &[VocabularyEntry {
+                term: "useState".into(),
+                sounds_like: vec!["use state".into()],
+                code: true,
+            }],
+            VocabularyBoost::Normal,
+        );
+        let mode = DictationMode::default();
+        assert_eq!(
+            preview(&mode, false, "I called use state"),
+            "I called useState"
+        );
+        assert_eq!(
+            preview(&mode, true, "I called use state"),
+            "I called `useState`"
+        );
+        crate::dictation::vocabulary::apply(&[], VocabularyBoost::Normal);
     }
 
     #[test]
