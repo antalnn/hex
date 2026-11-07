@@ -88,7 +88,8 @@ Install on Windows                        // setup.windows-installer
 
 Install on Linux                          // setup.linux-installer
 └── curl … | sh -> signed feed -> verified artifact -> launcher + hex.service
-    └── cannot start -> name the glibc floor or the missing Arch packages
+    ├── cannot start -> name the glibc floor or the missing Arch packages
+    └── finish without wl-copy -> print apt/dnf/pacman commands for wl-clipboard and wtype
 
 Prepare local models                      // separate network dependency
 └── Dictation -> huggingface.co and its download CDN
@@ -1699,7 +1700,7 @@ Linux beta                               // not macOS feature parity
 │       │   `hex status` reports the window and HUD stopped, with the reason (#979)
 │       ├── Neither (Rune refused it, or no layer-shell and no XWayland)
 │       │   -> process.log warns once; `hex status` reports `hud_limitation`
-│       │   and the listener warning
+│       │   and the listener's notice or warning (a missing wl-copy outranks it)
 │       └── No window loop (no GPU or display, `hex dictate`) -> no HUD
 ├── Tray host (StatusNotifierWatcher) -> Tray icon: click opens the window; menu as Windows' (tray_menu, linux/tray, desktop/tray_icon, rune::Tray)
 │   ├── Mark -> white; black when the desktop's color scheme prefers light (portal Settings color-scheme)
@@ -1738,6 +1739,10 @@ Linux beta                               // not macOS feature parity
 │           // linux/clipboard.rs, gnome_desktops_point_to_the_clipboard_lab_until_it_is_on;
 │           // not run on GNOME
 │   └── Wayland: wl-copy, then the shortcut, chosen at the first paste  // linux.wayland-paste
+│       ├── wl-copy not on PATH (direct installs add no packages) -> Settings and
+│       │   `hex status` warn while the listener runs; capture and transcription
+│       │   still run, and the paste fails naming wl-clipboard before a helper
+│       │   is spawned
 │       ├── Asked by a modifier shortcut -> wait for its portal release + 250 ms
 │       │   (2 s cap without a release); after a hex command -> 250 ms
 │       │   // Hyprland merges held physical modifiers into virtual-keyboard keys (#353)
@@ -1828,17 +1833,25 @@ Windows beta                             // x64 (Vulkan GPU) and ARM64 (CPU)
 │   the lowest-power adapter that drives a display (an unused integrated GPU
 │   beside the monitors' card would present every surface across adapters);
 │   a GPU whose device fails hands the window to the next adapter (#662)
-│   ├── Tray at rest -> no GPU device until something shows: the capture
+│   ├── Hidden startup -> no Direct3D device and no DX12 adapter enumeration:
+│   │   Rune makes its DX12-or-Vulkan choice on the first real GPU use (rune
+│   │   53c7f60, rune#200), so a tray launch no longer initialises Direct3D
+│   │   on every GPU, which NVIDIA's App can take as a game launch (#1308;
+│   │   not yet observed with NVIDIA's App, and the x64 speech model's Vulkan
+│   │   device on the same GPU may still trigger it)
+│   ├── Tray at rest -> no Rune GPU device until something shows: the capture
 │   │   capsule, picker, and ink keep their windows from launch but make their
 │   │   GPU surfaces at each show and drop them at each hide (Rune
 │   │   release_gpu_when_hidden); the HUD keeps its surface for 5 minutes
 │   │   after its last hide (release_gpu_after), then gives the device back
 │   │   ├── Dictation shortcut's modifiers down (Ctrl of Ctrl+Space) -> Rune
 │   │   │   makes the device and the HUD's pipeline on a thread (warm_gpu_with,
-│   │   │   unclaimed for 30 s they go), so the HUD shows without them
+│   │   │   unclaimed for 30 s they go), so the HUD shows without them; this
+│   │   │   first call also makes the DX12-or-Vulkan choice
 │   │   └── A show with no device and no warm-up waits for one (about 200 ms
 │   │       plus the HUD pipeline's 75 to 115 ms on an RTX 5070 Ti; Rune's
-│   │       overlay_gpu_lifecycle measures the device part)
+│   │       overlay_gpu_lifecycle measures the device part); a cold first show
+│   │       pays the adapter check too, roughly 150 ms
 │   └── A launch that crashed drawing (gpu-draw.pending, written when Rune
 │       starts the launch's first GPU device, left in the data folder, same
 │       version; cleared by the first frame on any surface or a clean quit; a
@@ -2028,11 +2041,16 @@ this does not show whether a launcher's token focuses it). Not yet on KWin,
 Mutter, or i3.
 
 Listener starts consume the host's settings snapshot; the foreground
-`hex dictate` command loads its own snapshot once. Invalid startup settings leave
-defaults available only for editing and block capture until a successful settings
-commit or a restart with valid settings. Dismissing the load error does
-not authorize recording with defaults. Feedback is initialized at these entry
-points, so a delayed listener start cannot reset a newer live volume selection.
+`hex dictate` command loads its own snapshot once. A settings file that isn't
+valid JSON, or isn't a JSON object, starts Hex with defaults and shows the parse
+error, but no longer blocks dictation; saving over it is refused, even after it
+is fixed, until Hex restarts. Its two-second poll keeps the running settings
+when the file isn't a JSON object, and adopting a fixed or removed file also
+clears that refusal, so the window's next save works without a restart. A load
+that fails outright still blocks capture until a successful save or a restart.
+Dismissing that failed-load error does not authorize recording with defaults.
+Feedback is initialized at these entry points, so a delayed listener start
+cannot reset a newer live volume selection.
 
 Checks: [test-linux-service.py](../../scripts/test-linux-service.py) exercises
 the real socket and process lifetime without a display, installed model, or
@@ -2234,7 +2252,9 @@ macOS `hex app` -> one menu-bar process, Rune window // dev.rune-ui-macos
 Windows `hex app` -> one tray process, Rune window // dev.rune-ui-windows
 ├── Runtime thread owns WindowsDesktopHost (listener, model preparation, OpenCode, transformations, updater)
 ├── Named event: a second launch shows the window; tray Show / Enable-Disable / Quit
-├── rune::App: --hidden starts windowless, close hides (keep_running); Quit or no tray ends it
+├── rune::App: --hidden starts windowless and makes no Direct3D device (on x64
+│   the speech model still loads on the GPU through Vulkan), close hides
+│   (keep_running); Quit or no tray ends it
 ├── General adds Launch at login; no terminal paste; chord capture polls
 ├── HUD: shared indicator model + CPU shader in a Rune overlay
 ├── Modes: "Choose a file…" opens rune::FileDialogs (file_dialog) on its own thread
