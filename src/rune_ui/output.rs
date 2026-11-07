@@ -233,16 +233,18 @@ fn preview(mode: &DictationMode, wrap_code: bool, input: &str) -> String {
     pairs.extend(crate::dictation::vocabulary::replacements(&mode.vocabulary));
     pairs.extend(mode.replacements.iter().cloned());
     let mut output = ReplacementSet::new(&pairs).replace(input);
+    for id in &mode.transformations {
+        if let Some(next) = crate::personal_commands::apply_builtin_transformation(id, &output) {
+            output = next;
+        }
+    }
+    // After the steps, as the listener does: a case-changing step runs before
+    // the wrap, so the Try field shows the same text a dictation would paste.
     if wrap_code {
         output = crate::dictation::vocabulary::wrap_code_terms(
             &output,
             &crate::dictation::vocabulary::entries(),
         );
-    }
-    for id in &mode.transformations {
-        if let Some(next) = crate::personal_commands::apply_builtin_transformation(id, &output) {
-            output = next;
-        }
     }
     output
 }
@@ -1029,6 +1031,16 @@ mod tests {
         assert_eq!(
             preview(&mode, true, "I called use state"),
             "I called `useState`"
+        );
+        // A case-changing step runs before the wrap, as it does when
+        // dictating, so the switch cannot wrap a term that no longer matches.
+        let lowercase = DictationMode {
+            transformations: vec!["lowercase".into()],
+            ..DictationMode::default()
+        };
+        assert_eq!(
+            preview(&lowercase, true, "I called use state"),
+            "i called usestate"
         );
         crate::dictation::vocabulary::apply(&[], VocabularyBoost::Normal);
     }
