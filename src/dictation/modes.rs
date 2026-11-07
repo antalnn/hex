@@ -259,6 +259,7 @@ mod tests {
         };
         let processed = runtime.process(
             "I opened open code today",
+            "en",
             &context,
             &crate::personal_commands::TransformationClient::default(),
         );
