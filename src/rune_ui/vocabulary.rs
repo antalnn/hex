@@ -304,6 +304,16 @@ fn term_row(p: Paint, entry: &TermRow, added: bool) -> El {
     }
 }
 
+/// Flips the sheet's backtick switch and saves at once. Writing the field and
+/// asking `flush_drafts` to save it does nothing: drafts start from the same
+/// settings, so the copy matches and no commit runs.
+fn flip_wrap_code(ui: &mut Ui) {
+    ui.update(|settings| {
+        settings.dictation_processing.wrap_code_terms =
+            !settings.dictation_processing.wrap_code_terms;
+    });
+}
+
 pub(super) fn modal(ui: &Ui, p: Paint) -> Option<[El; 2]> {
     if !ui.vocabulary.open {
         return None;
@@ -375,11 +385,7 @@ pub(super) fn modal(ui: &Ui, p: Paint) -> Option<[El; 2]> {
             tr("Wrap code terms in backticks"),
             Some(tr("Only terms marked with the switch in their row")),
             ui.settings.dictation_processing.wrap_code_terms,
-            |ui: &mut Ui| {
-                ui.settings.dictation_processing.wrap_code_terms =
-                    !ui.settings.dictation_processing.wrap_code_terms;
-                ui.flush_drafts();
-            },
+            flip_wrap_code,
         ));
     let biases = crate::transcription::models::definition(ui.settings.transcription.model)
         .vocabulary_use()
@@ -524,6 +530,18 @@ mod tests {
         let id = editor.rows[0].id;
         editor.set_code(id, true);
         assert!(editor.project()[0].code);
+    }
+
+    #[test]
+    fn the_backtick_switch_saves_when_pressed() {
+        let mut ui = ui();
+        assert!(!ui.settings.dictation_processing.wrap_code_terms);
+        flip_wrap_code(&mut ui);
+        assert!(ui.settings.dictation_processing.wrap_code_terms);
+        assert_eq!(ui.saved, 1, "the press reached disk");
+        flip_wrap_code(&mut ui);
+        assert!(!ui.settings.dictation_processing.wrap_code_terms);
+        assert_eq!(ui.saved, 2);
     }
 
     #[test]
