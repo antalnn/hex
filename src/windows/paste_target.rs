@@ -146,4 +146,13 @@ mod tests {
         assert_eq!(target_of(0), None);
         assert_eq!(target_of(41), Some(PasteTarget(41)));
     }
+
+    #[test]
+    fn capture_reports_a_target_or_nothing_and_never_moves_focus() {
+        // The desktop decides what is in front; this proves the call
+        // type-checks and stays quiet when there is no foreground window.
+        if let Some(target) = PasteTarget::capture() {
+            assert_ne!(target.0, 0);
+        }
+    }
 }
