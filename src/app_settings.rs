@@ -932,11 +932,17 @@ impl AppSettings {
                 kept.push(pair);
                 continue;
             }
-            crate::dictation::vocabulary::add_clamped(
+            // A vocabulary that refuses the spelling (too long, full, or 16
+            // spellings already) keeps the rule as a swap instead of losing it.
+            if crate::dictation::vocabulary::add(
                 &mut self.vocabulary,
                 &term,
                 std::slice::from_ref(&heard),
-            );
+            )
+            .is_err()
+            {
+                kept.push(pair);
+            }
         }
         self.dictation_processing.default_mode.replacements = kept;
     }
@@ -1556,6 +1562,42 @@ mod tests {
         let before = settings.vocabulary.clone();
         settings.apply_one_time_migrations_with(|_| true);
         assert_eq!(settings.vocabulary, before, "only once");
+    }
+
+    /// A vocabulary that cannot take a term (it is full here) leaves the pair
+    /// in the mode's list, so the correction still runs.
+    #[test]
+    fn a_refused_term_stays_a_replacement() {
+        use crate::dictation::text_replacements::TextReplacement;
+        use crate::dictation::vocabulary::{MAX_ENTRIES, VocabularyEntry};
+
+        let mut settings = AppSettings::default();
+        settings
+            .migrations
+            .retain(|id| id != VOCABULARY_REPLACEMENTS_MIGRATION);
+        settings.vocabulary = (0..MAX_ENTRIES)
+            .map(|index| VocabularyEntry {
+                term: format!("term{index}"),
+                sounds_like: Vec::new(),
+            })
+            .collect();
+        settings.dictation_processing.default_mode.replacements = vec![TextReplacement {
+            matched_phrase: "new thing".into(),
+            output: "NewTerm".into(),
+        }];
+
+        settings.apply_one_time_migrations_with(|_| true);
+
+        assert_eq!(settings.vocabulary.len(), MAX_ENTRIES, "nothing was added");
+        assert_eq!(
+            settings
+                .dictation_processing
+                .default_mode
+                .replacements
+                .len(),
+            1,
+            "the rule stays a swap"
+        );
     }
 
     /// The two retired summary switches become one choice once; On this Mac

@@ -395,10 +395,11 @@ impl CaptureState {
     }
 }
 
-/// Whether this key event cancels a dictation: a bare Escape while a capture
-/// records, or the release of one Hex already took. Hold and Toggle both
-/// count, and the key is Hex's either way, so the app in front never acts on
-/// the Escape that discarded a recording.
+/// Whether this key event cancels a dictation: Escape while a capture records,
+/// or the release of one Hex already took. Hold and Toggle both count, and the
+/// key is Hex's either way, so the app in front never acts on the Escape that
+/// discarded a recording. Modifiers are allowed because a hold recording keeps
+/// the dictation key down, so Escape arrives with Control held.
 fn takes_dictation_escape(vk: u32, is_down: bool, capture: &CaptureState, held: bool) -> bool {
     vk == u32::from(VK_ESCAPE) && (held || (is_down && (capture.active || capture.locked)))
 }
