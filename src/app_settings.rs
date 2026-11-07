@@ -20,6 +20,7 @@ mod capture;
 mod dictation_processing;
 mod hotkeys;
 mod labs;
+mod llm;
 mod meeting_folder;
 mod meetings;
 mod persistence;
@@ -33,6 +34,7 @@ pub use dictation_processing::{
 };
 pub use hotkeys::*;
 pub use labs::*;
+pub use llm::*;
 pub use meeting_folder::default_meeting_output_folder;
 pub use meetings::*;
 #[cfg_attr(not(target_os = "macos"), allow(unused_imports))]
@@ -303,6 +305,8 @@ pub struct AppSettings {
     pub experimental: ExperimentalSettings,
     /// The Labs features' own switches (`crate::labs`).
     pub labs: LabsSettings,
+    /// The local model server (`crate::local_model`).
+    pub llm: LlmSettings,
     /// Labs › Screenshots' shortcut and folder (macOS).
     pub screenshots: ScreenshotSettings,
     /// Start listening when Hex opens (Windows and Linux, where the
@@ -429,6 +433,7 @@ impl Default for AppSettings {
             capture_from_other_build: None,
             experimental: ExperimentalSettings::default(),
             labs: LabsSettings::default(),
+            llm: LlmSettings::default(),
             screenshots: ScreenshotSettings::default(),
             enable_on_launch: true,
             paste_with_shift: false,

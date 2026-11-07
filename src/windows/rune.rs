@@ -104,6 +104,8 @@ pub(crate) struct Published {
     pub(crate) settings: AppSettings,
     /// The running listener's state, for the tray.
     pub(crate) state: Option<crate::desktop::events::VoiceState>,
+    /// The local model server Hex owns, or adopted.
+    pub(crate) local_model: Option<crate::local_model::Snapshot>,
 }
 
 type Wake = Arc<dyn Fn() + Send + Sync>;

@@ -42,6 +42,8 @@ mod labs;
 #[cfg(target_os = "linux")]
 mod linux;
 mod local_api;
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+mod local_model;
 #[cfg(target_os = "macos")]
 mod macos_rune;
 #[cfg_attr(not(target_os = "macos"), allow(dead_code))]

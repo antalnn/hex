@@ -342,7 +342,7 @@ const KEYS: &[Key] = &[
     key(
         "labs.spoken_symbols",
         Kind::Bool,
-        "Labs: turn spoken \"comma\", \"colon\", \"hashtag\", \"underscore\", and similar words into symbols joined to their words",
+        "Labs: turn spoken \"comma\", \"hashtag\", \"underscore\", and similar words into symbols joined to their words (this build leaves \"colon\" as a word)",
     ),
     key(
         "labs.filler_words",
@@ -651,6 +651,34 @@ const KEYS: &[Key] = &[
         "updates.channel",
         Kind::Choice(&["stable", "dev"]),
         "Update channel; none follows the build (dev builds use dev, others stable)",
+    ),
+    key(
+        "llm.enabled",
+        Kind::Bool,
+        "Start the local llama.cpp server when Hex opens, and stop it when Hex quits",
+    ),
+    optional(
+        "llm.program",
+        Kind::Path,
+        "The llama-server program Hex starts; none uses ~/tools/llama-cpp/llama-server.exe",
+    ),
+    optional(
+        "llm.model",
+        Kind::Path,
+        "The GGUF model the server loads; none uses the copy in Hex's models folder",
+    ),
+    key(
+        "llm.port",
+        Kind::Integer {
+            min: 1024,
+            max: 65535,
+        },
+        "The port the local model server listens on, which the local rewrite calls",
+    ),
+    key(
+        "llm.args",
+        Kind::Json,
+        "Extra llama-server flags as a JSON array of strings; empty uses the tuned defaults",
     ),
 ];
 

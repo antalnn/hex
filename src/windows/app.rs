@@ -83,6 +83,8 @@ pub(crate) struct WindowsDesktopHost {
     /// or a later source change supersedes.
     automatic_preparation: bool,
     updater: crate::updater::Updater,
+    /// The llama.cpp server behind the local rewrite, when this build has one.
+    local_model: crate::local_model::LocalModel,
     /// The newest foreground window of another app, where the tray's Paste
     /// last dictation goes once its menu has taken the foreground.
     foreground: ForeignWindow,
@@ -211,6 +213,9 @@ impl WindowsDesktopHost {
                 .then(crate::keyboard_input_sources::current)
                 .flatten(),
         );
+        let local_model = crate::local_model::LocalModel::new(
+            crate::local_model::Config::from_settings(&settings.llm),
+        );
         let mut host = Self {
             event_path,
             event_reader,
@@ -236,10 +241,16 @@ impl WindowsDesktopHost {
             input_sources: None,
             automatic_preparation: false,
             updater: crate::updater::Updater::start(),
+            local_model,
             foreground: ForeignWindow::default(),
         };
         crate::transcription::models::delete_set_aside();
         host.refresh_personal_commands_host();
+        // The server behind the local rewrite starts with the app, so a
+        // dictation never waits for it to load.
+        if host.settings.llm.enabled {
+            host.local_model.start();
+        }
         // The microphone stays cold until first-run setup finishes.
         if host.settings.enable_on_launch {
             if crate::desktop::onboarding::completion_recorded() {
@@ -302,6 +313,8 @@ impl WindowsDesktopHost {
                 self.stop();
                 self.remember_listening(false);
             }
+            DesktopAction::StartLocalModel => self.local_model.start(),
+            DesktopAction::StopLocalModel => self.local_model.stop(),
             DesktopAction::ClearError => self.error = None,
             DesktopAction::CheckForUpdates
             | DesktopAction::OpenUpdate
@@ -500,6 +513,16 @@ impl WindowsDesktopHost {
         }
         let previous = std::mem::replace(&mut self.settings, settings.clone());
         let current = settings;
+        // A changed server (on/off, program, model, port, flags) restarts it,
+        // so the process Hex owns always matches the saved settings.
+        if previous.llm != current.llm {
+            self.local_model = crate::local_model::LocalModel::new(
+                crate::local_model::Config::from_settings(&current.llm),
+            );
+            if current.llm.enabled {
+                self.local_model.start();
+            }
+        }
         crate::feedback::set_enabled(current.sound_effects);
         crate::feedback::set_volume(current.sound_effect_volume.clamp(0.0, 1.0));
         crate::feedback::set_sound_set(current.sound_theme);
@@ -595,6 +618,7 @@ impl WindowsDesktopHost {
     }
 
     pub(crate) fn refresh(&mut self) {
+        self.local_model.poll();
         self.switch_with_keyboard();
         if let Some(result) = self.preparation.poll() {
             self.automatic_preparation = false;
@@ -712,6 +736,7 @@ impl WindowsDesktopHost {
             update_blocked: self.updater.blocked(),
             settings: self.settings.clone(),
             state: self.activity.state.filter(|_| self.is_running()),
+            local_model: Some(self.local_model.snapshot()),
         }
     }
 }

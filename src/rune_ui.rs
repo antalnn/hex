@@ -619,6 +619,8 @@ struct ServiceView {
     update_notes: Option<crate::desktop::host::UpdateNotes>,
     /// Why this Hex can't update itself, beside Download update (Windows).
     update_blocked: Option<&'static str>,
+    /// The local model server Hex owns, or adopted.
+    local_model: Option<crate::local_model::Snapshot>,
     /// The service is recording or saving a shortcut.
     editing: bool,
 }

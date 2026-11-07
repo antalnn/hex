@@ -326,9 +326,11 @@ symbols joined to their neighbours: "hashtag" and "hash sign" become `#` and
 "at sign" and "arroba" `@`, joined to the next word ("hashtag release" →
 "#release"); "underscore" and "guion bajo" `_`, "hyphen" and "guion" `-`,
 and "slash" `/` join both words ("my underscore variable" → "my_variable");
-"comma" and "coma" `,`, "colon" and "dos puntos" `:`, and "semicolon" and
+"comma" and "coma" `,` and "semicolon" and
 "punto y coma" `;` join the previous word and leave one space before the
-next ("done comma thanks" → "done, thanks"). The longer Spanish phrase wins
+next ("done comma thanks" → "done, thanks"). "colon" and "dos puntos" are
+left as words in this build, so a colon can be written or inferred from
+context instead. The longer Spanish phrase wins
 ("punto y coma" is `;`, not "punto y" + `,`). The commas, periods, and
 spaces the model puts around a spoken symbol go with it. Words such as
 "commas", "comas", "guiones", "hashtags", "slashed", or "colonel" stay as

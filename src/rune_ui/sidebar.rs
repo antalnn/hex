@@ -334,12 +334,43 @@ fn footer(ui: &Ui, p: Paint) -> El {
     col()
         .key("footer")
         .mt(8.0)
+        .children(model_line(ui, p))
         .child(version_line(
             ui,
             p,
             line("version", &version_label(), p.faint()),
         ))
         .children(status)
+}
+
+/// The local model server's state, above the version. Absent where the build
+/// has no server.
+fn model_line(ui: &Ui, p: Paint) -> Option<El> {
+    let snapshot = ui.view.as_ref()?.local_model.as_ref()?;
+    let words = format!("Local model · {}", snapshot.state.words());
+    let color = match snapshot.state {
+        crate::local_model::State::Ready | crate::local_model::State::External => p.k.c.text_muted,
+        crate::local_model::State::Failed => p.danger(),
+        _ => p.faint(),
+    };
+    let line = row()
+        .key("local-model-status")
+        .h(FOOTER_LINE)
+        .px(6.0)
+        .center_y()
+        .self_start()
+        .radius(p.k.radius.sm)
+        .child(
+            text(words)
+                .key("label")
+                .font(p.k.ty.small)
+                .color(color)
+                .truncate(),
+        );
+    Some(match &snapshot.detail {
+        Some(detail) => line.label(detail.clone()),
+        None => line,
+    })
 }
 
 /// A local or test build marks itself beside the version, quietly: an outline
