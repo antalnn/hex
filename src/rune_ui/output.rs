@@ -228,16 +228,17 @@ fn builtin(id: &str) -> Option<(&'static str, &'static str)> {
 fn preview(mode: &DictationMode, wrap_code: bool, input: &str) -> String {
     // The shared vocabulary's spellings, then the mode's own terms and swaps:
     // the same order the listener applies them in.
-    let mut pairs = crate::dictation::vocabulary::replacements(
-        &crate::dictation::vocabulary::entries(),
-        wrap_code,
-    );
-    pairs.extend(crate::dictation::vocabulary::replacements(
-        &mode.vocabulary,
-        false,
-    ));
+    let mut pairs =
+        crate::dictation::vocabulary::replacements(&crate::dictation::vocabulary::entries());
+    pairs.extend(crate::dictation::vocabulary::replacements(&mode.vocabulary));
     pairs.extend(mode.replacements.iter().cloned());
     let mut output = ReplacementSet::new(&pairs).replace(input);
+    if wrap_code {
+        output = crate::dictation::vocabulary::wrap_code_terms(
+            &output,
+            &crate::dictation::vocabulary::entries(),
+        );
+    }
     for id in &mode.transformations {
         if let Some(next) = crate::personal_commands::apply_builtin_transformation(id, &output) {
             output = next;

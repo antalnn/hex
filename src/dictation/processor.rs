@@ -101,7 +101,7 @@ impl Profile {
         };
         // A mode's own terms correct the transcript exactly as the shared ones
         // do, ahead of the mode's explicit swaps.
-        let mut pairs = crate::dictation::vocabulary::replacements(&mode.vocabulary, false);
+        let mut pairs = crate::dictation::vocabulary::replacements(&mode.vocabulary);
         pairs.extend(mode.replacements.iter().cloned());
         Self::configured(
             name,

@@ -20,6 +20,10 @@ pub struct ModeRuntime {
     default: PostProcessingSettings,
     default_transformations: Vec<String>,
     default_vocabulary: Vec<crate::dictation::vocabulary::VocabularyEntry>,
+    /// The shared terms marked `code`, wrapped in backticks after the rewrite
+    /// when `wrap_code_terms` is on.
+    code_terms: Vec<crate::dictation::vocabulary::VocabularyEntry>,
+    wrap_code_terms: bool,
     modes: Vec<DictationMode>,
     reads_page: bool,
 }
@@ -29,16 +33,20 @@ impl ModeRuntime {
         let processing = &settings.dictation_processing;
         // The vocabulary's "sounds like" spellings correct the transcript on
         // every model, so they run here with the default mode's own swaps.
-        let mut global = crate::dictation::vocabulary::replacements(
-            &settings.vocabulary,
-            processing.wrap_code_terms,
-        );
+        let mut global = crate::dictation::vocabulary::replacements(&settings.vocabulary);
         global.extend(processing.default_mode.replacements.iter().cloned());
         Self {
             replacements: ReplacementSet::new(&global),
             default: processing.default_mode.post_processing.clone(),
             default_transformations: processing.default_mode.transformations.clone(),
             default_vocabulary: processing.default_mode.vocabulary.clone(),
+            code_terms: settings
+                .vocabulary
+                .iter()
+                .filter(|entry| entry.code)
+                .cloned()
+                .collect(),
+            wrap_code_terms: processing.wrap_code_terms,
             modes: processing.modes.clone(),
             reads_page: uses_page(processing),
         }
@@ -66,6 +74,12 @@ impl ModeRuntime {
         let mut processed =
             Profiles::new(profile).process_cancellable(&text, language, context, &cancelled);
         processed.apply_transformations(transformations, context, &cancelled);
+        // After the rewrite: the model may lowercase or drop a backtick it saw
+        // in its input, so the wrap is the last step that touches the text.
+        if self.wrap_code_terms {
+            processed.text =
+                crate::dictation::vocabulary::wrap_code_terms(&processed.text, &self.code_terms);
+        }
         processed
     }
 
@@ -82,7 +96,6 @@ impl ModeRuntime {
                     "Global",
                     ReplacementSet::new(&crate::dictation::vocabulary::replacements(
                         &self.default_vocabulary,
-                        false,
                     )),
                     self.default_transformations.clone(),
                     &self.default,
@@ -275,37 +288,54 @@ mod tests {
     fn a_code_term_wraps_in_backticks_when_the_setting_is_on() {
         use crate::dictation::vocabulary::VocabularyEntry;
 
-        let runtime = runtime(|settings| {
-            settings.vocabulary = vec![VocabularyEntry {
-                term: "useState".into(),
-                sounds_like: vec!["use state".into()],
-                code: true,
-            }];
-            settings.dictation_processing.wrap_code_terms = true;
-            settings
-                .dictation_processing
-                .default_mode
-                .transformations
-                .clear();
-            settings
-                .dictation_processing
-                .default_mode
-                .post_processing
-                .enabled = false;
-        });
+        let build = |on: bool| {
+            runtime(move |settings| {
+                settings.vocabulary = vec![VocabularyEntry {
+                    term: "useState".into(),
+                    sounds_like: vec!["use state".into()],
+                    code: true,
+                }];
+                settings.dictation_processing.wrap_code_terms = on;
+                settings
+                    .dictation_processing
+                    .default_mode
+                    .transformations
+                    .clear();
+                settings
+                    .dictation_processing
+                    .default_mode
+                    .post_processing
+                    .enabled = false;
+            })
+        };
         let context = crate::dictation::context::ContextSnapshot {
             application: None,
             browser_url: None,
             window_title: None,
             input_revision: None,
         };
-        let processed = runtime.process(
-            "I called use state today",
-            "en",
-            &context,
-            &crate::personal_commands::TransformationClient::default(),
+        let client = crate::personal_commands::TransformationClient::default();
+        let process =
+            |runtime: ModeRuntime, text: &str| runtime.process(text, "en", &context, &client).text;
+
+        // The setting corrects the heard spelling and then wraps it.
+        assert_eq!(
+            process(build(true), "I called use state today"),
+            "I called `useState` today"
         );
-        assert_eq!(processed.text, "I called `useState` today");
+        // The transcriber already spelled it right: the wrap still finds it.
+        assert_eq!(
+            process(build(true), "Open useState docs"),
+            "Open `useState` docs"
+        );
+        assert_eq!(
+            process(build(false), "I called use state today"),
+            "I called useState today"
+        );
+        assert_eq!(
+            process(build(false), "Open useState docs"),
+            "Open useState docs"
+        );
     }
 
     #[test]

@@ -390,11 +390,10 @@ fn same(left: &str, right: &str) -> bool {
 /// to its term. A spelling equal to the term would only rewrite itself, and an
 /// entry with no spellings corrects nothing, so both are skipped.
 ///
-/// `wrap_code` turns an entry marked `code` into a backticked term. The flag is
-/// separate from the entry so the same list can paste plain in an email.
+/// The output is always the plain term. Backticks for a term marked `code` are
+/// added once, after the rewrite, by [`wrap_code_terms`].
 pub(crate) fn replacements(
     entries: &[VocabularyEntry],
-    wrap_code: bool,
 ) -> Vec<super::text_replacements::TextReplacement> {
     let mut pairs = Vec::new();
     for entry in entries {
@@ -402,11 +401,6 @@ pub(crate) fn replacements(
         if term.is_empty() {
             continue;
         }
-        let output = if entry.code && wrap_code {
-            format!("`{term}`")
-        } else {
-            term.to_owned()
-        };
         for spelling in &entry.sounds_like {
             let heard = spelling.trim();
             if heard.is_empty() || same(heard, term) {
@@ -414,11 +408,78 @@ pub(crate) fn replacements(
             }
             pairs.push(super::text_replacements::TextReplacement {
                 matched_phrase: heard.to_owned(),
-                output: output.clone(),
+                output: term.to_owned(),
             });
         }
     }
     pairs
+}
+
+/// Wraps every standalone occurrence of a term marked `code` in backticks.
+///
+/// Runs on the finished text, so the model cannot strip the backticks, and it
+/// covers a term the transcriber already spelled right, which a correction
+/// never touches. Leaves a code fence alone, and the boundary checks keep it
+/// out of an occurrence already in backticks, a path, and a longer identifier.
+pub(crate) fn wrap_code_terms(text: &str, entries: &[VocabularyEntry]) -> String {
+    if text.contains("```") || text.contains("~~~") {
+        return text.to_owned();
+    }
+    let mut terms: Vec<&str> = Vec::new();
+    for entry in entries {
+        let term = entry.term.trim();
+        if entry.code && !term.is_empty() && !terms.contains(&term) {
+            terms.push(term);
+        }
+    }
+    // Longest first, so a short term cannot match inside a longer one.
+    terms.sort_by_key(|term| std::cmp::Reverse(term.chars().count()));
+    let mut output = text.to_owned();
+    for term in terms {
+        output = wrap_term(&output, term);
+    }
+    output
+}
+
+/// Backticks every standalone `term` in `text`. A boundary is the start or end
+/// of the text, or a character that cannot be part of the same word: the
+/// checks also catch a term already between backticks and one inside a path.
+fn wrap_term(text: &str, term: &str) -> String {
+    let Ok(pattern) = regex::Regex::new(&regex::escape(term)) else {
+        return text.to_owned();
+    };
+    let mut output = String::with_capacity(text.len());
+    let mut last = 0;
+    let mut wrapped = false;
+    for found in pattern.find_iter(text) {
+        let (start, end) = (found.start(), found.end());
+        let before = text[..start].chars().next_back();
+        let after = text[end..].chars().next();
+        let joins_before = |character: Option<char>| {
+            character.is_some_and(|character| {
+                character.is_alphanumeric() || matches!(character, '_' | '`' | '\\' | '/')
+            })
+        };
+        let joins_after = |character: Option<char>| {
+            character.is_some_and(|character| {
+                character.is_alphanumeric() || matches!(character, '_' | '`')
+            })
+        };
+        if joins_before(before) || joins_after(after) {
+            continue;
+        }
+        output.push_str(&text[last..start]);
+        output.push('`');
+        output.push_str(&text[start..end]);
+        output.push('`');
+        last = end;
+        wrapped = true;
+    }
+    if !wrapped {
+        return text.to_owned();
+    }
+    output.push_str(&text[last..]);
+    output
 }
 
 /// Adds `term`, or adds new `sounds_like` spellings and the code flag to an
@@ -796,7 +857,7 @@ mod tests {
             ),
             entry("Rune", &[]),
         ];
-        let pairs = replacements(&entries, false);
+        let pairs = replacements(&entries);
         assert_eq!(pairs.len(), 2, "only real, different spellings survive");
         assert_eq!(pairs[0].matched_phrase, "capuchin");
         assert_eq!(pairs[0].output, "cappuccino");
@@ -804,15 +865,79 @@ mod tests {
         assert_eq!(pairs[1].output, "cappuccino");
     }
 
+    fn code(term: &str) -> VocabularyEntry {
+        VocabularyEntry {
+            term: term.into(),
+            sounds_like: Vec::new(),
+            code: true,
+        }
+    }
+
     #[test]
-    fn code_terms_wrap_in_backticks_only_when_asked() {
+    fn a_correction_never_adds_backticks() {
         let entries = [VocabularyEntry {
             term: "useState".into(),
             sounds_like: vec!["use state".into()],
             code: true,
         }];
-        assert_eq!(replacements(&entries, false)[0].output, "useState");
-        assert_eq!(replacements(&entries, true)[0].output, "`useState`");
+        assert_eq!(replacements(&entries)[0].output, "useState");
+    }
+
+    #[test]
+    fn a_code_term_wraps_where_it_stands() {
+        let entries = [code(".gitignore")];
+        assert_eq!(
+            wrap_code_terms("edit the .gitignore file", &entries),
+            "edit the `.gitignore` file"
+        );
+        // Already wrapped: the backtick on either side blocks a second pass.
+        assert_eq!(
+            wrap_code_terms("edit the `.gitignore` file", &entries),
+            "edit the `.gitignore` file"
+        );
+        // A path is left alone.
+        assert_eq!(
+            wrap_code_terms(r"C:\project\.gitignore", &entries),
+            r"C:\project\.gitignore"
+        );
+        // At the very start and the very end.
+        assert_eq!(wrap_code_terms(".gitignore", &entries), "`.gitignore`");
+        assert_eq!(
+            wrap_code_terms("write .gitignore", &entries),
+            "write `.gitignore`"
+        );
+    }
+
+    #[test]
+    fn a_longer_identifier_and_a_fence_are_untouched() {
+        let entries = [code("useState")];
+        assert_eq!(
+            wrap_code_terms("const useStateValue = 1", &entries),
+            "const useStateValue = 1"
+        );
+        let fenced = "```ts\nconst useState = 1\n```";
+        assert_eq!(wrap_code_terms(fenced, &entries), fenced);
+        let tildes = "~~~\nuseState\n~~~";
+        assert_eq!(wrap_code_terms(tildes, &entries), tildes);
+    }
+
+    #[test]
+    fn the_longest_code_term_wins_inside_a_shared_name() {
+        let entries = [code("use"), code("useState")];
+        assert_eq!(
+            wrap_code_terms("call useState now", &entries),
+            "call `useState` now"
+        );
+    }
+
+    #[test]
+    fn a_term_not_marked_code_is_never_wrapped() {
+        let entries = [VocabularyEntry {
+            term: "useState".into(),
+            sounds_like: Vec::new(),
+            code: false,
+        }];
+        assert_eq!(wrap_code_terms("call useState", &entries), "call useState");
     }
 
     #[test]
