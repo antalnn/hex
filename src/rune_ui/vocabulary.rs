@@ -143,7 +143,7 @@ pub(super) fn unused_note(ui: &Ui) -> Option<String> {
     let model = crate::transcription::models::definition(ui.settings.transcription.model);
     (!model.uses_vocabulary()).then(|| {
         tr_fill(
-            "{} doesn't use these terms; rewriting and search still do",
+            "{} doesn't take these terms while listening; their spellings still correct the text",
             model.name,
         )
     })
@@ -325,7 +325,7 @@ pub(super) fn modal(ui: &Ui, p: Paint) -> Option<[El; 2]> {
         )
         .child(
             text(tr(
-                "Transcription and rewriting spell them right, and search finds them when misheard",
+                "Each spelling below is corrected to its term on every dictation, and search finds them when misheard",
             ))
             .key("description")
             .font(DESCRIPTION)

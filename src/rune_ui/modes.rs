@@ -712,7 +712,11 @@ fn detail(ui: &Ui, p: Paint, layer: &mut Vec<El>) -> El {
     let current = mode(&ui.settings, selection);
     let mut content = page("mode-detail-content");
     content = content.child(basics(ui, p, selection, current));
-    content = content.child(corrections(ui, p));
+    // Corrections come from the vocabulary now, so the default mode has no
+    // list of its own; a per-app mode still may.
+    if selection != Selection::Default {
+        content = content.child(corrections(ui, p));
+    }
     content = content.child(processing(ui, p, selection, current, layer));
     content = content.child(transformations(ui, p, current, layer));
     if selection != Selection::Default {

@@ -27,8 +27,12 @@ pub struct ModeRuntime {
 impl ModeRuntime {
     pub fn from_settings(settings: &AppSettings) -> Self {
         let processing = &settings.dictation_processing;
+        // The vocabulary's "sounds like" spellings correct the transcript on
+        // every model, so they run here with the default mode's own swaps.
+        let mut global = crate::dictation::vocabulary::replacements(&settings.vocabulary);
+        global.extend(processing.default_mode.replacements.iter().cloned());
         Self {
-            replacements: ReplacementSet::new(&processing.default_mode.replacements),
+            replacements: ReplacementSet::new(&global),
             default: processing.default_mode.post_processing.clone(),
             default_transformations: processing.default_mode.transformations.clone(),
             default_vocabulary: processing.default_mode.vocabulary.clone(),
@@ -71,7 +75,9 @@ impl ModeRuntime {
             || {
                 Profile::configured(
                     "Global",
-                    ReplacementSet::default(),
+                    ReplacementSet::new(&crate::dictation::vocabulary::replacements(
+                        &self.default_vocabulary,
+                    )),
                     self.default_transformations.clone(),
                     &self.default,
                 )
@@ -221,6 +227,40 @@ mod tests {
         let mut value = AppSettings::default();
         settings(&mut value);
         ModeRuntime::from_settings(&value)
+    }
+
+    #[test]
+    fn a_vocabulary_spelling_corrects_the_transcript() {
+        use crate::dictation::vocabulary::VocabularyEntry;
+
+        let runtime = runtime(|settings| {
+            settings.vocabulary = vec![VocabularyEntry {
+                term: "OpenCode".into(),
+                sounds_like: vec!["open code".into()],
+            }];
+            settings
+                .dictation_processing
+                .default_mode
+                .transformations
+                .clear();
+            settings
+                .dictation_processing
+                .default_mode
+                .post_processing
+                .enabled = false;
+        });
+        let context = crate::dictation::context::ContextSnapshot {
+            application: None,
+            browser_url: None,
+            window_title: None,
+            input_revision: None,
+        };
+        let processed = runtime.process(
+            "I opened open code today",
+            &context,
+            &crate::personal_commands::TransformationClient::default(),
+        );
+        assert_eq!(processed.text, "I opened OpenCode today");
     }
 
     #[test]

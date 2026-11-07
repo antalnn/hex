@@ -370,6 +370,32 @@ fn same(left: &str, right: &str) -> bool {
     left.to_lowercase() == right.to_lowercase()
 }
 
+/// The corrections the vocabulary implies: every "sounds like" spelling maps
+/// to its term. A spelling equal to the term would only rewrite itself, and an
+/// entry with no spellings corrects nothing, so both are skipped.
+pub(crate) fn replacements(
+    entries: &[VocabularyEntry],
+) -> Vec<super::text_replacements::TextReplacement> {
+    let mut pairs = Vec::new();
+    for entry in entries {
+        let term = entry.term.trim();
+        if term.is_empty() {
+            continue;
+        }
+        for spelling in &entry.sounds_like {
+            let heard = spelling.trim();
+            if heard.is_empty() || same(heard, term) {
+                continue;
+            }
+            pairs.push(super::text_replacements::TextReplacement {
+                matched_phrase: heard.to_owned(),
+                output: term.to_owned(),
+            });
+        }
+    }
+    pairs
+}
+
 /// Adds `term`, or adds new `sounds_like` spellings to an existing entry with
 /// the same term in any case. Returns whether the list changed.
 pub fn add(
@@ -710,5 +736,22 @@ mod tests {
         std::fs::write(&path, "{").unwrap();
         assert!(read_from(&path).is_err());
         std::fs::remove_dir_all(&directory).unwrap();
+    }
+
+    #[test]
+    fn spellings_become_replacements() {
+        let entries = [
+            entry(
+                "cappuccino",
+                &["capuchin", "cap a chino", "Cappuccino", "  "],
+            ),
+            entry("Rune", &[]),
+        ];
+        let pairs = replacements(&entries);
+        assert_eq!(pairs.len(), 2, "only real, different spellings survive");
+        assert_eq!(pairs[0].matched_phrase, "capuchin");
+        assert_eq!(pairs[0].output, "cappuccino");
+        assert_eq!(pairs[1].matched_phrase, "cap a chino");
+        assert_eq!(pairs[1].output, "cappuccino");
     }
 }

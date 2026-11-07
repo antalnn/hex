@@ -18,7 +18,7 @@ use super::modes::{application_icon, monogram};
 use super::spark::{Spark, spark};
 use super::{ShortcutTarget, Ui};
 use crate::app_settings::DictationMode;
-use crate::desktop::i18n::{tr, tr_fill};
+use crate::desktop::i18n::{tr, tr_fill, tr_named};
 use crate::dictation::text_replacements::ReplacementSet;
 
 mod examples;
@@ -93,12 +93,42 @@ struct Step {
     title: String,
     detail: Option<String>,
     runner: Runner,
+    action: Option<StepAction>,
 }
 
-/// A mode's steps in the order they run: the names it hears, its
-/// corrections, OpenCode rewriting when it is on, then its transformations.
+/// A step's button, for the steps changed somewhere else.
+#[derive(Clone, Copy, PartialEq)]
+enum StepAction {
+    /// Opens General › Vocabulary, where terms and their spellings live.
+    Vocabulary,
+}
+
+/// A mode's steps in the order they run: the vocabulary, its own names and
+/// swaps, OpenCode rewriting when it is on, then its transformations.
 fn steps(ui: &Ui, mode: &DictationMode) -> Vec<Step> {
     let mut steps = Vec::new();
+    // The shared vocabulary corrects every dictation: each "sounds like"
+    // spelling becomes its term. The pane leads to where terms are added, so
+    // the list itself is never printed here.
+    let shared = crate::dictation::vocabulary::entries();
+    if !shared.is_empty() {
+        let heard = shared
+            .iter()
+            .filter(|entry| !entry.sounds_like.is_empty())
+            .count();
+        steps.push(Step {
+            title: tr("Vocabulary").into(),
+            detail: Some(tr_named(
+                "{terms} terms · {heard} heard as other words",
+                &[
+                    ("terms", &shared.len().to_string()),
+                    ("heard", &heard.to_string()),
+                ],
+            )),
+            runner: Runner::BuiltIn,
+            action: Some(StepAction::Vocabulary),
+        });
+    }
     if !mode.vocabulary.is_empty() {
         let terms = mode
             .vocabulary
@@ -107,9 +137,10 @@ fn steps(ui: &Ui, mode: &DictationMode) -> Vec<Step> {
             .collect::<Vec<_>>()
             .join(" · ");
         steps.push(Step {
-            title: tr("Vocabulary").into(),
+            title: tr("This mode's terms").into(),
             detail: Some(terms),
             runner: Runner::BuiltIn,
+            action: None,
         });
     }
     if !mode.replacements.is_empty() {
@@ -128,9 +159,10 @@ fn steps(ui: &Ui, mode: &DictationMode) -> Vec<Step> {
             .collect::<Vec<_>>()
             .join(" · ");
         steps.push(Step {
-            title: tr("Replace words").into(),
+            title: tr("Custom swaps").into(),
             detail: (!pairs.is_empty()).then_some(pairs),
             runner: Runner::BuiltIn,
+            action: None,
         });
     }
     if mode.post_processing.enabled {
@@ -138,6 +170,7 @@ fn steps(ui: &Ui, mode: &DictationMode) -> Vec<Step> {
             title: tr("Rewrite with OpenCode").into(),
             detail: mode.post_processing.model.clone(),
             runner: Runner::Rewrite,
+            action: None,
         });
     }
     for id in &mode.transformations {
@@ -146,6 +179,7 @@ fn steps(ui: &Ui, mode: &DictationMode) -> Vec<Step> {
                 title: title.into(),
                 detail: Some(detail.into()),
                 runner: Runner::BuiltIn,
+                action: None,
             },
             None => {
                 let script = ui
@@ -158,6 +192,7 @@ fn steps(ui: &Ui, mode: &DictationMode) -> Vec<Step> {
                     title: script.map_or_else(|| id.clone(), |script| script.name.clone()),
                     detail: script.and_then(|script| script.description.clone()),
                     runner: Runner::Script,
+                    action: None,
                 }
             }
         });
@@ -178,7 +213,13 @@ fn builtin(id: &str) -> Option<(&'static str, &'static str)> {
 /// The Try field's sentence after every dictation's corrections and
 /// built-in steps. Scripts and rewriting run only when dictating.
 fn preview(mode: &DictationMode, input: &str) -> String {
-    let mut output = ReplacementSet::new(&mode.replacements).replace(input);
+    // The shared vocabulary's spellings, then the mode's own terms and swaps:
+    // the same order the listener applies them in.
+    let mut pairs =
+        crate::dictation::vocabulary::replacements(&crate::dictation::vocabulary::entries());
+    pairs.extend(crate::dictation::vocabulary::replacements(&mode.vocabulary));
+    pairs.extend(mode.replacements.iter().cloned());
+    let mut output = ReplacementSet::new(&pairs).replace(input);
     for id in &mode.transformations {
         if let Some(next) = crate::personal_commands::apply_builtin_transformation(id, &output) {
             output = next;
@@ -542,6 +583,18 @@ fn step_row(p: Paint, key: &str, index: usize, step: &Step) -> El {
                 })),
         )
         .child(tag)
+        .children(step.action.map(|action| match action {
+            StepAction::Vocabulary => button(
+                p,
+                "add-words",
+                tr("Add words"),
+                ButtonKind::Secondary,
+                |ui: &mut Ui, _: &mut Tx| {
+                    ui.pane = super::Pane::General;
+                    super::vocabulary::open(ui);
+                },
+            ),
+        }))
 }
 
 /// A sentence in, and what Hex would paste for it out.
@@ -830,13 +883,14 @@ fn agent_prompt(fix: Option<(&str, &str)>) -> String {
          (run `hex commands init` for its typings; the API, including fetch and \
          node:child_process, is documented at {TRANSFORMS_DOCS}).\n\
          \n\
-         Names Hex should know (people, products, projects) go in a vocabulary, not in \
-         replacements. Hex hears them better and the AI rewrite spells them right. The \
-         shared list covers every app: `hex vocabulary add <term> --sounds-like a,b` \
-         (and `list`, `remove`). A mode can add its own in `vocabulary`, a list of \
-         terms (\"Rune\") or {{\"term\", \"sounds_like\": [...]}} for words it's often \
-         heard as. Use replacements for fixed swaps and deletions, such as a word to an \
-         emoji or dropping \"um\".\n\
+         Names Hex should know (people, products, projects) go in the vocabulary: \
+         `hex vocabulary add <term> --sounds-like a,b` (and `list`, `remove`). Each \
+         \"sounds like\" spelling is corrected to its term on every dictation, before the \
+         rewrite, so add the words the transcriber gets wrong, not the words it already \
+         hears. The shared list covers every app; a mode can add its own in `vocabulary`, \
+         a list of terms (\"Rune\") or {{\"term\", \"sounds_like\": [...]}}. Use a mode's \
+         `replacements` only for what a term can't express, such as a word to an emoji or \
+         dropping \"um\".\n\
          \n\
          Read the current value with `hex settings get dictation_processing`, then \
          change it with `hex settings set dictation_processing.default_mode '<json>'` \

@@ -535,7 +535,10 @@ impl WindowsDesktopHost {
         {
             tracing::warn!(%error, "could not update history retention");
         }
-        let modes_changed = previous.dictation_processing != current.dictation_processing;
+        let modes_changed = previous.dictation_processing != current.dictation_processing
+            // The vocabulary's spellings are corrections now, so a term or a
+            // "sounds like" change reaches the next dictation the same way.
+            || previous.vocabulary != current.vocabulary;
         if modes_changed {
             *self
                 .mode_runtime

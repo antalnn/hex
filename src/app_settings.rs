@@ -364,6 +364,7 @@ const MIGRATIONS: &[&str] = &[
     ANOMALY_IDENTITY_MIGRATION,
     MEETING_RETENTION_DEFAULT_MIGRATION,
     MEETING_SUMMARIES_MIGRATION,
+    VOCABULARY_REPLACEMENTS_MIGRATION,
 ];
 #[cfg(not(hex_capture))]
 const MIGRATIONS: &[&str] = &[
@@ -371,6 +372,7 @@ const MIGRATIONS: &[&str] = &[
     ANOMALY_IDENTITY_MIGRATION,
     MEETING_RETENTION_DEFAULT_MIGRATION,
     MEETING_SUMMARIES_MIGRATION,
+    VOCABULARY_REPLACEMENTS_MIGRATION,
 ];
 /// Scrawl's settings were read into `capture` once. Left out of
 /// `MIGRATIONS` so new settings import them too.
@@ -386,6 +388,10 @@ const MEETING_RETENTION_DEFAULT_MIGRATION: &str = "meeting-retention-default";
 /// Summarize with Apple Intelligence and Summarize with OpenCode became one
 /// choice, `meetings.summaries`.
 const MEETING_SUMMARIES_MIGRATION: &str = "meeting-summaries-choice";
+/// The default mode's replacement list and the vocabulary held the same
+/// corrections. The list is folded into the vocabulary's "sounds like"
+/// spellings once, so terms correct the transcript on every model.
+const VOCABULARY_REPLACEMENTS_MIGRATION: &str = "vocabulary-replacements";
 
 fn deserialize_retired_value<'de, D>(
     deserializer: D,
@@ -901,11 +907,38 @@ impl AppSettings {
                 .push(MEETING_RETENTION_DEFAULT_MIGRATION.into());
         }
         self.migrate_meeting_summaries();
+        if !self.has_migration(VOCABULARY_REPLACEMENTS_MIGRATION) {
+            self.fold_replacements_into_vocabulary();
+            self.migrations
+                .push(VOCABULARY_REPLACEMENTS_MIGRATION.into());
+        }
         #[cfg(hex_capture)]
         if !self.has_migration(ANNOTATE_DEFAULT_MIGRATION) {
             self.capture.enabled = true;
             self.migrations.push(ANNOTATE_DEFAULT_MIGRATION.into());
         }
+    }
+
+    /// The default mode's replacement list becomes the vocabulary's "sounds
+    /// like" spellings: each heard phrase is appended to its term, and a term
+    /// the list names that the vocabulary lacks is added. A rule with no output
+    /// (a deletion) is not a term, so it stays in the list.
+    fn fold_replacements_into_vocabulary(&mut self) {
+        let mut kept = Vec::new();
+        for pair in std::mem::take(&mut self.dictation_processing.default_mode.replacements) {
+            let term = pair.output.trim().to_owned();
+            let heard = pair.matched_phrase.trim().to_owned();
+            if term.is_empty() || heard.is_empty() {
+                kept.push(pair);
+                continue;
+            }
+            crate::dictation::vocabulary::add_clamped(
+                &mut self.vocabulary,
+                &term,
+                std::slice::from_ref(&heard),
+            );
+        }
+        self.dictation_processing.default_mode.replacements = kept;
     }
 
     /// The two retired summary switches become `meetings.summaries` once.
@@ -1462,6 +1495,67 @@ mod tests {
         settings.capture.enabled = false;
         settings.apply_one_time_migrations_with(|_| true);
         assert!(!settings.capture.enabled, "only once");
+    }
+
+    /// The default mode's replacement pairs become vocabulary spellings once,
+    /// merging into terms it already has and leaving deletions alone.
+    #[test]
+    fn replacements_fold_into_the_vocabulary_once() {
+        use crate::dictation::text_replacements::TextReplacement;
+        use crate::dictation::vocabulary::VocabularyEntry;
+
+        let mut settings = AppSettings::default();
+        settings
+            .migrations
+            .retain(|id| id != VOCABULARY_REPLACEMENTS_MIGRATION);
+        settings.vocabulary = vec![VocabularyEntry {
+            term: "Cappuccino".into(),
+            sounds_like: vec!["capuchin".into()],
+        }];
+        settings.dictation_processing.default_mode.replacements = vec![
+            TextReplacement {
+                matched_phrase: "cap a chino".into(),
+                output: "cappuccino".into(),
+            },
+            TextReplacement {
+                matched_phrase: "dot net".into(),
+                output: ".NET".into(),
+            },
+            TextReplacement {
+                matched_phrase: "um".into(),
+                output: String::new(),
+            },
+        ];
+
+        settings.apply_one_time_migrations_with(|_| true);
+
+        assert_eq!(settings.vocabulary.len(), 2, "the new term is added");
+        assert_eq!(settings.vocabulary[0].term, "Cappuccino");
+        assert_eq!(
+            settings.vocabulary[0].sounds_like,
+            ["capuchin", "cap a chino"],
+            "the heard phrase joins the existing term"
+        );
+        assert_eq!(settings.vocabulary[1].term, ".NET");
+        assert_eq!(settings.vocabulary[1].sounds_like, ["dot net"]);
+        assert_eq!(
+            settings
+                .dictation_processing
+                .default_mode
+                .replacements
+                .len(),
+            1,
+            "only the deletion stays"
+        );
+        assert!(
+            settings.dictation_processing.default_mode.replacements[0]
+                .output
+                .is_empty()
+        );
+
+        let before = settings.vocabulary.clone();
+        settings.apply_one_time_migrations_with(|_| true);
+        assert_eq!(settings.vocabulary, before, "only once");
     }
 
     /// The two retired summary switches become one choice once; On this Mac
