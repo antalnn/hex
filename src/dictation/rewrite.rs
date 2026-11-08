@@ -166,6 +166,60 @@ fn normalized(text: &str) -> String {
         .join(" ")
 }
 
+/// A spoken cue as a person could say it: case, surrounding quotes, trailing
+/// punctuation and one leading "use"/"insert"/"paste" all ignored.
+fn cue(text: &str) -> String {
+    let mut words: Vec<String> = normalized(text)
+        .split(' ')
+        .filter(|word| !word.is_empty())
+        .map(str::to_string)
+        .collect();
+    if matches!(
+        words.first().map(String::as_str),
+        Some("use" | "insert" | "paste")
+    ) {
+        words.remove(0);
+    }
+    words.join(" ")
+}
+
+/// The prompt a whole-utterance snippet name picks, if the recording was only
+/// that name: "structured prompt" uses its saved prompt, "make this a
+/// structured prompt" does not.
+fn snippet_prompt(transcript: &str, snippets: &[(String, String)]) -> Option<String> {
+    let spoken = cue(transcript);
+    if spoken.is_empty() {
+        return None;
+    }
+    snippets
+        .iter()
+        .find(|(name, _)| cue(name) == spoken)
+        .map(|(_, prompt)| prompt.clone())
+}
+
+/// What to ask the model to do with the selection: the snippet the recording
+/// named, otherwise the recording itself, otherwise the default prompt.
+pub(crate) fn resolve(
+    transcript: &str,
+    snippets: &[(String, String)],
+    default_prompt: &str,
+) -> Result<String> {
+    if let Some(prompt) = snippet_prompt(transcript, snippets) {
+        return Ok(prompt);
+    }
+    let spoken = transcript.trim();
+    if !spoken.is_empty() {
+        return Ok(spoken.to_string());
+    }
+    let fallback = default_prompt.trim();
+    if !fallback.is_empty() {
+        return Ok(fallback.to_string());
+    }
+    Err(eyre!(
+        "there was no instruction and no default prompt, so there is nothing to do"
+    ))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -231,5 +285,58 @@ mod tests {
             error.to_string().starts_with("the local model did not answer"),
             "{error}"
         );
+    }
+
+    fn snippets() -> Vec<(String, String)> {
+        vec![
+            ("structured prompt".to_string(), "Turn it into a prompt.".to_string()),
+            ("bullet list".to_string(), "Turn it into bullets.".to_string()),
+        ]
+    }
+
+    #[test]
+    fn a_snippet_name_spoken_alone_picks_that_prompt() {
+        assert_eq!(
+            resolve("structured prompt", &snippets(), "").unwrap(),
+            "Turn it into a prompt."
+        );
+    }
+
+    #[test]
+    fn a_snippet_name_ignores_case_quotes_punctuation_and_one_leading_verb() {
+        for spoken in [
+            "Structured Prompt.",
+            "\"structured prompt\"",
+            "use structured prompt",
+            "Insert: structured prompt.",
+        ] {
+            assert_eq!(
+                resolve(spoken, &snippets(), "").unwrap(),
+                "Turn it into a prompt.",
+                "{spoken}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_normal_sentence_is_used_verbatim_and_not_mistaken_for_a_name() {
+        assert_eq!(
+            resolve("make this a structured prompt", &snippets(), "").unwrap(),
+            "make this a structured prompt"
+        );
+    }
+
+    #[test]
+    fn an_empty_instruction_uses_the_default_prompt() {
+        assert_eq!(
+            resolve("   ", &snippets(), " Tighten it. ").unwrap(),
+            "Tighten it."
+        );
+    }
+
+    #[test]
+    fn an_empty_instruction_with_no_default_reports_nothing_to_do() {
+        let error = resolve("", &snippets(), "  ").unwrap_err();
+        assert!(error.to_string().contains("nothing to do"), "{error}");
     }
 }
