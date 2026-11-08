@@ -503,6 +503,21 @@ mod tests {
                 .is_some_and(|parent| parent.ends_with("llama-cpp"))),
             "the home-folder install is the last candidate: {candidates:?}"
         );
+        // The bundled copy, when Hex has a models folder, sits just before
+        // the home-folder install.
+        let bundled_at = candidates.iter().position(|candidate| {
+            candidate
+                .parent()
+                .is_some_and(|parent| parent.ends_with("llama.cpp"))
+        });
+        if let Some(at) = bundled_at {
+            assert_eq!(
+                at,
+                candidates.len() - 2,
+                "the bundled copy comes before the home install: {candidates:?}"
+            );
+            assert!(candidates[at].ends_with(program_name()));
+        }
         let _ = std::fs::remove_dir_all(&dir);
     }
 
