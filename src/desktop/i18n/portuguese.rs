@@ -1234,6 +1234,16 @@ const TRANSLATIONS: &[(&str, &str)] = &[
     ("Rewrite prompts", "Instruções de reescrita"),
     ("Say a name alone while text is selected to use its instruction; the default is used when you say nothing", "Diga apenas o nome com texto selecionado para usar a instrução dele; a padrão é usada quando você não diz nada"),
     ("Default prompt", "Instrução padrão"),
+    ("Excluded apps", "Aplicativos excluídos"),
+    ("Apps where Hex's shortcuts do nothing, so a game keeps its keys", "Aplicativos em que os atalhos do Hex não fazem nada, para um jogo manter as suas teclas"),
+    ("{} app", "{} aplicativo"),
+    ("{} apps", "{} aplicativos"),
+    ("{} · fullscreen", "{} · tela cheia"),
+    ("Add app", "Adicionar aplicativo"),
+    ("App (e.g. cs2)", "Aplicativo (ex.: cs2)"),
+    ("Pause shortcuts in fullscreen", "Pausar atalhos em tela cheia"),
+    ("Also pause in any window that covers the whole screen", "Pausar também em qualquer janela que ocupe a tela toda"),
+    ("Each app is listed once, so a repeated name is not saved", "Cada aplicativo aparece uma vez, então um nome repetido não é salvo"),
 ];
 
 #[cfg(test)]

@@ -10,11 +10,12 @@ crates/router/src/routing/router.rs 2337
 ios/HEXShared/DotScope.swift 1632
 src/app_settings.rs 1527
 src/capture_host.rs 3099
-src/desktop/i18n.rs 1540
+src/desktop/i18n.rs 1550
 src/meeting/query.rs 2403
 src/meeting/transcript.rs 2195
 src/recognition.rs 2010
-src/rune_ui/general.rs 1503
+src/rune_ui.rs 1514
+src/rune_ui/general.rs 1510
 src/rune_ui/onboarding_kit/game.rs 2192
 src/rune_ui/settings.rs 1501
 src/windows/dictation.rs 1642

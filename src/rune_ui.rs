@@ -58,6 +58,7 @@ mod scrawl;
 #[cfg(hex_capture)]
 pub(crate) mod screenshot_thumbnail;
 mod settings;
+mod shortcut_guard;
 mod shortcut_mode;
 mod shortcut_rule;
 mod sidebar;
@@ -672,6 +673,8 @@ pub(crate) struct Ui {
     build_preview: Option<BuildKind>,
     capture: Capture,
     vocabulary: vocabulary::VocabularyEditor,
+    /// General's Excluded apps sheet: the apps where no shortcut fires.
+    shortcut_guard: shortcut_guard::GuardEditor,
     /// The Models pane's remote addresses and Rewrite prompts, typed.
     model_sources: ai_models::ModelSources,
     /// The model the service was last seen preparing, and since when.
@@ -715,6 +718,7 @@ struct Drafts {
     modes: bool,
     vocabulary: bool,
     model_sources: bool,
+    shortcut_guard: bool,
 }
 
 impl Ui {
@@ -769,6 +773,7 @@ impl Ui {
     fn with(settings: AppSettings, service: Service) -> Self {
         let modes = modes::ModesPane::new(&settings);
         let vocabulary = vocabulary::VocabularyEditor::new(&settings.vocabulary);
+        let shortcut_guard = shortcut_guard::GuardEditor::new(&settings.shortcuts);
         let model_sources = ai_models::ModelSources::new(&settings);
         Self {
             settings,
@@ -792,6 +797,7 @@ impl Ui {
             build_preview: None,
             capture: Capture::Idle,
             vocabulary,
+            shortcut_guard,
             model_sources,
             preparing: None,
             draft_since: None,
@@ -881,6 +887,7 @@ impl Ui {
         let mut candidate = self.settings.clone();
         self.modes.project(&mut candidate);
         candidate.vocabulary = self.vocabulary.project();
+        candidate.shortcuts.excluded_processes = self.shortcut_guard.project();
         self.model_sources.project(&mut candidate);
         candidate
     }
@@ -895,6 +902,7 @@ impl Ui {
         Drafts {
             modes: modes.dictation_processing != settings.dictation_processing,
             vocabulary: self.vocabulary.project() != settings.vocabulary,
+            shortcut_guard: self.shortcut_guard.project() != settings.shortcuts.excluded_processes,
             model_sources: model_sources.dictation_rewrite != settings.dictation_rewrite
                 || model_sources.rewrite != settings.rewrite,
         }
@@ -1071,6 +1079,9 @@ impl Ui {
             if !drafts.vocabulary && service.vocabulary != self.settings.vocabulary {
                 self.vocabulary.reload(&service.vocabulary);
             }
+            if !drafts.shortcut_guard && service.shortcuts != self.settings.shortcuts {
+                self.shortcut_guard.reload(&service.shortcuts);
+            }
             if !drafts.model_sources
                 && (service.dictation_rewrite != self.settings.dictation_rewrite
                     || service.rewrite != self.settings.rewrite)
@@ -1101,6 +1112,7 @@ impl Ui {
         explainer::close(self);
         sound_sets::close(self);
         vocabulary::close(self);
+        shortcut_guard::close(self);
         history::close_stats(self);
     }
 
@@ -1164,6 +1176,7 @@ fn on_key(ui: &mut Ui, event: &rune::KeyEvent, tx: &mut Tx) -> bool {
         && !ui.explainer.open
         && !ui.sound_sets.open
         && !ui.vocabulary.open
+        && !ui.shortcut_guard.open
         && !ui.history.stats_open
         && ui.tour.is_none()
     {
@@ -1185,6 +1198,9 @@ fn on_key(ui: &mut Ui, event: &rune::KeyEvent, tx: &mut Tx) -> bool {
         true
     } else if ui.vocabulary.open {
         vocabulary::close(ui);
+        true
+    } else if ui.shortcut_guard.open {
+        shortcut_guard::close(ui);
         true
     } else if ui.picker.open {
         picker::close(ui);
@@ -1441,6 +1457,9 @@ fn view(ui: &Ui, cx: &mut Cx<Ui>) -> El {
         layer.extend(modal);
     }
     if let Some(modal) = vocabulary::modal(ui, p) {
+        layer.extend(modal);
+    }
+    if let Some(modal) = shortcut_guard::modal(ui, p) {
         layer.extend(modal);
     }
     if let Some(modal) = ai_models::prompts_modal(ui, p) {

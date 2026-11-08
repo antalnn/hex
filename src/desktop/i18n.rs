@@ -1548,6 +1548,16 @@ const TRANSLATIONS: &[(&str, [&str; 6])] = &[
     ("Rewrite prompts", ["Polecenia przepisywania", "重写提示词", "書き換えプロンプト", "Prompts fürs Umschreiben", "Indicaciones de reescritura", "Інструкції переписування"]),
     ("Say a name alone while text is selected to use its instruction; the default is used when you say nothing", ["Powiedz samą nazwę, gdy tekst jest zaznaczony, aby użyć jej polecenia; domyślne polecenie działa, gdy nic nie powiesz", "选中文本时只说出名称即可使用对应的指令；没有说出内容时使用默认提示词", "テキストを選択して名前だけを言うとその指示を使います。何も言わないときは既定のプロンプトを使います", "Sage nur den Namen, während Text ausgewählt ist, um seine Anweisung zu nutzen; ohne Ansage gilt der Standard-Prompt", "Di solo el nombre con texto seleccionado para usar su instrucción; si no dices nada se usa la indicación predeterminada", "Скажіть лише назву, коли текст виділено, щоб використати її інструкцію; якщо нічого не сказати, діє типова інструкція"]),
     ("Default prompt", ["Domyślne polecenie", "默认提示词", "既定のプロンプト", "Standard-Prompt", "Indicación predeterminada", "Типова інструкція"]),
+    ("Excluded apps", ["Wykluczone aplikacje", "排除的应用", "除外するアプリ", "Ausgenommene Apps", "Aplicaciones excluidas", "Виключені програми"]),
+    ("Apps where Hex's shortcuts do nothing, so a game keeps its keys", ["Aplikacje, w których skróty Hex nic nie robią, więc gra zachowuje swoje klawisze", "在这些应用中 Hex 的快捷键不起作用，游戏可以保留自己的按键", "このアプリでは Hex のショートカットが働かず、ゲームが自分のキーを使えます", "Apps, in denen Hex' Tastenkürzel nichts tun, damit ein Spiel seine Tasten behält", "Aplicaciones donde los atajos de Hex no hacen nada, así un juego conserva sus teclas", "Програми, у яких скорочення Hex нічого не роблять, тож гра зберігає свої клавіші"]),
+    ("{} app", ["{} aplikacja", "{} 个应用", "{} 個のアプリ", "{} App", "{} aplicación", "{} програма"]),
+    ("{} apps", ["{} aplikacji", "{} 个应用", "{} 個のアプリ", "{} Apps", "{} aplicaciones", "{} програм"]),
+    ("{} · fullscreen", ["{} · pełny ekran", "{} · 全屏", "{} · 全画面", "{} · Vollbild", "{} · pantalla completa", "{} · на весь екран"]),
+    ("Add app", ["Dodaj aplikację", "添加应用", "アプリを追加", "App hinzufügen", "Añadir aplicación", "Додати програму"]),
+    ("App (e.g. cs2)", ["Aplikacja (np. cs2)", "应用（例如 cs2）", "アプリ（例: cs2）", "App (z. B. cs2)", "Aplicación (p. ej. cs2)", "Програма (напр. cs2)"]),
+    ("Pause shortcuts in fullscreen", ["Wstrzymaj skróty na pełnym ekranie", "全屏时暂停快捷键", "全画面ではショートカットを止める", "Tastenkürzel im Vollbild pausieren", "Pausar los atajos en pantalla completa", "Призупиняти скорочення на весь екран"]),
+    ("Also pause in any window that covers the whole screen", ["Wstrzymuj też w każdym oknie na cały ekran", "任何占满屏幕的窗口也暂停", "画面全体を覆うウィンドウでも止める", "Auch in jedem Fenster pausieren, das den ganzen Bildschirm füllt", "Pausar también en cualquier ventana que cubra toda la pantalla", "Також призупиняти в будь-якому вікні на весь екран"]),
+    ("Each app is listed once, so a repeated name is not saved", ["Każda aplikacja jest na liście raz, więc powtórzona nazwa nie jest zapisywana", "每个应用只列一次，因此重复的名称不会被保存", "各アプリは一度だけ記載されるため、重複した名前は保存されません", "Jede App steht einmal in der Liste, ein wiederholter Name wird nicht gespeichert", "Cada aplicación aparece una vez, así que un nombre repetido no se guarda", "Кожна програма в списку один раз, тож повторена назва не зберігається"]),
 ];
 
 #[cfg(test)]
@@ -1770,6 +1780,7 @@ mod tests {
         include_str!("../rune_ui/shortcut_mode.rs"),
         include_str!("../rune_ui/sound_sets.rs"),
         include_str!("../rune_ui/vocabulary.rs"),
+        include_str!("../rune_ui/shortcut_guard.rs"),
         include_str!("../rune_ui/ai_models.rs"),
         include_str!("../rune_ui/windows_host.rs"),
         include_str!("tray_menu.rs"),

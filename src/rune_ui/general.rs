@@ -102,6 +102,13 @@ pub(super) fn basics(ui: &Ui, p: Paint, layer: &mut Vec<El>, query: &str) -> Opt
                 row,
             );
         }
+        // The apps where Hex's shortcuts stay out of the way, so a game
+        // keeps its own keys (Windows: its hook is the one that swallows).
+        #[cfg(target_os = "windows")]
+        rows.push(
+            tr("Excluded apps"),
+            super::shortcut_guard::general_row(ui, p),
+        );
     }
     let picker_button = value_button(
         p,
