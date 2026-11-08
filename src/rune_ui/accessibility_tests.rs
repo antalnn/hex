@@ -41,6 +41,13 @@ fn settle(rt: &mut Runtime<Ui>) {
     rt.frame(0.0);
 }
 
+/// The Models pane, where the speech model and language rows live now.
+fn open_models(rt: &mut Runtime<Ui>) {
+    rt.state.pane = Pane::Models;
+    rt.settle_all();
+    rt.frame(0.0);
+}
+
 /// Every node of `tree` with the path of keys and roles above it.
 fn nodes(tree: &Value) -> Vec<(String, &Value)> {
     fn walk<'a>(node: &'a Value, path: String, out: &mut Vec<(String, &'a Value)>) {
@@ -218,16 +225,71 @@ fn settings_switches_say_whether_they_are_on() {
     assert_eq!(on(&node(&rt, "microphone-mode")), !release);
 }
 
+/// The local model server's controls live on the Models pane only.
+#[test]
+fn the_local_model_controls_live_on_the_models_pane_only() {
+    let mut rt = runtime("portal");
+    open_models(&mut rt);
+    assert!(
+        rt.find("local-model-start").is_some() || rt.find("local-model-stop").is_some(),
+        "the Models pane keeps the server control"
+    );
+
+    rt.state.pane = Pane::Output;
+    rt.settle_all();
+    rt.frame(0.0);
+    assert!(rt.find("local-model-start").is_none());
+    assert!(rt.find("local-model-stop").is_none());
+    assert!(rt.find("local-model-state").is_none());
+}
+
+/// The speech model follows the Local choice; the language shows either way;
+/// General keeps neither row.
+#[test]
+fn the_dictation_card_holds_the_speech_model_and_language() {
+    let mut rt = runtime("portal");
+    rt.state.settings.transcription.model =
+        crate::transcription::models::TranscriptionModelId::WhisperLargeV3Turbo;
+    rt.state.settings.transcription.language = "en".into();
+    open_models(&mut rt);
+    let language_row = |rt: &Runtime<Ui>| {
+        rt.find("transcription-language-control").is_some()
+            || rt.find("transcription-language-control-trigger").is_some()
+    };
+    assert!(rt.find("transcription-control").is_some());
+    assert!(language_row(&rt));
+
+    rt.state.settings.dictation_rewrite.source = crate::app_settings::AiSource::Remote;
+    rt.settle_all();
+    rt.frame(0.0);
+    assert!(
+        rt.find("transcription-control").is_none(),
+        "Remote hides the speech model"
+    );
+    assert!(language_row(&rt), "Language shows for Remote too");
+
+    rt.state.pane = Pane::General;
+    rt.settle_all();
+    rt.frame(0.0);
+    assert!(rt.find("transcription-control").is_none());
+    assert!(rt.find("transcription-language-control").is_none());
+}
+
 /// A choice reads as what it chooses, with the current choice as its value.
 #[test]
 fn choices_name_what_they_choose_and_read_their_value() {
-    let rt = runtime("portal");
+    let mut rt = runtime("portal");
+    open_models(&mut rt);
     let model = node(&rt, "transcription-control");
     assert_eq!(name(&model), "Speech model");
     assert_eq!(
         a11y_value(&rt, "transcription-control").as_deref(),
         Some("Parakeet Unified English")
     );
+    // The microphone still lives on General.
+    rt.state.pane = Pane::General;
+    rt.settle_all();
+    rt.frame(0.0);
     let microphone = node(&rt, "microphone-control");
     assert_eq!(name(&microphone), "Microphone");
     assert!(microphone["value"].as_str().is_some_and(|v| !v.is_empty()));
@@ -238,6 +300,7 @@ fn choices_name_what_they_choose_and_read_their_value() {
 #[test]
 fn the_model_picker_is_a_named_modal_dialog() {
     let mut rt = runtime("portal");
+    open_models(&mut rt);
     assert!(rt.accessibility_action("transcription-control", Action::Click, None));
     settle(&mut rt);
     assert!(rt.state.picker.open);
@@ -261,6 +324,7 @@ fn the_model_picker_is_a_named_modal_dialog() {
 #[test]
 fn settings_reopened_sends_its_whole_tree_to_the_new_adapter() {
     let mut rt = runtime("portal");
+    open_models(&mut rt);
     let mut first = rune::AccessibilityLink::new();
     first.activate();
     let opened = first
@@ -299,7 +363,7 @@ fn settings_reopened_sends_its_whole_tree_to_the_new_adapter() {
         update
             .nodes
             .iter()
-            .any(|(_, node)| node.author_id() == Some("transcription-control")),
+            .any(|(_, node)| node.author_id() == Some("microphone-control")),
         "the reopened window shows Settings"
     );
 }

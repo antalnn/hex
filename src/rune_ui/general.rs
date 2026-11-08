@@ -37,7 +37,6 @@ pub(super) use self::shortcuts::shortcut_rows;
 // The basics
 
 pub(super) fn basics(ui: &Ui, p: Paint, layer: &mut Vec<El>, query: &str) -> Option<El> {
-    let model = transcription_models::definition(ui.settings.transcription.model);
     let mut rows = search::Rows::new(query);
     if ui.records_shortcuts() {
         rows.extend(
@@ -130,80 +129,6 @@ pub(super) fn basics(ui: &Ui, p: Paint, layer: &mut Vec<El>, query: &str) -> Opt
             super::shortcut::guard::general_row(ui, p),
         );
     }
-    let picker_button = value_button(
-        p,
-        "transcription-control",
-        tr("Speech model"),
-        model.name,
-        &rune_theme_opencode::icons::CHEVRON_RIGHT,
-        super::picker::open,
-    );
-    let (description, control) = match missing_model(ui) {
-        // Hex can't listen without the selected model: say so, with the
-        // download's progress, or Download and Add model file… when none
-        // runs, as after Continue without a model (#894).
-        Some(progress) => {
-            let description = match (
-                progress.downloading,
-                super::model_import::download_failure(ui),
-            ) {
-                (Some(_), _) => (
-                    tr("Hex can't listen until the speech model has downloaded").to_string(),
-                    p.muted(),
-                ),
-                (None, Some(error)) => {
-                    (tr_fill("No speech model installed: {}", &error), p.danger())
-                }
-                (None, None) => (
-                    tr("No speech model installed. Download one or add a model file.").to_string(),
-                    p.danger(),
-                ),
-            };
-            let controls = row().key("transcription-controls").gap(8.0).center_y();
-            let controls = match progress.downloading {
-                Some(fraction) => controls.child(
-                    rune_kit::Progress::new(Some(fraction))
-                        .show_value()
-                        .build(p.k)
-                        .key("transcription-progress")
-                        .w(120.0),
-                ),
-                None => controls
-                    .child(button(
-                        p,
-                        "transcription-download",
-                        tr("Download"),
-                        ButtonKind::Secondary,
-                        |ui: &mut Ui, _| {
-                            let selection = ui.settings.transcription.clone();
-                            ui.send(Request::ChooseModel {
-                                model: selection.model,
-                                language: selection.language,
-                            });
-                        },
-                    ))
-                    .child(super::model_import::use_file_button(ui, p)),
-            };
-            (Some(description), controls.child(picker_button))
-        }
-        None => (s::transcription_status(ui, p), picker_button),
-    };
-    let description_text = description.as_ref().map(|(text, _)| text.clone());
-    rows.push_described(
-        tr("Speech model"),
-        description_text.as_deref(),
-        icon_described_row(
-            p,
-            "transcription",
-            &WAVE,
-            tr("Speech model"),
-            description,
-            control,
-        ),
-    );
-    if let Some(row) = language_row(ui, p, layer) {
-        rows.push(tr("Language"), row);
-    }
     let vocabulary_note = super::vocabulary::unused_note(ui);
     rows.push_described(
         tr("Vocabulary"),
@@ -277,6 +202,78 @@ pub(super) fn missing_model(ui: &Ui) -> Option<crate::desktop::onboarding::Model
     }
     let (installed, progress) = super::onboarding::progress(ui);
     (!installed).then_some(progress)
+}
+
+/// The speech model picker with its download state: the row General used to
+/// carry, now on the Models pane's Dictation card while dictation runs local.
+pub(super) fn speech_model_row(ui: &Ui, p: Paint) -> El {
+    let model = transcription_models::definition(ui.settings.transcription.model);
+    let picker_button = value_button(
+        p,
+        "transcription-control",
+        tr("Speech model"),
+        model.name,
+        &rune_theme_opencode::icons::CHEVRON_RIGHT,
+        super::picker::open,
+    );
+    let (description, control) = match missing_model(ui) {
+        // Hex can't listen without the selected model: say so, with the
+        // download's progress, or Download and Add model file… when none
+        // runs, as after Continue without a model (#894).
+        Some(progress) => {
+            let description = match (
+                progress.downloading,
+                super::model_import::download_failure(ui),
+            ) {
+                (Some(_), _) => (
+                    tr("Hex can't listen until the speech model has downloaded").to_string(),
+                    p.muted(),
+                ),
+                (None, Some(error)) => {
+                    (tr_fill("No speech model installed: {}", &error), p.danger())
+                }
+                (None, None) => (
+                    tr("No speech model installed. Download one or add a model file.").to_string(),
+                    p.danger(),
+                ),
+            };
+            let controls = row().key("transcription-controls").gap(8.0).center_y();
+            let controls = match progress.downloading {
+                Some(fraction) => controls.child(
+                    rune_kit::Progress::new(Some(fraction))
+                        .show_value()
+                        .build(p.k)
+                        .key("transcription-progress")
+                        .w(120.0),
+                ),
+                None => controls
+                    .child(button(
+                        p,
+                        "transcription-download",
+                        tr("Download"),
+                        ButtonKind::Secondary,
+                        |ui: &mut Ui, _| {
+                            let selection = ui.settings.transcription.clone();
+                            ui.send(Request::ChooseModel {
+                                model: selection.model,
+                                language: selection.language,
+                            });
+                        },
+                    ))
+                    .child(super::model_import::use_file_button(ui, p)),
+            };
+            (Some(description), controls.child(picker_button))
+        }
+        None => (s::transcription_status(ui, p), picker_button),
+    };
+    icon_described_row(
+        p,
+        "transcription",
+        &WAVE,
+        tr("Speech model"),
+        description,
+        control,
+    )
 }
 
 /// The desktop's own dialog for the shortcuts its portal bound, where the
@@ -365,7 +362,7 @@ fn pause_browser_rows(ui: &Ui, p: Paint) -> Vec<El> {
 
 /// The model's languages as a quiet select, or the fallback note when
 /// switching to a single-language model changed the saved language.
-fn language_row(ui: &Ui, p: Paint, layer: &mut Vec<El>) -> Option<El> {
+pub(super) fn language_row(ui: &Ui, p: Paint, layer: &mut Vec<El>) -> Option<El> {
     let selection = &ui.settings.transcription;
     let model = transcription_models::definition(selection.model);
     let current = transcription_models::language_name(&selection.language);

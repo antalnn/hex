@@ -201,10 +201,10 @@ fn remove_snippet(ui: &mut Ui, id: u64) {
 // ---------------------------------------------------------------------------
 // The pane
 
-pub(super) fn pane(ui: &Ui, p: Paint, _layer: &mut Vec<El>) -> (Vec<El>, El) {
+pub(super) fn pane(ui: &Ui, p: Paint, layer: &mut Vec<El>) -> (Vec<El>, El) {
     let content = page("content")
         .child(local_model_card(ui, p))
-        .child(dictation_card(ui, p))
+        .child(dictation_card(ui, p, layer))
         .child(rewrite_card(ui, p));
     (
         Vec::new(),
@@ -263,12 +263,20 @@ fn local_model_card(ui: &Ui, p: Paint) -> El {
     )
 }
 
-fn dictation_card(ui: &Ui, p: Paint) -> El {
+fn dictation_card(ui: &Ui, p: Paint, layer: &mut Vec<El>) -> El {
     let source = ui.settings.dictation_rewrite.source;
     let fields = &ui.model_sources.dictation;
     let mut rows = vec![source_row(p, "dictation", source, |ui, source| {
         ui.update(|settings| settings.dictation_rewrite.source = source);
     })];
+    // The speech model is the local transcriber's, so it belongs beside the
+    // Local choice; the language applies whichever source cleans the text.
+    if source == AiSource::Local {
+        rows.push(super::general::speech_model_row(ui, p));
+    }
+    if let Some(row) = super::general::language_row(ui, p, layer) {
+        rows.push(row);
+    }
     if source == AiSource::Remote {
         rows.push(endpoint_row(p, &fields.endpoint, |ui: &mut Ui| {
             &mut ui.model_sources.dictation.endpoint

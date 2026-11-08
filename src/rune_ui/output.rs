@@ -256,7 +256,6 @@ pub(super) fn pane(ui: &Ui, p: Paint, reduced: bool) -> El {
     let processing = &ui.settings.dictation_processing;
     let mut content = page("output-content")
         .children(trust_card(ui, p))
-        .children(local_model_card(ui, p))
         .child(agent_card(ui, p, reduced))
         .child(every_dictation(ui, p, &processing.default_mode))
         .child(try_card(ui, p, &processing.default_mode));
@@ -329,95 +328,6 @@ fn agent_card(ui: &Ui, p: Paint, reduced: bool) -> El {
                     .child(edit),
             ),
     )
-}
-
-/// The local model server: whether it answers, and the one control that
-/// starts or stops the process Hex owns. Absent where the build has none.
-#[cfg(target_os = "windows")]
-fn local_model_card(ui: &Ui, p: Paint) -> Option<El> {
-    use crate::desktop::host::DesktopAction;
-    use crate::local_model::State;
-
-    let snapshot = ui.view.as_ref()?.local_model.as_ref()?;
-    let (title, hint) = match snapshot.state {
-        State::Stopped => (
-            tr("Local model server off"),
-            tr("The rewrite calls the cloud"),
-        ),
-        State::Starting => (tr("Local model server starting"), tr("Loading the model")),
-        State::Ready => (tr("Local model server running"), tr("Started by Hex")),
-        State::External => (
-            tr("Local model server running"),
-            tr("Started outside Hex and left running"),
-        ),
-        State::Failed => (tr("Local model server failed"), tr("See the message below")),
-    };
-    let port = format!("127.0.0.1:{}", ui.settings.llm.port);
-    let detail = match &snapshot.detail {
-        Some(detail) => format!("{port} · {detail}"),
-        None => port,
-    };
-    let control = match snapshot.state {
-        State::Stopped | State::Failed => Some(button(
-            p,
-            "local-model-start",
-            tr("Start server"),
-            ButtonKind::Secondary,
-            |ui: &mut Ui, _: &mut Tx| {
-                ui.send(crate::windows::rune::Request::Desktop(
-                    DesktopAction::StartLocalModel,
-                ));
-            },
-        )),
-        State::Ready => Some(button(
-            p,
-            "local-model-stop",
-            tr("Stop server"),
-            ButtonKind::Secondary,
-            |ui: &mut Ui, _: &mut Tx| {
-                ui.send(crate::windows::rune::Request::Desktop(
-                    DesktopAction::StopLocalModel,
-                ));
-            },
-        )),
-        State::Starting | State::External => None,
-    };
-    let row = row()
-        .key("local-model-row")
-        .min_h(METRICS.row_h_described)
-        .px(METRICS.row_px)
-        .py(8.0)
-        .gap(12.0)
-        .center_y()
-        .label(hint)
-        .child(
-            col()
-                .key("copy")
-                .grow(1.0)
-                .shrink()
-                .gap(2.0)
-                .child(text(title).key("title").font(p.k.ty.ui).color(p.text()))
-                .child(
-                    text(detail)
-                        .key("detail")
-                        .font(DESCRIPTION)
-                        .color(p.muted())
-                        .wrap(),
-                ),
-        )
-        .children(control);
-    Some(labeled(
-        p,
-        "local-model",
-        tr("Local model"),
-        hint,
-        vec![row.into()],
-    ))
-}
-
-#[cfg(not(target_os = "windows"))]
-fn local_model_card(_: &Ui, _: Paint) -> Option<El> {
-    None
 }
 
 /// The trust prompt: the config can reach the network or run programs, and

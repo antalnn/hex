@@ -427,10 +427,9 @@ mod tests {
         assert_eq!(removes.len(), 2, "one remove button per row");
         for remove in removes {
             let r = remove.rect;
-            let mut run = 0;
             let mut longest = 0;
             for y in ((r[1] - 8.0) as u32)..(r[1] as u32) {
-                run = 0;
+                let mut run = 0;
                 for x in (r[0] as u32)..((r[0] + r[2]) as u32) {
                     let i = ((y * w + x) * 4) as usize;
                     let l = 0.2126 * f32::from(pixels[i])
