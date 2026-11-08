@@ -280,20 +280,94 @@ fn normalized(text: &str) -> String {
 }
 
 /// A spoken cue as a person could say it: case, surrounding quotes, trailing
-/// punctuation and one leading "use"/"insert"/"paste" all ignored.
+/// punctuation and a leading courtesy phrase or "use"/"insert"/"paste" all
+/// ignored. The phrases stack, because "can you please polish this" is how
+/// the sentence comes out.
 fn cue(text: &str) -> String {
     let mut words: Vec<String> = normalized(text)
         .split(' ')
         .filter(|word| !word.is_empty())
         .map(str::to_string)
         .collect();
-    if matches!(
-        words.first().map(String::as_str),
-        Some("use" | "insert" | "paste")
-    ) {
-        words.remove(0);
+    while let Some(first) = words.first().map(String::as_str) {
+        let strip = match first {
+            "use" | "insert" | "paste" | "please" | "would" => 1,
+            "can" | "could" if words.get(1).map(String::as_str) == Some("you") => 2,
+            _ => break,
+        };
+        words.drain(..strip);
     }
     words.join(" ")
+}
+
+/// The phrases a person actually says for a snippet whose name is too curt to
+/// speak, mapped to that name. Matched against the whole cue, so they never
+/// fire inside a longer instruction.
+const ALIASES: &[(&str, &str)] = &[
+    ("turn this into a prompt", "prompt"),
+    ("make this a prompt", "prompt"),
+    ("create a prompt", "prompt"),
+    ("polish this", "polish"),
+    ("tighten this", "tighten"),
+];
+
+/// Words that may sit around a snippet name without turning the recording
+/// into an instruction: "the structured prompt", "polish and tighten".
+const FILLER: &[&str] = &[
+    "the", "a", "an", "this", "that", "these", "those", "it", "them", "my", "me", "please", "now",
+    "just", "here", "to", "into", "and", "or", "then", "for", "of", "with", "do", "does", "can",
+    "you", "could", "would", "use", "insert", "paste", "so", "ok", "okay",
+];
+
+/// A recording this short is a cue, not a sentence that happens to mention a
+/// snippet. Longer recordings are instructions and keep their own words.
+const CONTEXT_WORDS: usize = 10;
+
+/// The name a short recording picks out, if it names one or more snippets and
+/// nothing else: "the structured prompt" picks it, "polish and tighten" picks
+/// the first name, "make this a structured prompt" stays an instruction.
+fn contextual_snippet(spoken: &str, snippets: &[(String, String)]) -> Option<String> {
+    let words: Vec<&str> = spoken.split(' ').filter(|word| !word.is_empty()).collect();
+    if words.len() > CONTEXT_WORDS {
+        return None;
+    }
+    // Each name that appears as a whole phrase, with where it starts. Longest
+    // first at the same start, so "structured prompt" beats "prompt".
+    let mut found: Vec<(usize, usize, &str)> = Vec::new();
+    for (name, _) in snippets {
+        let name_cue = cue(name);
+        let name_words: Vec<&str> = name_cue.split(' ').filter(|w| !w.is_empty()).collect();
+        if name_words.is_empty() {
+            continue;
+        }
+        for start in 0..=words.len().saturating_sub(name_words.len()) {
+            if words[start..start + name_words.len()] == name_words[..] {
+                found.push((start, name_words.len(), name.as_str()));
+                break;
+            }
+        }
+    }
+    found.sort_by_key(|&(start, length, _)| (start, std::cmp::Reverse(length)));
+    let &(_, _, name) = found.first()?;
+    // Every name in the recording may sit there; what is left must be filler,
+    // or the recording is an instruction that mentions a name in passing.
+    let mut covered = vec![false; words.len()];
+    for &(start, length, _) in &found {
+        for slot in &mut covered[start..start + length] {
+            *slot = true;
+        }
+    }
+    let outside_has_content = words
+        .iter()
+        .enumerate()
+        .any(|(index, word)| !covered[index] && !FILLER.contains(word));
+    if outside_has_content {
+        return None;
+    }
+    snippets
+        .iter()
+        .find(|(candidate, _)| candidate == name)
+        .map(|(_, prompt)| prompt.clone())
 }
 
 /// The prompt a whole-utterance snippet name picks, if the recording was only
@@ -304,10 +378,18 @@ fn snippet_prompt(transcript: &str, snippets: &[(String, String)]) -> Option<Str
     if spoken.is_empty() {
         return None;
     }
-    snippets
+    if let Some((_, prompt)) = snippets.iter().find(|(name, _)| cue(name) == spoken) {
+        return Some(prompt.clone());
+    }
+    if let Some(alias) = ALIASES
         .iter()
-        .find(|(name, _)| cue(name) == spoken)
-        .map(|(_, prompt)| prompt.clone())
+        .find(|(phrase, _)| *phrase == spoken)
+        .map(|(_, name)| *name)
+        && let Some((_, prompt)) = snippets.iter().find(|(name, _)| cue(name) == alias)
+    {
+        return Some(prompt.clone());
+    }
+    contextual_snippet(&spoken, snippets)
 }
 
 /// What to ask the model to do with the selection: the snippet the recording
@@ -599,5 +681,43 @@ mod tests {
     fn an_empty_instruction_with_no_default_reports_nothing_to_do() {
         let error = resolve("", &snippets(), "  ").unwrap_err();
         assert!(error.to_string().contains("nothing to do"), "{error}");
+    }
+
+    fn spoken_snippets() -> Vec<(String, String)> {
+        vec![
+            ("prompt".to_string(), "Turn it into a prompt.".to_string()),
+            ("polish".to_string(), "Polish the wording.".to_string()),
+            ("tighten".to_string(), "Tighten the wording.".to_string()),
+        ]
+    }
+
+    #[test]
+    fn a_courtesy_opening_before_an_alias_still_picks_the_snippet() {
+        assert_eq!(
+            resolve("can you turn this into a prompt?", &spoken_snippets(), "").unwrap(),
+            "Turn it into a prompt."
+        );
+    }
+
+    #[test]
+    fn a_courtesy_word_before_an_alias_is_ignored() {
+        assert_eq!(
+            resolve("please polish this", &spoken_snippets(), "").unwrap(),
+            "Polish the wording."
+        );
+    }
+
+    #[test]
+    fn a_long_sentence_that_mentions_a_name_in_passing_is_left_alone() {
+        let spoken = "I want you to explain how a prompt is written by an engineer";
+        assert_eq!(resolve(spoken, &spoken_snippets(), "").unwrap(), spoken);
+    }
+
+    #[test]
+    fn two_names_in_one_short_utterance_pick_the_first() {
+        assert_eq!(
+            resolve("polish and tighten", &spoken_snippets(), "").unwrap(),
+            "Polish the wording."
+        );
     }
 }
