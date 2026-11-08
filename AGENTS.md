@@ -1803,3 +1803,9 @@ seam once there are two real adapters or a current test requires substitution.
 - Add a second real browser adapter before generalizing browser context.
 - Do not turn concrete macOS, Linux X11, or command modules into hypothetical
   platform or plugin frameworks.
+
+## Fork Maintenance
+
+`personal` carries the user's fork; `origin` is their fork and `upstream` the
+original. Read `docs/fork-maintenance.md` before fetching, merging, or
+cherry-picking upstream changes; its conflict priority rules are mandatory.
