@@ -22,7 +22,7 @@ use windows_sys::Win32::UI::WindowsAndMessaging::{
     WM_SYSKEYUP,
 };
 
-use crate::app_settings::{HotkeyBinding, HotkeyKey, HotkeyModifiers, ModifierSide};
+use crate::app_settings::{HotkeyBinding, HotkeyKey, HotkeyModifiers, ModifierSide, ShortcutGuard};
 use crate::audio::CaptureInstant;
 use crate::dictation::ShortcutMode;
 
@@ -280,6 +280,8 @@ struct CallbackState {
     /// Pass the dictation key on to other apps instead of consuming it.
     share_trigger: bool,
     capture: CaptureState,
+    /// The apps in which no shortcut fires.
+    guard: ShortcutGuard,
     dirty: bool,
     /// A modifier-only shortcut with Alt or Windows was pressed, or a chord
     /// holding either had its key swallowed, with no other key since, so
@@ -441,6 +443,37 @@ struct ModifierState {
 
 static CALLBACK_STATE: Mutex<Option<CallbackState>> = Mutex::new(None);
 
+/// Replaces the apps in which the shortcuts stay quiet. The listener calls
+/// this when its settings change, so the hook keeps running: nothing about
+/// the bindings changes, only what the next key does.
+pub(crate) fn set_shortcut_guard(guard: ShortcutGuard) {
+    let mut state = CALLBACK_STATE
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
+    if let Some(state) = state.as_mut() {
+        state.guard = guard;
+    }
+}
+
+/// The guard's answer to this event, when it gives one. A press in an excluded
+/// app, or in a fullscreen window while the user asked for that, reaches the
+/// app untouched: no shortcut fires and nothing is swallowed.
+fn guard_verdict(
+    guard: &ShortcutGuard,
+    capture: &CaptureState,
+    stem: Option<&str>,
+    fullscreen: bool,
+) -> Option<Disposition> {
+    // A recording already under way still sees its release: the window can
+    // become a game between the press and the release.
+    if capture.active || capture.locked {
+        return None;
+    }
+    guard.pauses(stem, fullscreen).then_some(Disposition::Pass)
+}
+
+use super::shortcut_guard::is_foreground_fullscreen;
+
 /// While a settings-pane chord capture runs, the hook must neither act on
 /// nor suppress anything: acting would fire real dictations/pastes from
 /// the chord being recorded, and suppression would hide the current
@@ -511,6 +544,7 @@ impl WindowsHotkeyMonitor {
         double_tap_only: bool,
         shortcut_mode: ShortcutMode,
         share_trigger: bool,
+        guard: ShortcutGuard,
     ) -> Result<Self> {
         binding.validate()?;
         let cancel_vk = cancel
@@ -559,6 +593,7 @@ impl WindowsHotkeyMonitor {
                 toggle: shortcut_mode == ShortcutMode::Toggle,
                 ..CaptureState::default()
             },
+            guard,
             dirty: false,
             mask_release: false,
         };
@@ -901,6 +936,22 @@ fn process_button(vk: u32, is_down: bool, time: u32) -> Disposition {
             if CAPTURE_INHIBIT.load(Ordering::Relaxed) {
                 state.mask_release = false;
                 return Disposition::Pass;
+            }
+            // In an excluded app, or a fullscreen app when the user asked,
+            // every key belongs to that app: the shortcut neither fires nor
+            // swallows it. Asked only while one of the two rules is on, so
+            // the ordinary case costs no window query.
+            if state.guard.configured() {
+                let verdict = guard_verdict(
+                    &state.guard,
+                    &state.capture,
+                    foreground_process_stem().as_deref(),
+                    is_foreground_fullscreen(),
+                );
+                if let Some(disposition) = verdict {
+                    state.mask_release = false;
+                    return disposition;
+                }
             }
             if !modifier_event && is_down {
                 state.mask_release = false;
@@ -2105,5 +2156,72 @@ mod tests {
         assert_eq!(state.press(true, true, 1_000), None);
         assert_eq!(state.release(true, 1_040), None);
         assert!(!state.locked);
+    }
+
+    fn guarded(process: &str) -> ShortcutGuard {
+        ShortcutGuard {
+            excluded_processes: vec![process.to_string()],
+            disable_in_fullscreen: false,
+        }
+    }
+
+    #[test]
+    fn an_excluded_app_gets_the_key_back_and_no_shortcut_fires() {
+        assert_eq!(
+            guard_verdict(
+                &guarded("cs2"),
+                &CaptureState::default(),
+                Some("cs2"),
+                false
+            ),
+            Some(Disposition::Pass)
+        );
+    }
+
+    #[test]
+    fn another_app_leaves_the_shortcut_alone() {
+        assert_eq!(
+            guard_verdict(
+                &guarded("cs2"),
+                &CaptureState::default(),
+                Some("notepad"),
+                false
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn fullscreen_pauses_only_when_the_switch_is_on() {
+        let off = ShortcutGuard {
+            excluded_processes: Vec::new(),
+            disable_in_fullscreen: false,
+        };
+        assert_eq!(
+            guard_verdict(&off, &CaptureState::default(), Some("game"), true),
+            None
+        );
+        let on = ShortcutGuard {
+            excluded_processes: Vec::new(),
+            disable_in_fullscreen: true,
+        };
+        assert_eq!(
+            guard_verdict(&on, &CaptureState::default(), Some("game"), true),
+            Some(Disposition::Pass)
+        );
+        assert_eq!(
+            guard_verdict(&on, &CaptureState::default(), Some("game"), false),
+            None
+        );
+    }
+
+    #[test]
+    fn a_recording_already_running_still_sees_its_release() {
+        let mut capture = CaptureState::default();
+        assert_eq!(capture.press(true, false, 100), Some(HotkeyAction::Start));
+        assert_eq!(
+            guard_verdict(&guarded("cs2"), &capture, Some("cs2"), true),
+            None
+        );
     }
 }

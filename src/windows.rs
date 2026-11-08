@@ -9,6 +9,7 @@ pub(crate) mod paste;
 pub(crate) mod paste_target;
 pub(crate) mod rune;
 pub(crate) mod selection;
+pub(crate) mod shortcut_guard;
 pub(crate) mod vulkan;
 
 use std::io::Write;

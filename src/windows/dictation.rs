@@ -140,6 +140,8 @@ pub struct WindowsDictationConfig {
     /// The local API's `/dictations`: a client's dictation recorded beside
     /// the shortcut, one capture at a time.
     pub dictations: DictationQueue,
+    /// The apps in which no shortcut fires.
+    pub shortcut_guard: crate::app_settings::ShortcutGuard,
 }
 
 /// A request from outside the keyboard hook, from the tray or a `hex`
@@ -202,6 +204,7 @@ impl WindowsDictationConfig {
             swap_failures: None,
             commands: None,
             dictations: DictationQueue::default(),
+            shortcut_guard: settings.shortcuts.clone(),
         }
     }
 }
@@ -247,7 +250,9 @@ pub fn run(
         swap_failures,
         commands,
         dictations,
+        shortcut_guard,
     } = config;
+    let mut shortcut_guard = shortcut_guard;
     // Read by the output worker at each paste, so a change applies in place.
     let paste_with_shift = Arc::new(AtomicBool::new(paste_with_shift));
     let paste_to_start_window = Arc::new(AtomicBool::new(paste_to_start_window));
@@ -310,7 +315,7 @@ pub fn run(
         shortcut_mode,
         share_dictation_shortcut,
     };
-    let mut hotkey = shortcuts.start()?;
+    let mut hotkey = shortcuts.start(&shortcut_guard)?;
     // A shortcut event the idle wait took, handled at the next turn.
     let mut held_event = None;
     let mut while_dictating = while_dictating;
@@ -432,8 +437,14 @@ pub fn run(
                 drop(hotkey);
                 held_event = None;
                 shortcuts = next_shortcuts;
-                hotkey = shortcuts.start()?;
+                hotkey = shortcuts.start(&next_config.shortcut_guard)?;
                 toggle_mode = shortcuts.shortcut_mode == crate::dictation::ShortcutMode::Toggle;
+            }
+            // The guard applies in place: no binding changed, only which apps
+            // the next key respects.
+            if next_config.shortcut_guard != shortcut_guard {
+                shortcut_guard = next_config.shortcut_guard;
+                crate::windows::input::set_shortcut_guard(shortcut_guard.clone());
             }
             if next_config.while_dictating != while_dictating {
                 while_dictating = next_config.while_dictating;
@@ -1314,7 +1325,7 @@ struct Shortcuts {
 }
 
 impl Shortcuts {
-    fn start(&self) -> Result<WindowsHotkeyMonitor> {
+    fn start(&self, guard: &crate::app_settings::ShortcutGuard) -> Result<WindowsHotkeyMonitor> {
         // Double-tap-only depends on the double-tap window; without the lock
         // there is no second tap to wait for.
         WindowsHotkeyMonitor::start(
@@ -1328,6 +1339,7 @@ impl Shortcuts {
             self.double_tap_lock && self.double_tap_only,
             self.shortcut_mode,
             self.share_dictation_shortcut,
+            guard.clone(),
         )
     }
 }
@@ -1625,5 +1637,26 @@ impl Drop for IndicatorGuard {
         if let Some(indicator) = &self.0 {
             indicator.send(crate::rune_hud::HudEvent::Reset);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_settings_update_with_an_excluded_app_pauses_the_shortcut() {
+        let mut settings = crate::app_settings::AppSettings::default();
+        settings.shortcuts.excluded_processes = vec!["game".into()];
+        let next = WindowsDictationConfig::from_settings(&settings);
+        assert!(next.shortcut_guard.pauses(Some("game"), false));
+        assert!(!next.shortcut_guard.pauses(Some("notepad"), false));
+
+        // The same config, after a second update, pauses in any fullscreen
+        // window: both keys reach the listener through from_settings.
+        settings.shortcuts.disable_in_fullscreen = true;
+        let next = WindowsDictationConfig::from_settings(&settings);
+        assert!(next.shortcut_guard.pauses(Some("notepad"), true));
+        assert!(!next.shortcut_guard.pauses(Some("notepad"), false));
     }
 }

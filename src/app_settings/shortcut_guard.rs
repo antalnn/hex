@@ -25,6 +25,21 @@ impl ShortcutGuard {
         self.excluded_processes.iter().any(|entry| *entry == stem)
     }
 
+    /// Whether the shortcuts are paused in this app. Every key keeps reaching
+    /// the app when they are, so a game sees its own chord.
+    pub fn pauses(&self, stem: Option<&str>, fullscreen: bool) -> bool {
+        if self.disable_in_fullscreen && fullscreen {
+            return true;
+        }
+        stem.is_some_and(|stem| self.excludes(stem))
+    }
+
+    /// Whether either rule is on. When neither is, the hook skips asking the
+    /// system for the foreground window on every key.
+    pub fn configured(&self) -> bool {
+        !self.excluded_processes.is_empty() || self.disable_in_fullscreen
+    }
+
     /// One entry as the list stores it: trimmed, lowercased, `.exe` gone.
     /// None when nothing is left, so an empty row is not stored.
     pub fn cleaned(entry: &str) -> Option<String> {
@@ -83,6 +98,31 @@ mod tests {
         assert!(guard.excludes("cs2"));
         assert!(guard.excludes("CS2"));
         assert!(!guard.excludes("csgo"));
+    }
+
+    #[test]
+    fn the_excluded_app_pauses_and_another_app_does_not() {
+        let guard = ShortcutGuard {
+            excluded_processes: vec!["cs2".to_string()],
+            disable_in_fullscreen: false,
+        };
+        assert!(guard.configured());
+        assert!(guard.pauses(Some("cs2"), false));
+        assert!(!guard.pauses(Some("notepad"), false));
+        assert!(!guard.pauses(None, false));
+    }
+
+    #[test]
+    fn fullscreen_pauses_only_when_the_switch_is_on() {
+        let off = ShortcutGuard::default();
+        assert!(!off.configured());
+        assert!(!off.pauses(Some("cs2"), true));
+        let on = ShortcutGuard {
+            excluded_processes: Vec::new(),
+            disable_in_fullscreen: true,
+        };
+        assert!(on.pauses(Some("anything"), true));
+        assert!(!on.pauses(Some("anything"), false));
     }
 
     #[test]
