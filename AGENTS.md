@@ -1229,6 +1229,9 @@ CoreAudio formats, AppleScript details, or event serialization.
   Secondary button with a status dot. Extend a piece instead of adding a
   parallel helper, and verify visual changes with `--snap` scenes in light and
   dark.
+- For UI designed from scratch or very large UI changes, use Rune's guide
+  (https://github.com/anomalyco/rune, start from `examples/hello`, check your work
+  headlessly): "Build me a with Rune (github.com/anomalyco/rune). Start from examples/hello and check your work headlessly."
 - Neither Hex nor Rune (`anomalyco/rune`, public MIT) is published to
   crates.io; never run `cargo publish`. Hex depends on `rune`, `rune-kit`,
   `rune-theme-opencode`, and (with `capture`) `rune-motion` at one pinned Git
