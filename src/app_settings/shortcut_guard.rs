@@ -22,7 +22,7 @@ impl ShortcutGuard {
     /// Whether `stem`, an executable stem already lowercased, is excluded.
     pub fn excludes(&self, stem: &str) -> bool {
         let stem = stem.trim().to_ascii_lowercase();
-        self.excluded_processes.iter().any(|entry| *entry == stem)
+        self.excluded_processes.contains(&stem)
     }
 
     /// Whether the shortcuts are paused in this app. Every key keeps reaching

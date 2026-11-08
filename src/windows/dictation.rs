@@ -21,6 +21,10 @@ use crate::windows::input::WindowsHotkey;
 use crate::windows::input::{HotkeyAction, WindowsHotkeyMonitor};
 use crate::windows::paste::WindowsPaster;
 
+mod shortcuts;
+
+use shortcuts::Shortcuts;
+
 const UPDATE_INTERVAL: Duration = Duration::from_millis(5);
 /// The longest wait with the microphone streaming, idle or recording. Its
 /// chunks (about every 10 ms) wake the loop, which then takes shortcut
@@ -57,11 +61,11 @@ struct Job {
     recording: Option<crate::history::Recording>,
     /// The window dictation started in, for the paste to return to.
     target: Option<crate::windows::paste_target::PasteTarget>,
-    /// Dictate without processing: paste the transcript as heard.
-    raw: bool,
     /// Rewrite the selected text: the transcript is an instruction and this is
     /// the text it applies to. Not pasted as a dictation, not kept in history.
     rewrite_selection: Option<String>,
+    /// The shortcut that started this capture.
+    flavour: crate::dictation::DictationFlavour,
     /// `hex dictation stop --print`: the text goes here, never pasted.
     print: Option<PrintReply>,
 }
@@ -70,9 +74,9 @@ struct Job {
 struct Finishing {
     release: ReleaseWait,
     print: Option<PrintReply>,
-    raw: bool,
     rewrite_selection: Option<String>,
     target: Option<crate::windows::paste_target::PasteTarget>,
+    flavour: crate::dictation::DictationFlavour,
 }
 
 enum OutputJob {
@@ -103,6 +107,8 @@ pub struct WindowsDictationConfig {
     pub raw_dictation_hotkey: Option<WindowsHotkey>,
     /// Rewrite the selected text, while it is bound.
     pub rewrite_hotkey: Option<WindowsHotkey>,
+    /// Labs › Terminal paste shortcut, while the lab is on and it is bound.
+    pub terminal_paste_hotkey: Option<WindowsHotkey>,
     /// The Annotate key, while Annotate is on.
     pub annotate_hotkey: Option<WindowsHotkey>,
     /// Toggle mode's cancel shortcut; none in Hold mode.
@@ -171,6 +177,9 @@ impl WindowsDictationConfig {
                 .as_ref()
                 .map(WindowsHotkey::from),
             rewrite_hotkey: settings.rewrite_hotkey.as_ref().map(WindowsHotkey::from),
+            terminal_paste_hotkey: settings
+                .active_terminal_paste_hotkey()
+                .map(WindowsHotkey::from),
             annotate_hotkey: settings
                 .capture_on()
                 .then(|| WindowsHotkey::from(&settings.capture.hotkey)),
@@ -218,13 +227,20 @@ pub fn run(
     updates: mpsc::Receiver<Box<crate::app_settings::AppSettings>>,
     shutdown: &AtomicBool,
 ) -> Result<()> {
-    let transcriber = LocalTranscriber::load(selection)?;
+    // Labs › Unload model when idle: a launch stays parked until the first
+    // dictation, as after an idle unload.
+    let transcriber = if crate::labs::unload_idle().is_some() {
+        None
+    } else {
+        Some(LocalTranscriber::load(selection)?)
+    };
     let WindowsDictationConfig {
         device,
         hotkey,
         paste_last_hotkey,
         raw_dictation_hotkey,
         rewrite_hotkey,
+        terminal_paste_hotkey,
         annotate_hotkey,
         cancel_hotkey,
         double_tap_lock,
@@ -308,6 +324,7 @@ pub fn run(
         paste_last_hotkey,
         raw_dictation_hotkey,
         rewrite_hotkey,
+        terminal_paste_hotkey,
         annotate_hotkey,
         cancel_hotkey,
         double_tap_lock,
@@ -322,7 +339,10 @@ pub fn run(
     let mut audio_suppressor =
         crate::windows::audio_control::AudioSuppressor::start(while_dictating);
     let mut model = crate::transcription::local_transcriber::ModelSwap::new(selection);
-    let mut engine = Arc::new(TranscriptionEngine::start(transcriber)?);
+    let mut engine = match transcriber {
+        Some(transcriber) => Arc::new(TranscriptionEngine::start(transcriber)?),
+        None => Arc::new(TranscriptionEngine::start_parked(selection.clone())?),
+    };
     // The local API transcribes host audio on this engine's model.
     engine.share();
     // The `capture` experiment: its host, the audio it copies from this
@@ -375,10 +395,10 @@ pub fn run(
         })?;
 
     let mut recording = false;
-    // The recording skips processing (Dictate without processing).
-    let mut recording_raw = false;
     // The recording rewrites the selection (Rewrite selection).
     let mut recording_rewrite: Option<String> = None;
+    // The shortcut that started this recording.
+    let mut recording_flavour = crate::dictation::DictationFlavour::Normal;
     let mut recording_feedback_started = false;
     // Whether this capture's start tone already played on its press.
     let mut start_tone_played = false;
@@ -425,6 +445,7 @@ pub fn run(
                 paste_last_hotkey: next_config.paste_last_hotkey,
                 raw_dictation_hotkey: next_config.raw_dictation_hotkey,
                 rewrite_hotkey: next_config.rewrite_hotkey,
+                terminal_paste_hotkey: next_config.terminal_paste_hotkey,
                 annotate_hotkey: next_config.annotate_hotkey,
                 cancel_hotkey: next_config.cancel_hotkey,
                 double_tap_lock: next_config.double_tap_lock,
@@ -568,9 +589,9 @@ pub fn run(
             let Some(Finishing {
                 release,
                 print,
-                raw,
                 rewrite_selection,
                 target,
+                flavour,
             }) = finishing.take()
             else {
                 unreachable!("checked above");
@@ -585,8 +606,8 @@ pub fn run(
                 &mut pending,
                 print,
                 target,
-                raw,
                 rewrite_selection,
+                flavour,
             )?;
             if submitted {
                 next_job_id += 1;
@@ -682,7 +703,7 @@ pub fn run(
         // printing stop's reply rides with the capture it finishes.
         let mut print = None;
         while finishing.is_none()
-            && let Some((action, occurred_at, deliberate, raw, rewrite)) = next_action(
+            && let Some((action, occurred_at, deliberate, flavour, rewrite)) = next_action(
                 &hotkey,
                 &mut held_event,
                 commands.as_ref(),
@@ -742,7 +763,7 @@ pub fn run(
                     // Taken on the press, before the HUD and before any
                     // switch away: this is where the text belongs.
                     paste_target = crate::windows::paste_target::PasteTarget::capture();
-                    recording_raw = raw;
+                    recording_flavour = flavour;
                     if audio_ready {
                         capture.start_hotkey_at(
                             occurred_at,
@@ -820,8 +841,8 @@ pub fn run(
                     recording = false;
                     recording_feedback_started = false;
                     finishing = Some(Finishing {
-                        raw: recording_raw,
                         rewrite_selection: recording_rewrite.take(),
+                        flavour: recording_flavour,
                         print: print.take(),
                         target: paste_target.take(),
                         ..begin_finishing(&capture, occurred_at)
@@ -1136,7 +1157,7 @@ fn process_dictation_job(
     let started = Instant::now();
     let printed = job.print.is_some();
     // The context read starts now so the UIA walk overlaps inference.
-    let reads_page = !job.raw
+    let reads_page = !job.flavour.raw()
         && mode_runtime
             .read()
             .unwrap_or_else(|error| error.into_inner())
@@ -1159,7 +1180,7 @@ fn process_dictation_job(
         if raw_text.is_empty() {
             return Err("transcription was empty".into());
         }
-        let processed = if job.raw {
+        let processed = if job.flavour.raw() {
             crate::dictation::processor::Processed::unchanged(raw_text.trim())
         } else {
             let mode_runtime = mode_runtime
@@ -1180,11 +1201,18 @@ fn process_dictation_job(
         }
         // A printed dictation is never pasted, and Paste Last skips it.
         if !printed {
-            paster
-                .as_mut()
-                .map_err(|error| format!("{error:#}"))?
-                .paste(&text, job.target.take())
-                .map_err(|error| format!("{error:#}"))?;
+            let paster = paster.as_mut().map_err(|error| format!("{error:#}"))?;
+            // Labs › Copy dictation only, read as the output commits:
+            // dictations go to the clipboard unpasted; Paste Last still pastes.
+            if crate::labs::copy_only() {
+                paster
+                    .copy_only(&text)
+                    .map_err(|error| format!("{error:#}"))?;
+            } else {
+                paster
+                    .paste(&text, job.target.take(), job.flavour.terminal_paste())
+                    .map_err(|error| format!("{error:#}"))?;
+            }
             *last_dictation
                 .lock()
                 .unwrap_or_else(|error| error.into_inner()) = Some(text.clone());
@@ -1201,7 +1229,7 @@ fn process_dictation_job(
             );
             if printed {
                 draft.kind = crate::history::HistoryKind::Printed;
-            } else if job.raw {
+            } else if job.flavour.raw() {
                 draft.kind = crate::history::HistoryKind::Raw;
             }
             if let Err(error) = history.record(draft) {
@@ -1254,7 +1282,7 @@ fn process_rewrite_job(
             paster
                 .as_mut()
                 .map_err(|error| format!("{error:#}"))?
-                .paste(&rewritten, job.target.take())
+                .paste(&rewritten, job.target.take(), false)
                 .map_err(|error| format!("{error:#}"))?;
             Ok(rewritten)
         });
@@ -1281,9 +1309,7 @@ fn process_paste_last(
             paster
                 .as_mut()
                 .map_err(|error| format!("{error:#}"))?
-                // Paste Last belongs where the person is now, not where the
-                // original dictation started.
-                .paste(&text, None)
+                .paste(&text, None, false)
                 .map_err(|error| format!("{error:#}"))?;
             Ok(text)
         });
@@ -1306,41 +1332,6 @@ fn job_result(kind: OutputKind, result: Result<String, String>, latency_ms: u32)
             latency_ms,
             result: Err(error),
         },
-    }
-}
-
-/// The shortcuts a listener's keyboard hook registers.
-#[derive(PartialEq)]
-struct Shortcuts {
-    hotkey: WindowsHotkey,
-    paste_last_hotkey: Option<WindowsHotkey>,
-    raw_dictation_hotkey: Option<WindowsHotkey>,
-    rewrite_hotkey: Option<WindowsHotkey>,
-    annotate_hotkey: Option<WindowsHotkey>,
-    cancel_hotkey: Option<WindowsHotkey>,
-    double_tap_lock: bool,
-    double_tap_only: bool,
-    shortcut_mode: crate::dictation::ShortcutMode,
-    share_dictation_shortcut: bool,
-}
-
-impl Shortcuts {
-    fn start(&self, guard: &crate::app_settings::ShortcutGuard) -> Result<WindowsHotkeyMonitor> {
-        // Double-tap-only depends on the double-tap window; without the lock
-        // there is no second tap to wait for.
-        WindowsHotkeyMonitor::start(
-            self.hotkey.clone(),
-            self.paste_last_hotkey.clone(),
-            self.raw_dictation_hotkey.clone(),
-            self.rewrite_hotkey.clone(),
-            self.annotate_hotkey.clone(),
-            self.cancel_hotkey.clone(),
-            self.double_tap_lock,
-            self.double_tap_lock && self.double_tap_only,
-            self.shortcut_mode,
-            self.share_dictation_shortcut,
-            guard.clone(),
-        )
     }
 }
 
@@ -1396,9 +1387,9 @@ fn resolve_device_name(query: &str) -> Result<String> {
 }
 
 /// The next shortcut event or `hex` command, as the action the loop takes,
-/// when it occurred, and whether it was deliberate (a command records at
-/// once, like a toggle press), and whether it skips processing. A printing
-/// stop leaves its reply in `print`.
+/// when it occurred, whether it was deliberate (a command records at once,
+/// like a toggle press), and the shortcut's flavour. A printing stop leaves
+/// its reply in `print`.
 fn next_action(
     hotkey: &WindowsHotkeyMonitor,
     held: &mut Option<crate::windows::input::HotkeyEvent>,
@@ -1406,17 +1397,23 @@ fn next_action(
     recording: bool,
     captured_through: CaptureInstant,
     print: &mut Option<PrintReply>,
-) -> Option<(HotkeyAction, CaptureInstant, bool, bool, bool)> {
+) -> Option<(
+    HotkeyAction,
+    CaptureInstant,
+    bool,
+    crate::dictation::DictationFlavour,
+    bool,
+)> {
     if let Some(event) = held.take().or_else(|| hotkey.events.try_recv().ok()) {
         return Some((
             event.action,
             event.occurred_at(captured_through),
             false,
-            event.raw,
-            event.rewrite,
+            event.flavour,
+            event.flavour == crate::dictation::DictationFlavour::Rewrite,
         ));
     }
-    let (action, raw) = match commands?.try_recv().ok()? {
+    let (action, flavour) = match commands?.try_recv().ok()? {
         ListenerCommand::Dictation { action, raw } => (
             match action {
                 CaptureAction::Start => HotkeyAction::Start,
@@ -1425,15 +1422,25 @@ fn next_action(
                 CaptureAction::Toggle if recording => HotkeyAction::Finish,
                 CaptureAction::Toggle => HotkeyAction::Start,
             },
-            raw,
+            if raw {
+                crate::dictation::DictationFlavour::Raw
+            } else {
+                crate::dictation::DictationFlavour::Normal
+            },
         ),
-        ListenerCommand::PasteLast => (HotkeyAction::PasteLast, false),
+        ListenerCommand::PasteLast => (
+            HotkeyAction::PasteLast,
+            crate::dictation::DictationFlavour::Normal,
+        ),
         ListenerCommand::StopAndPrint(reply) => {
             *print = Some(reply);
-            (HotkeyAction::Finish, false)
+            (
+                HotkeyAction::Finish,
+                crate::dictation::DictationFlavour::Normal,
+            )
         }
     };
-    Some((action, captured_through, true, raw, false))
+    Some((action, captured_through, true, flavour, false))
 }
 
 /// Starts a client's dictation, which counts at once (no hold threshold),
@@ -1481,9 +1488,9 @@ fn begin_finishing(capture: &DictationCapture, ended_at: CaptureInstant) -> Fini
         // A short tap is discarded on its release alone and needs no tail.
         release: ReleaseWait::new(capture, ended_at),
         print: None,
-        raw: false,
         rewrite_selection: None,
         target: None,
+        flavour: crate::dictation::DictationFlavour::Normal,
     }
 }
 
@@ -1498,8 +1505,8 @@ fn submit_capture(
     pending: &mut usize,
     print: Option<PrintReply>,
     target: Option<crate::windows::paste_target::PasteTarget>,
-    raw: bool,
     rewrite_selection: Option<String>,
+    flavour: crate::dictation::DictationFlavour,
 ) -> Result<bool> {
     let mut submitted = false;
     let no_speech = |print: Option<PrintReply>| {
@@ -1532,8 +1539,8 @@ fn submit_capture(
                 recording,
                 target,
                 print,
-                raw,
                 rewrite_selection,
+                flavour,
             });
             match jobs.try_send(job) {
                 Ok(()) => {

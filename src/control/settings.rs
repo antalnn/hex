@@ -237,6 +237,13 @@ const KEYS: &[Key] = &[
          typed in the focused field and replaces it (Linux, with labs.typed_text); none \
          (the default) turns it off",
     ),
+    optional(
+        "terminal_paste_hotkey",
+        Kind::Shortcut(HotkeySlot::TerminalPaste),
+        "Labs: another shortcut that dictates like dictation_hotkey and always pastes with \
+         Ctrl+Shift+V (Windows, Linux, with labs.terminal_paste_shortcut); none (the default) \
+         turns it off",
+    ),
     key(
         "screenshots.hotkey",
         Kind::Shortcut(HotkeySlot::Screenshot),
@@ -420,12 +427,12 @@ const KEYS: &[Key] = &[
     key(
         "labs.keep_on_clipboard",
         Kind::Bool,
-        "Labs: leave the dictation on the clipboard after pasting instead of restoring what was there (macOS)",
+        "Labs: leave the dictation on the clipboard after pasting instead of restoring what was there (macOS and Windows)",
     ),
     key(
         "labs.copy_only",
         Kind::Bool,
-        "Labs: put the dictation on the clipboard instead of pasting it (macOS)",
+        "Labs: put the dictation on the clipboard instead of pasting it (macOS and Windows)",
     ),
     key(
         "labs.spoken_formatting",
@@ -451,6 +458,12 @@ const KEYS: &[Key] = &[
         "labs.second_dictation_shortcut",
         Kind::Bool,
         "Labs: second_dictation_hotkey dictates like the dictation shortcut (macOS)",
+    ),
+    key(
+        "labs.terminal_paste_shortcut",
+        Kind::Bool,
+        "Labs: terminal_paste_hotkey dictates like the dictation shortcut and always pastes \
+         with Ctrl+Shift+V (Windows, Linux)",
     ),
     key(
         "labs.smart_spacing",
@@ -521,6 +534,11 @@ const KEYS: &[Key] = &[
         "labs.caps_lock_dictation",
         Kind::Bool,
         "Labs: a Caps Lock press starts and stops dictation hands-free, and its light shows when Hex records and transcribes; Caps Lock stays off so typing is unchanged (macOS)",
+    ),
+    key(
+        "labs.caps_lock_light",
+        Kind::Choice(&["steady", "slow_blink"]),
+        "Labs: whether the Caps Lock light stays solid or blinks slowly while recording (macOS)",
     ),
     key(
         "labs.notch_indicator",
@@ -1179,6 +1197,7 @@ pub fn apply(
         | "rewrite_hotkey"
         | "typed_text_hotkey"
         | "second_dictation_hotkey"
+        | "terminal_paste_hotkey"
         | "cancel_hotkey"
         | "screenshots.hotkey"
         | "capture.hotkey"
@@ -1193,6 +1212,7 @@ pub fn apply(
                 HotkeySlot::RewriteSelection => candidate.rewrite_hotkey.as_ref(),
                 HotkeySlot::TypedText => candidate.typed_text_hotkey.as_ref(),
                 HotkeySlot::SecondDictation => candidate.second_dictation_hotkey.as_ref(),
+                HotkeySlot::TerminalPaste => candidate.terminal_paste_hotkey.as_ref(),
                 HotkeySlot::Cancel => Some(&candidate.cancel_hotkey),
                 HotkeySlot::Screenshot => Some(&candidate.screenshots.hotkey),
                 #[cfg(hex_capture)]
@@ -1745,6 +1765,7 @@ mod tests {
             ("shortcut_mode", "tap"),
             ("meetings.calendar.lead_minutes", "3"),
             ("meetings.output_folder", "relative/path"),
+            ("labs.caps_lock_light", "fast"),
             ("dictation_processing.modes", "[{"),
         ] {
             assert_eq!(
@@ -1770,6 +1791,15 @@ mod tests {
         );
         let change = apply(&settings, "meetings.calendar.lead_minutes", "5", &rules()).unwrap();
         assert_eq!(change.settings.meetings.calendar.lead_minutes, 5);
+        let change = apply(&settings, "labs.caps_lock_light", "slow_blink", &rules()).unwrap();
+        assert_eq!(
+            change.settings.labs.caps_lock_light,
+            crate::app_settings::CapsLockLight::SlowBlink
+        );
+        assert_eq!(
+            get(&change.settings, "labs.caps_lock_light").unwrap()[0].value,
+            Value::String("slow_blink".into())
+        );
         let change = apply(&settings, "ui_language", "none", &rules()).unwrap();
         assert_eq!(change.settings.ui_language, None);
         let change = apply(

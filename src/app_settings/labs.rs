@@ -2,6 +2,32 @@
 
 use super::*;
 
+/// How the Caps Lock light shows while a capture records (Labs › Caps Lock
+/// dictation, macOS).
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CapsLockLight {
+    /// On for the whole recording.
+    #[default]
+    Steady,
+    /// On and off every 700 ms while recording, slower than the
+    /// transcribing blink.
+    SlowBlink,
+}
+
+impl CapsLockLight {
+    /// Every choice, in the order the window shows them.
+    pub const ALL: [Self; 2] = [Self::Steady, Self::SlowBlink];
+
+    /// The English label the window shows.
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::Steady => "Steady",
+            Self::SlowBlink => "Slow blink",
+        }
+    }
+}
+
 /// The `labs` switches (`crate::labs`), each off by default; older Labs features keep their own keys, and retired switches (`labs.enabled`, `labs.collapsible_meeting_sections`, `labs.meeting_platform_icons`) are ignored.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(default)]
@@ -24,9 +50,9 @@ pub struct LabsSettings {
     pub unload_idle_minutes: u32,
     /// Paste last dictation's row offers its default shortcut back (issue 613).
     pub restore_shortcut_default: bool,
-    /// A pasted dictation stays on the clipboard, not the previous one (macOS, issue 200).
+    /// A pasted dictation stays on the clipboard, not the previous one (macOS and Windows, issue 200).
     pub keep_on_clipboard: bool,
-    /// A dictation is put on the clipboard and never pasted (macOS, issue 629).
+    /// A dictation is put on the clipboard and never pasted (macOS and Windows, issue 629).
     pub copy_only: bool,
     /// Spoken "new line", "new paragraph", and "open/close quote" become line breaks and quotes (issue 630).
     pub spoken_formatting: bool,
@@ -36,6 +62,9 @@ pub struct LabsSettings {
     pub subtitle_export: bool,
     /// `second_dictation_hotkey` dictates like the dictation shortcut (macOS, issue 627).
     pub second_dictation_shortcut: bool,
+    /// `terminal_paste_hotkey` dictates like the dictation shortcut and always pastes
+    /// with Ctrl+Shift+V (Windows, Linux).
+    pub terminal_paste_shortcut: bool,
     /// A paste gets a leading space when the character before the cursor wants one (macOS, issue 632).
     pub smart_spacing: bool,
     /// Spoken symbol words ("comma", "hashtag", "underscore") become characters joined to their words (issue 678).
@@ -77,6 +106,9 @@ pub struct LabsSettings {
     /// A Caps Lock press starts and stops dictation, and its light follows
     /// Hex's recording and processing (macOS).
     pub caps_lock_dictation: bool,
+    /// Whether that light stays solid or blinks slowly while recording
+    /// (macOS).
+    pub caps_lock_light: CapsLockLight,
     pub movable_meeting_capsules: bool,
     /// A paste restores the clipboard through a running XWayland on Wayland desktops without data-control, such as GNOME (Linux, issue 1111).
     pub gnome_clipboard_restore: bool,
@@ -137,6 +169,7 @@ impl Default for LabsSettings {
             filler_words: false,
             subtitle_export: false,
             second_dictation_shortcut: false,
+            terminal_paste_shortcut: false,
             smart_spacing: false,
             spoken_symbols: false,
             picker_sort_filter: false,
@@ -159,6 +192,7 @@ impl Default for LabsSettings {
             hide_menu_bar_icon: false,
             quit_closes_window: false,
             caps_lock_dictation: false,
+            caps_lock_light: CapsLockLight::Steady,
             movable_meeting_capsules: false,
             gnome_clipboard_restore: false,
             typed_text: false,

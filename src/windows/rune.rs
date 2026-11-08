@@ -88,6 +88,9 @@ pub(crate) enum ShortcutTarget {
     RawDictation,
     /// Rewrite the selected text.
     RewriteSelection,
+    /// Labs › Terminal paste shortcut: dictates like dictation and always
+    /// pastes with Ctrl+Shift+V.
+    TerminalPaste,
     /// Toggle mode's cancel shortcut.
     Cancel,
 }

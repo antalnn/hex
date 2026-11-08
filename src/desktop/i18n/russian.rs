@@ -257,6 +257,9 @@ const TRANSLATIONS: &[(&str, &str)] = &[
     ("Restore default shortcut", "Восстановить стандартное сочетание"),
     ("Default shortcut: {}", "Стандартное сочетание: {}"),
     ("Unload after", "Выгружать через"),
+    ("Recording light", "Индикатор записи"),
+    ("Steady", "Постоянно"),
+    ("Slow blink", "Медленное мигание"),
     ("Send feedback", "Отправить отзыв"),
     ("Run setup again", "Запустить настройку снова"),
     ("Play the first run again. Settings, models, and permissions stay", "Пройти первый запуск ещё раз. Настройки, модели и разрешения сохранятся"),
@@ -973,6 +976,7 @@ const TRANSLATIONS: &[(&str, &str)] = &[
     ("Almost any language, and it reads your vocabulary", "Почти любой язык, и читает ваш словарь"),
     ("The English model before Parakeet Unified", "Английская модель до Parakeet Unified"),
     ("25 European languages, and it hears which one you speak", "25 европейских языков, и сама слышит, на каком вы говорите"),
+    ("A Parakeet v3 fine-tune, a bit more accurate in 20 of its 25 languages", "Дообученная версия Parakeet v3, немного точнее в 20 из 25 языков"),
     ("Parakeet v3, retrained for fewer wrong words", "Parakeet v3, дообученная для меньшего числа ошибок"),
     ("Chinese and 29 more, and it reads your vocabulary", "Китайский и ещё 29, и читает ваш словарь"),
     ("Egyptian Arabic, mixed with English", "Египетский арабский вперемешку с английским"),
@@ -1247,6 +1251,8 @@ const TRANSLATIONS: &[(&str, &str)] = &[
     ("Pause shortcuts in fullscreen", "Приостанавливать сочетания в полноэкранном режиме"),
     ("Also pause in any window that covers the whole screen", "Также приостанавливать в любом окне на весь экран"),
     ("Each app is listed once, so a repeated name is not saved", "Каждое приложение указано один раз, повтор названия не сохраняется"),
+    ("Terminal paste shortcut", "Сочетание для вставки в терминал"),
+    ("Another dictation shortcut that always pastes with Ctrl+Shift+V", "Ещё одно сочетание для диктовки, которое всегда вставляет через Ctrl+Shift+V"),
 ];
 
 #[cfg(test)]

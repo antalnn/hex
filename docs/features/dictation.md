@@ -57,9 +57,11 @@ cancels the Caps Lock capture in every shortcut mode (in Toggle mode, Toggle's
 other cancel shortcut does not; only Escape does). A Caps Lock remapped to
 Control or Escape never changes AlphaShift, so it never toggles dictation. Each
 press also clears the system Caps Lock state, so following keys stay
-lowercase, and the key's light is solid while any capture records (including a
-normal-shortcut or Annotate capture), blinks while Hex transcribes or
-processes, and is off otherwise. Turning the lab off or quitting Hex clears the
+lowercase, and the key's light comes on once the capture's microphone delivers
+audio, solid while any capture records (including a normal-shortcut or Annotate
+capture), blinks at 350 ms while Hex transcribes or processes, and is off
+otherwise. Its Labs › Recording light option can make recording blink slowly at
+700 ms instead of staying solid. Turning the lab off or quitting Hex clears the
 light and restores normal Caps Lock behaviour. The light needs Input Monitoring
 (which Hex already asks for); without it dictation still works and the light
 stays under macOS's control. Implemented November 7, 2026, not verified on
@@ -239,7 +241,8 @@ mask and AltGr behavior have not run on a Windows PC.
 Windows (Alt+0, say) swallows its key, so the app saw Alt pressed and released
 alone. Chrome took that as a menu tap and moved focus to its menu button, and
 the paste landed there instead of the page. When Hex swallows the key of a
-chord (dictation, Dictate without processing, Paste Last, Annotate) that holds
+chord (dictation, Dictate without processing, Terminal paste shortcut, Paste
+Last, Annotate) that holds
 Alt or Windows, that modifier's release is now masked like a modifier-only
 shortcut's: swallowed, VK 0xE8 tapped, release replayed (not with Share
 shortcut). Check: the `holds_menu_modifier` assertions in
@@ -321,7 +324,7 @@ Output > Typed text                        // labs.md
 │       └── Clear (trash) or `hex settings set typed_text_hotkey none` -> unbound
 ├── Settings -> saved to settings.json as typed_text_hotkey
 └── Shortcut pressed while idle, or `hex typed-text` -> one job on the output worker
-    ├── Terminal paste shortcut on -> refused before any key: its Ctrl+V would
+    ├── Terminal paste on -> refused before any key: its Ctrl+V would
     │   become Ctrl+Shift+V; the job logs why and sends nothing
     ├── take the clipboard for the job: cancel any paste restore still pending
     │   and keep the clipboard that paste replaced, else snapshot it now
@@ -374,6 +377,38 @@ whole field, so a field with mixed formatting loses it; on GNOME the clipboard
 text is read through `wl-paste`, which may briefly take focus. Proof limits: no
 shortcut press against a real target application was run; the flow is covered
 by unit tests only.
+
+### Terminal Paste Shortcut (Labs, Windows and Linux)
+
+A third optional dictation shortcut for typing into a terminal while the main
+dictation shortcut keeps the global Terminal paste setting. While Labs ›
+Terminal paste shortcut is on (`labs.terminal_paste_shortcut`, off by
+default), General shows its recorder under Shortcut:
+
+```ts
+Labs > Terminal paste shortcut > recorder   // dictate.terminal-paste-shortcut
+├── Unbound by default -> nothing registered, grabbed, or reserved
+│   └── Record a shortcut -> the listener registers it while the lab is on
+│       ├── Windows: the hook's terminal-paste trigger
+│       └── Linux: an X11 grab, or a portal entry "Terminal paste shortcut"
+├── Linux has no `hex` command for it (unlike Dictate without processing):
+│   without X11 grabs or the desktop's shortcuts portal it stays unregistered
+├── Hold / double-tap lock / Toggle -> as the dictation shortcut
+│   ├── The shortcut that started a capture owns it: dictation and Dictate
+│   │   without processing neither finish it nor count toward its double tap
+│   └── Its flavour survives the post-release tail to the paste
+├── Finish -> processed like a dictation (modes, History kind Dictation,
+│   last dictation updated) and pasted with Ctrl+Shift+V
+│   └── Windows javaw/java still take plain Ctrl+V
+├── Clear (trash) -> unbound again; the lab off -> inactive and unregistered
+└── Paste Last -> keeps the global Terminal paste setting
+```
+
+Checks: `terminal_paste_shortcut_owns_the_capture_it_starts` (Linux reducer),
+`the_terminal_paste_shortcut_needs_its_lab_and_its_own_keys` (settings), and
+the Windows `a_second_dictation_shortcut_owns_the_capture_it_starts`
+(cross-compiled only). Proof limits: no physical shortcut or real terminal run
+on either OS.
 
 ### Copy Recent Dictation (Labs, macOS)
 
@@ -1043,6 +1078,9 @@ Model advertises streaming, GPU device             // dictate.streaming
   │   no hint) follows without a badge: on FLEURS test it trailed Parakeet
   │   Unified/v3 in every European language and tied Whisper turbo in Japanese
   │   (5.04% CER against 5.02%), Hex's run (#1252)
+  ├── Orukeet: Oruk AI's Parakeet v3 fine-tune (740 MB, no hint) follows without
+  │   a badge; 1.86% WER on LibriSpeech test-clean from transcribe.cpp's
+  │   published conversion benchmark, with its FLEURS figures in Details
   └── Every other available model follows without a badge, selectable and
       deletable; never auto-switched or auto-downloaded (setup.language-select)
 ```
@@ -1465,9 +1503,12 @@ waits for Shift, Alt, and Win to come up, sends Ctrl+V, and restores the
 previous clipboard 500 ms later unless a newer paste or another app changed it.
 Labs › Terminal paste (`paste_with_shift`, off by default; on Linux it is a
 General › Advanced row) sends Ctrl+Shift+V instead, for apps that ignore
-a synthetic Ctrl+V (the herdr desktop app). Shift goes down after Ctrl and up
+a synthetic Ctrl+V (the herdr desktop app); a Labs › Terminal paste shortcut
+capture overrides it per paste, and Paste last dictation does not. Shift goes
+down after Ctrl and up
 before it; a Ctrl the user still holds is never pressed or released by Hex. A
 saved change applies to the next paste without restarting the listener.
+Java games (`javaw`/`java`) still take plain Ctrl+V, override or not.
 Source: `control_chord` in [windows/paste.rs](../../src/windows/paste.rs).
 Check: `paste_chords_press_shift_inside_control_and_leave_a_held_control_alone`
 (the synthesized key sequence only; no paste into a real Windows app).
@@ -1537,7 +1578,11 @@ Record -> Release -> Transcribing/processing/paste -> Finished // dictate.feedba
      -> Classic has none: macOS Basso, Signature's error on Windows and Linux
      -> A lost microphone or input -> No tone; the capture ends
   Tone requested -> Playback worker opens the default output, then plays
-     -> Output stays open five minutes past the last tone, then releases
+     -> macOS releases ~10 s after the last tone; Windows 5 min; Linux 1 s
+     -> An open macOS output is a live CoreAudio client coreaudiod services
+        and holds an idle-sleep assertion for, so it must not idle for long
+     -> A fatal stream error (the output became unavailable or invalid)
+        drops the output, and the next tone reopens
      -> Released output holds no macOS idle-sleep assertion
   Feedback volume = 0 -> No tones
      -> Playback worker releases output on its next 250 ms observation
@@ -1675,16 +1720,34 @@ of the session. Linux already logged and continued; the macOS worker now
 matches that behavior instead of stopping desktop recognition.
 
 The playback worker never opens the output at startup. It opens the default
-output for the first tone, keeps it through a five-minute idle grace so bursts
-of dictation share a warm device, and releases it after that grace or on the
-next observation after sounds turn Off. macOS idle-sleep timers count from the
-last user input, and a tone implies recent input, so the grace never delays
-sleep by itself. A device open already in progress must return before the
-worker can observe that change. Output-open failures retry at most once per
-two seconds, and a released device reopens without that backoff. Bundled
-samples remain decoded in memory. A tone that arrives after the grace pays a
-cold device open first; the tone is delayed, not clipped or dropped.
-Overlapping tones extend the playing window rather than shortening it.
+output for the first tone, keeps it through an idle grace so bursts of
+dictation share a warm device, and releases it after that grace or on the next
+observation after sounds turn Off. On macOS the grace is ten seconds: an open
+output is a live CoreAudio IO client that coreaudiod services and holds an
+idle-sleep assertion for. coreaudiod logged client timeouts against Hex's open
+output (#1531), and a shorter grace reduces how long such a client exists.
+Ten seconds still covers a quick start-tone to stop-tone dictation, though a
+dictation held past about ten seconds pays a cold output open for its stop
+tone; the tone is delayed, not dropped. Cold-open time on Bluetooth outputs is
+unmeasured. Windows keeps five minutes; Linux releases after one second because
+an open output is a listed stream in its sound controls (#720). A per-sink flag
+records a fatal stream error (the output became unavailable or invalid);
+overload glitches (`Xrun`) never set it. A default-output change does not set it
+on macOS, where cpal reports `DeviceChanged` only after the default-output unit
+has already rerouted the stream. On Windows cpal's WASAPI backend never
+rebinds, so a default-device change ends the stream with `StreamInvalidated`
+and counts as fatal, dropping that output so the next tone opens the new
+default. The stream error callback may run on a CoreAudio thread, so it only
+flips the flag; the worker drops a flagged sink on its next 250 ms observation
+or next tone, logs one warning, and lets the next tone open a fresh one. macOS idle-sleep timers count from the last user
+input, and a tone implies recent input, so the grace never delays sleep by
+itself. A device open
+already in progress must return before the worker can observe that change.
+Output-open failures retry at most once per two seconds, and a released device
+reopens without that backoff. Bundled samples remain decoded in memory. A tone
+that arrives after the grace pays a cold device open first; the tone is
+delayed, not clipped or dropped. Overlapping tones extend the playing window
+rather than shortening it.
 
 **Fixed after 2.3.0:** the start tone used to wait for the 300 ms intentional
 hold, then pay rodio's default 50 ms output buffer, so it sounded about 345 ms
@@ -1710,9 +1773,10 @@ slept ([#95](https://github.com/anomalyco/hex/issues/95)). 2.1.18 released the
 stream only when sounds were Off. Startup admission therefore no longer
 reports `could not open the audio output`; a device failure surfaces as a
 warning when the first tone plays.
-`output_opens_for_a_tone_and_releases_after_the_idle_grace` and
-`overlapping_tones_extend_playback_instead_of_truncating_it` check ownership,
-grace, and drop with a controlled sink;
+`output_opens_for_a_tone_and_releases_after_the_idle_grace`,
+`overlapping_tones_extend_playback_instead_of_truncating_it`, and
+`an_errored_sink_is_dropped_and_reopened_on_the_next_tone` check ownership,
+grace, drop, and stream-error recovery with a controlled sink;
 `failed_output_initialization_retries_with_a_bounded_backoff` checks
 failure-to-success recovery without an audio device. The opt-in
 `native_output_release_clears_the_idle_sleep_assertion` opens the real default
@@ -1805,7 +1869,14 @@ HUD's surface (backend, adapter, alpha mode) once, and treats a dictation
 start whose HUD presents no frame within 1.5 s as a failure too. Each
 failure is logged as an error in process.log once per reason, and Settings
 shows it as the listener's warning (`HudSender::failure`). Every OS takes dark or light and Reduce Motion
-from Rune, and loads `dot-scope.json` at launch.
+from Rune, and loads `dot-scope.json` at launch. Windows and Linux drop the
+HUD's painter, and its buffers, bind group and pipeline, once Rune's own hold
+on the device would end: five minutes after the HUD hides on Windows, ten on
+Linux (Rune's surface idle plus the five minutes it then parks the device),
+and also when the indicator is set to Hidden while the HUD shows; macOS keeps
+it. The GPU device itself frees only once Rune's parked device also expires,
+and on Wayland layer-shell Rune keeps its own device regardless. The memory
+drop is not yet measured on a real Windows machine (#1431).
 
 ```ts
 Dot scope                                    // dot_scope

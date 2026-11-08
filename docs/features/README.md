@@ -186,8 +186,12 @@ Launch Hex, setup incomplete              // setup.tour; every build and OS, ful
 ├── Setting up Hex -> speech model download starts at once  // setup.background-download
 │   ├── Model -> the selection recommended for the system's first preferred
 │   │            language (English -> Parakeet Unified English; e.g. French ->
-│   │            Parakeet v3, Japanese -> Qwen3-ASR); the language capsule
-│   │            switches between English and that language
+│   │            Parakeet v3, Japanese -> Whisper large-v3-turbo); when that
+│   │            language isn't English, the language capsule switches between
+│   │            English and its recommended model with one press, with no
+│   │            dropdown chevron; with English as the system language there is
+│   │            nothing to switch to, so the capsule just shows English,
+│   │            whatever English model is selected
 │   ├── The download is held while the Hugging Face scan runs (headers only)
 │   ├── Models found here -> the model step instead      // setup.found-choice
 │   │   ├── "Choose a speech model": one list, ours first and selected, then the
@@ -320,7 +324,7 @@ Language row is unexercised.
 
 ```ts
 Choose a supported language              // setup.language-conditioning; macOS + Linux picker
-├── Parakeet v3 -> Detect language from audio; selected language does not constrain output
+├── Parakeet v3 and Orukeet -> Detect language from audio; selected language does not constrain output
 ├── Granite Speech 5.0 -> No language input; transcribes whichever of en, fr,
 │   de, es, pt, it, ja it hears (#1252)
 ├── Whisper -> Use selected language to guide decoding; accuracy is not guaranteed
@@ -389,6 +393,11 @@ Settings picker > Every model row          // fixed height; scrolls
 ├── Labs > Parakeet Ultra (off) -> its row with a Labs tag and Details: languages,  // setup.parakeet-ultra
 │   measured memory, the CC BY 4.0 credit, notice, Source/License links, folded
 │   published benchmarks "not measured in Hex" (labs.md)
+├── Orukeet -> ordinary row with Details: languages, the CC BY-SA 4.0 credit  // setup.orukeet
+│   and notice, Source/License links, folded published FLEURS benchmarks
+│   "not measured in Hex"; never recommended or badged. Checks:
+│   `orukeet_is_offered_for_exactly_parakeet_v3s_languages_and_never_badged`,
+│   `orukeets_details_credit_its_base_and_cover_its_languages_once`
 ├── "Add model file…" in the header -> imported cards after the catalog:  // setup.custom-models
 │   Imported · family · languages · Not benchmarked · file · licence · SHA-256
 │   prefix; Rename, Remove (not the active
@@ -671,6 +680,11 @@ Labs > Second dictation shortcut (macOS, off)   // labs.md; issue 627
   -> it dictates like the shortcut: Hold/Toggle, double-tap lock, release
   -> the shortcut that starts a capture finishes it; the other stands down meanwhile
 
+Labs > Terminal paste shortcut (Windows, Linux; off)   // labs.md
+  -> General shows "Terminal paste shortcut" under Shortcut (unbound, clearable)
+  -> it dictates like the shortcut and always pastes with Ctrl+Shift+V
+  -> Paste last dictation keeps the global Terminal paste setting
+
 Labs > Caps Lock dictation (macOS, off)   // labs.md
   -> a Caps Lock press starts a hands-free capture; the next press finishes it
   -> needs both the HID Caps Lock key and its AlphaShift edge; remapped to
@@ -699,8 +713,9 @@ Completed output                         // output
 ├── Paste -> Current focus, in submission order
 │   ├── Previous clipboard restored 500 ms later, unless something newer replaced it
 │   ├── Windows -> the transcript is marked out of clipboard history (Win+V) and cloud sync (#851)
-│   ├── Labs > Keep dictation on clipboard (macOS, off) -> the dictation stays on the clipboard (labs.md)
-│   └── Labs > Copy dictation only (macOS, off) -> clipboard only: no paste, typing, or restore (labs.md)
+│   ├── Labs > Keep dictation on clipboard (macOS, Windows, off) -> the dictation stays on the clipboard (labs.md)
+│   │   └── Windows -> kept as an ordinary entry, in history too
+│   └── Labs > Copy dictation only (macOS, Windows, off) -> clipboard only: no paste, typing, or restore (labs.md)
 ├── Paste Last Dictation                  // menu or Option-Shift-V / saved binding
 │   ├── Last completed dictation
 │   └── macOS menu item shows the saved binding (⌥⇧V by default); unbound,
@@ -829,6 +844,9 @@ General                                  // settings
 │   └── On -> the hook passes the shortcut's key-down/up on instead of consuming it
 ├── Terminal paste (Advanced on Linux, Labs on Windows; off)
 │   └── On -> paste sends Ctrl+Shift+V instead of Ctrl+V; applies to the next paste
+├── Labs > Terminal paste shortcut (Windows, Linux; off)
+│   └── On -> General shows its recorder; a capture it starts pastes with
+│       Ctrl+Shift+V whatever Terminal paste says
 ├── Turn off the mic when not dictating (General, under Microphone; off)   // release_microphone_while_idle
 │   ├── One switch, no confirmation; its line says what the state means (issue 61), on every OS
 │   ├── Off (default) -> "The mic stays ready so dictation starts instantly; your system shows it in use"
@@ -882,16 +900,28 @@ Intentional recording                    // recording.environment, idle_sleep
     // no caffeinate child process or executable-policy dialog
 ```
 
-Feedback tones keep their output open for five idle minutes (macOS, Windows).
+Feedback tones keep their output open briefly after the last one: about ten
+seconds on macOS, where an open output is a live CoreAudio client coreaudiod
+services and holds a sleep assertion for, and five idle minutes on Windows.
 On Linux, where an open output stays listed in the desktop's sound controls,
 it closes about a second after the last tone ends
 ([#720](https://github.com/anomalyco/hex/issues/720)); the existing
 `output_opens_for_a_tone_and_releases_after_the_idle_grace` check covers the
-grace logic, not a real PipeWire stream list. On macOS the
-CoreAudio listeners on the default output, the device list, and an audio service
-restart advance an output route generation; the next tone drops an output opened
-under an older one and opens the current default at once, so unplugging a USB
-or Bluetooth output no longer silences tones until Hex restarts
+grace logic, not a real PipeWire stream list. A fatal stream error (the output
+became unavailable or invalid) sets a per-sink flag from the stream error
+callback, which may run on a CoreAudio thread; overload glitches (`Xrun`) do
+not. The worker drops a flagged sink on its next 250 ms observation or next
+tone, and the next tone opens a fresh one
+(`an_errored_sink_is_dropped_and_reopened_on_the_next_tone`). A default-output
+change is not fatal on macOS, where cpal reports `DeviceChanged` after the
+default-output unit has already rerouted the stream; on Windows cpal's WASAPI
+backend never rebinds, so a default-device change ends the stream with
+`StreamInvalidated`, which is fatal: the output is dropped and the next tone
+opens the new default. On macOS the CoreAudio listeners on the default output,
+the device list, and an audio service restart advance an output route
+generation; the next tone drops an output opened under an older one and opens
+the current default at once, so unplugging a USB or Bluetooth output no longer
+silences tones until Hex restarts
 ([#428](https://github.com/anomalyco/hex/issues/428)). Check:
 `a_route_change_reopens_the_output_on_the_current_default` in
 [feedback.rs](../../src/feedback.rs), with injected opens; a real unplug has not
@@ -2157,10 +2187,12 @@ The shared [feedback player](../../src/feedback.rs) uses Hex's bundled sounds
 ([Feedback](dictation.md#feedback)) on every platform; only macOS wake/sleep
 use `afplay`.
 Decoding happens before the Linux capture loop; the output device opens for
-the first tone and is released five minutes after the last one, as described
-in [macOS feedback](dictation.md#feedback). Playback admission is bounded and
-nonblocking. Output preparation failures are
-logged without blocking dictation. The Settings window saves the volume to
+the first tone and is released shortly after the last one (about ten seconds
+on macOS, five minutes on Windows, one second on Linux), as described in
+[macOS feedback](dictation.md#feedback). A fatal stream error (the output became
+unavailable or invalid) drops the output, so the next tone reopens it. Playback
+admission is bounded and nonblocking. Output preparation failures are logged
+without blocking dictation. The Settings window saves the volume to
 `settings.json` and the service reloads it without restarting the listener. The start sound does not wait
 for the 300 ms capture-retention threshold; input delivery and audio-device
 latency still apply. **While dictating** mute, pause, or lower does: the audio loop
@@ -2315,12 +2347,20 @@ Windows `hex app` -> one tray process, Rune window // dev.rune-ui-windows
 ├── rune::App: --hidden starts windowless and makes no Direct3D device (on x64
 │   the speech model still loads on the GPU through Vulkan), close hides
 │   (keep_running); Quit or no tray ends it
-├── General adds Launch at login; no terminal paste; chord capture polls
+├── General adds Launch at login; Terminal paste in Labs; chord capture polls
 ├── HUD: shared indicator model + CPU shader in a Rune overlay
 ├── Modes: "Choose a file…" opens rune::FileDialogs (file_dialog) on its own thread
 ├── Modes app icons: the executable's first icon (PrivateExtractIconsW)
 └── Not yet: custom caption
-iOS prototype -> Record/transcribe/copy and keyboard handoff
+iOS prototype (`HEXMobile`) -> Record/transcribe/copy and keyboard handoff
+├── Experiments: Full keyboard, Apple Intelligence cleanup, Custom vocabulary
+├── Custom vocabulary (off by default): a local list of up to 100 terms; every
+│   engine spells matched words the listed way before cleanup and again after
+│   formatting
+├── Recognition hint: Apple Speech (iOS 26) contextual strings, best effort;
+│   Apple documents them only for DictationTranscriber, and Parakeet's batch
+│   path receives none
+└── Proof limits: unit tests only; no CI compiles the iOS targets
 Unmerged Windows / deferred features -> Not part of this map
 ```
 
@@ -2328,7 +2368,11 @@ Sources: [meeting.rs](../../src/meeting.rs),
 [meeting/watcher.rs](../../src/meeting/watcher.rs),
 [control/developer_control.rs](../../src/control/developer_control.rs),
 `SCENES` in [rune_ui.rs](../../src/rune_ui.rs), [iOS guide](../../ios/README.md).
-iOS physical-device proof and temporary-WAV failure cleanup remain gaps;
+The iOS custom vocabulary experiment stays off by default and keeps its list in
+the App Group. Apple Speech also receives it as a best-effort recognition hint,
+unverified on a physical iPhone; Apple documents contextual strings only for
+`DictationTranscriber`, and Parakeet's batch path receives none. iOS
+physical-device proof and temporary-WAV failure cleanup remain gaps;
 best-effort deletion is not guaranteed deletion.
 
 `dev.rune-ui` lives in [rune_ui.rs](../../src/rune_ui.rs) and its pane modules;

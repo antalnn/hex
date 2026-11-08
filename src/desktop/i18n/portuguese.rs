@@ -261,6 +261,9 @@ const TRANSLATIONS: &[(&str, &str)] = &[
     ("Restore default shortcut", "Restaurar atalho padrão"),
     ("Default shortcut: {}", "Atalho padrão: {}"),
     ("Unload after", "Descarregar após"),
+    ("Recording light", "Luz de gravação"),
+    ("Steady", "Fixa"),
+    ("Slow blink", "Piscar devagar"),
     ("Send feedback", "Enviar feedback"),
     ("Run setup again", "Executar a configuração de novo"),
     ("Play the first run again. Settings, models, and permissions stay", "Repete a primeira execução. Ajustes, modelos e permissões são mantidos"),
@@ -980,6 +983,7 @@ const TRANSLATIONS: &[(&str, &str)] = &[
     ("Almost any language, and it reads your vocabulary", "Quase qualquer idioma, e lê seu vocabulário"),
     ("The English model before Parakeet Unified", "O modelo de inglês anterior ao Parakeet Unified"),
     ("25 European languages, and it hears which one you speak", "25 idiomas europeus, e reconhece qual você fala"),
+    ("A Parakeet v3 fine-tune, a bit more accurate in 20 of its 25 languages", "Um ajuste fino do Parakeet v3, um pouco mais preciso em 20 dos seus 25 idiomas"),
     ("Parakeet v3, retrained for fewer wrong words", "Parakeet v3, retreinado para menos palavras erradas"),
     ("Chinese and 29 more, and it reads your vocabulary", "Chinês e mais 29, e lê seu vocabulário"),
     ("Egyptian Arabic, mixed with English", "Árabe egípcio, misturado com inglês"),
@@ -1244,6 +1248,8 @@ const TRANSLATIONS: &[(&str, &str)] = &[
     ("Pause shortcuts in fullscreen", "Pausar atalhos em tela cheia"),
     ("Also pause in any window that covers the whole screen", "Pausar também em qualquer janela que ocupe a tela toda"),
     ("Each app is listed once, so a repeated name is not saved", "Cada aplicativo aparece uma vez, então um nome repetido não é salvo"),
+    ("Terminal paste shortcut", "Atalho de colar no terminal"),
+    ("Another dictation shortcut that always pastes with Ctrl+Shift+V", "Outro atalho de ditado que sempre cola com Ctrl+Shift+V"),
 ];
 
 #[cfg(test)]

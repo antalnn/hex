@@ -62,6 +62,9 @@ pub(crate) enum ShortcutTarget {
     RewriteSelection,
     /// Labs › Transform typed text.
     TypedText,
+    /// Labs › Terminal paste shortcut: dictates like the dictation shortcut
+    /// and always pastes with Ctrl+Shift+V.
+    TerminalPaste,
     /// Toggle mode's cancel shortcut.
     Cancel,
 }
@@ -1099,6 +1102,9 @@ impl LinuxDesktopHost {
                         }
                         ShortcutTarget::RewriteSelection => settings.rewrite_hotkey = Some(binding),
                         ShortcutTarget::TypedText => settings.typed_text_hotkey = Some(binding),
+                        ShortcutTarget::TerminalPaste => {
+                            settings.terminal_paste_hotkey = Some(binding)
+                        }
                         ShortcutTarget::Cancel => settings.cancel_hotkey = binding,
                     }
                 })
