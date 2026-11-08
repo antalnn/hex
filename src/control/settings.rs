@@ -327,6 +327,17 @@ const KEYS: &[Key] = &[
         "The bearer token the dictation cleanup sends to its remote endpoint, if it wants one",
     ),
     key(
+        "shortcuts.excluded_processes",
+        Kind::Json,
+        "Apps in which Hex's shortcuts do nothing, by executable name such as cs2, \
+         as a JSON array of strings",
+    ),
+    key(
+        "shortcuts.disable_in_fullscreen",
+        Kind::Bool,
+        "Also stop Hex's shortcuts in a window that covers its whole monitor",
+    ),
+    key(
         "dictation_processing.default_mode",
         Kind::Json,
         "The Global mode: replacements, transformations, and rewriting",
@@ -1260,6 +1271,10 @@ pub fn apply(
         }
         "labs.standalone_special_keys" => candidate.repair_special_keys(),
         "labs.section_key_alone" => candidate.repair_section_key(),
+        "shortcuts.excluded_processes" => {
+            candidate.shortcuts.excluded_processes =
+                crate::app_settings::ShortcutGuard::clean(&candidate.shortcuts.excluded_processes);
+        }
         "labs.parakeet_ultra" if !candidate.labs.parakeet_ultra => {
             if let Some(why) = crate::labs::Feature::ParakeetUltra.off_refusal(settings) {
                 return Err(invalid(name, why));

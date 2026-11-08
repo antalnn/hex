@@ -30,6 +30,7 @@ mod screenshots;
 #[cfg(target_os = "linux")]
 pub(crate) use persistence::LaunchLoad;
 pub(crate) use persistence::LaunchNote;
+mod shortcut_guard;
 mod shortcut_repair;
 
 pub use ai::*;
@@ -46,6 +47,7 @@ pub use meetings::*;
 pub use rewrite::*;
 #[cfg_attr(not(target_os = "macos"), allow(unused_imports))]
 pub use screenshots::{ScreenshotSettings, screenshot_hotkey, screenshot_settings};
+pub use shortcut_guard::*;
 
 static RECORDING_DUCK_VOLUME: AtomicU32 = AtomicU32::new(0.2_f32.to_bits());
 // Until settings load, "While dictating" is its default, not Mute: the
@@ -326,6 +328,8 @@ pub struct AppSettings {
     pub rewrite: RewriteSettings,
     /// Where the dictation cleanup's model call goes (`crate::dictation::ai_rewrite`).
     pub dictation_rewrite: ModelSource,
+    /// The apps in which Hex's shortcuts do nothing.
+    pub shortcuts: ShortcutGuard,
     /// Labs › Screenshots' shortcut and folder (macOS).
     pub screenshots: ScreenshotSettings,
     /// Start listening when Hex opens (Windows and Linux, where the
@@ -463,6 +467,7 @@ impl Default for AppSettings {
             llm: LlmSettings::default(),
             rewrite: RewriteSettings::default(),
             dictation_rewrite: ModelSource::default(),
+            shortcuts: ShortcutGuard::default(),
             screenshots: ScreenshotSettings::default(),
             enable_on_launch: true,
             paste_with_shift: false,
