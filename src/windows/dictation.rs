@@ -125,6 +125,8 @@ pub struct WindowsDictationConfig {
     pub paste_with_shift: bool,
     /// The local model server's port, for Rewrite selection.
     pub rewrite_port: u16,
+    /// Where Rewrite selection's model call goes: local or remote.
+    pub rewrite_source: crate::app_settings::ModelSource,
     /// Rewrite selection's snippet names and their prompts.
     pub rewrite_snippets: Vec<(String, String)>,
     /// The instruction for a recording that said nothing.
@@ -193,6 +195,7 @@ impl WindowsDictationConfig {
             fallback_to_default_device: true,
             paste_with_shift: settings.paste_with_shift,
             rewrite_port: settings.llm.port,
+            rewrite_source: settings.rewrite.model.clone(),
             rewrite_snippets: settings.rewrite.pairs(),
             rewrite_default_prompt: settings.rewrite.default_prompt.clone(),
             paste_to_start_window: settings.dictation_processing.paste_to_start_window,
@@ -238,6 +241,7 @@ pub fn run(
         paste_with_shift,
         paste_to_start_window,
         rewrite_port,
+        rewrite_source,
         rewrite_snippets,
         rewrite_default_prompt,
         swap_failures,
@@ -344,6 +348,7 @@ pub fn run(
                             job,
                             &mut paster,
                             rewrite_port,
+                            &rewrite_source,
                             &rewrite_snippets,
                             &rewrite_default_prompt,
                         )
@@ -1217,6 +1222,7 @@ fn process_rewrite_job(
     mut job: Job,
     paster: &mut Result<WindowsPaster>,
     port: u16,
+    source: &crate::app_settings::ModelSource,
     snippets: &[(String, String)],
     default_prompt: &str,
 ) -> JobResult {
@@ -1231,8 +1237,9 @@ fn process_rewrite_job(
             let instruction =
                 crate::dictation::rewrite::resolve(&transcript, snippets, default_prompt)
                     .map_err(|error| format!("{error:#}"))?;
-            let rewritten = crate::dictation::rewrite::rewrite(port, &instruction, &selection)
-                .map_err(|error| format!("{error:#}"))?;
+            let rewritten =
+                crate::dictation::rewrite::rewrite(source, port, &instruction, &selection)
+                    .map_err(|error| format!("{error:#}"))?;
             paster
                 .as_mut()
                 .map_err(|error| format!("{error:#}"))?

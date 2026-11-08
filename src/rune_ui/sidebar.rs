@@ -57,6 +57,9 @@ pub(super) enum Pane {
     /// Dictation, output, and application basics.
     #[default]
     General,
+    /// Where each model call goes: the local server, and Local or Remote for
+    /// the dictation cleanup and Rewrite selection.
+    Models,
     /// What Hex does to every dictation and in some apps, read-only: the
     /// person's agent edits it.
     Output,
@@ -83,6 +86,7 @@ impl Pane {
     #[cfg(all(test, target_os = "linux"))]
     pub(super) const ALL: &[Pane] = &[
         Pane::General,
+        Pane::Models,
         Pane::Output,
         Pane::Modes,
         Pane::Meetings,
@@ -110,6 +114,7 @@ impl Pane {
     pub(super) fn title(self) -> &'static str {
         match self {
             Pane::General => tr("General"),
+            Pane::Models => tr("Models"),
             Pane::Output => tr("Output"),
             Pane::Modes => tr("Modes"),
             Pane::History => tr("History"),
@@ -125,6 +130,7 @@ impl Pane {
     pub(super) fn key(self) -> &'static str {
         match self {
             Pane::General => "nav-general",
+            Pane::Models => "nav-models",
             Pane::Output => "nav-output",
             Pane::Modes => "nav-modes",
             Pane::History => "nav-history",
@@ -140,6 +146,7 @@ impl Pane {
     pub(super) fn icon(self) -> &'static Icon {
         match self {
             Pane::General => &SETTINGS_ICON,
+            Pane::Models => &MODES_ICON,
             Pane::Output => &OUTPUT_ICON,
             Pane::Modes => &MODES_ICON,
             Pane::History => &HISTORY_ICON,

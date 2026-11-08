@@ -18,6 +18,10 @@ pub struct RewriteSnippet {
 #[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(default)]
 pub struct RewriteSettings {
+    /// Where this feature's model call goes: its own choice, independent of
+    /// the dictation cleanup's.
+    #[serde(flatten)]
+    pub model: ModelSource,
     /// Names that stand for a prompt, matched against the whole recording.
     pub snippets: Vec<RewriteSnippet>,
     /// The prompt for a recording that said nothing (silence, or a release
@@ -43,6 +47,7 @@ mod tests {
     #[test]
     fn a_snippet_round_trips() {
         let settings = RewriteSettings {
+            model: ModelSource::default(),
             snippets: vec![RewriteSnippet {
                 name: "structured prompt".into(),
                 prompt: "Turn it into a prompt.".into(),
@@ -59,11 +64,34 @@ mod tests {
         let decoded: RewriteSettings = serde_json::from_str("{}").unwrap();
         assert!(decoded.snippets.is_empty());
         assert!(decoded.default_prompt.is_empty());
+        assert_eq!(decoded.model.source, super::AiSource::Local);
+    }
+
+    #[test]
+    fn the_model_source_shares_the_rewrite_prefix() {
+        let settings = RewriteSettings {
+            model: ModelSource {
+                source: super::AiSource::Remote,
+                endpoint: "https://api.example.com/v1".into(),
+                model: "big-model".into(),
+                api_key: "secret".into(),
+            },
+            snippets: Vec::new(),
+            default_prompt: String::new(),
+        };
+        let json = serde_json::to_value(&settings).unwrap();
+        assert_eq!(json["source"], "remote");
+        assert_eq!(json["endpoint"], "https://api.example.com/v1");
+        assert_eq!(json["model"], "big-model");
+        assert_eq!(json["api_key"], "secret");
+        let decoded: RewriteSettings = serde_json::from_value(json).unwrap();
+        assert_eq!(decoded, settings);
     }
 
     #[test]
     fn pairs_expose_the_name_and_the_prompt() {
         let settings = RewriteSettings {
+            model: ModelSource::default(),
             snippets: vec![RewriteSnippet {
                 name: "bullets".into(),
                 prompt: "Make it a list.".into(),

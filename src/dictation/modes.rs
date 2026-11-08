@@ -3,7 +3,7 @@
 //! post-processing, and transformations run in the shared
 //! `dictation_processor` order. macOS selects modes through `config`.
 
-use std::sync::atomic::AtomicBool;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use url::Url;
 
@@ -24,6 +24,9 @@ pub struct ModeRuntime {
     /// when `wrap_code_terms` is on.
     code_terms: Vec<crate::dictation::vocabulary::VocabularyEntry>,
     wrap_code_terms: bool,
+    /// Where dictation cleanup's model call goes, and the local server's port.
+    ai_source: crate::app_settings::ModelSource,
+    llm_port: u16,
     modes: Vec<DictationMode>,
     reads_page: bool,
 }
@@ -47,6 +50,8 @@ impl ModeRuntime {
                 .cloned()
                 .collect(),
             wrap_code_terms: processing.wrap_code_terms,
+            ai_source: settings.dictation_rewrite.clone(),
+            llm_port: settings.llm.port,
             modes: processing.modes.clone(),
             reads_page: uses_page(processing),
         }
@@ -74,7 +79,26 @@ impl ModeRuntime {
         let cancelled = AtomicBool::new(false);
         let mut processed = Profiles::new(profile)
             .process_cancellable(&text, language, context, &cancelled, source);
-        processed.apply_transformations(transformations, context, &cancelled, source);
+        let ids = processed.transformations.clone();
+        match ids
+            .iter()
+            .position(|id| id == crate::dictation::ai_rewrite::TRANSFORMATION_ID)
+        {
+            None => {
+                processed.apply_transformations(transformations, context, &cancelled, source);
+            }
+            Some(index) => {
+                // The model step sits mid-list: the rules decided from the raw
+                // words (bullets, orphans) run before it, and the rules applied
+                // to its output (paragraphs, colon cues, snippets) after.
+                processed.transformations = ids[..index].to_vec();
+                processed.apply_transformations(transformations, context, &cancelled, source);
+                self.run_ai(&mut processed, &cancelled);
+                processed.transformations = ids[index + 1..].to_vec();
+                processed.apply_transformations(transformations, context, &cancelled, source);
+                processed.transformations = ids;
+            }
+        }
         // After the rewrite: the model may lowercase or drop a backtick it saw
         // in its input, so the wrap is the last step that touches the text.
         if self.wrap_code_terms {
@@ -82,6 +106,35 @@ impl ModeRuntime {
                 crate::dictation::vocabulary::wrap_code_terms(&processed.text, &self.code_terms);
         }
         processed
+    }
+
+    /// The model step itself, between the two halves of the chain. A failure
+    /// keeps the text and records why, the way the script returned its input: a
+    /// dictation has to produce something.
+    fn run_ai(&self, processed: &mut Processed, cancelled: &AtomicBool) {
+        if cancelled.load(Ordering::Acquire) {
+            return;
+        }
+        let started = std::time::Instant::now();
+        let result =
+            crate::dictation::ai_rewrite::clean(&self.ai_source, self.llm_port, &processed.text);
+        let observation = processed.observation.get_or_insert_with(|| {
+            crate::dictation::processor::ProcessingObservation {
+                profile: "Custom transformations".into(),
+                latency_ms: 0,
+                fallback: None,
+            }
+        });
+        observation.latency_ms = observation
+            .latency_ms
+            .saturating_add(started.elapsed().as_millis() as u64);
+        match result {
+            Ok(text) => processed.text = text,
+            Err(error) => {
+                tracing::warn!(%error, "the dictation cleanup was skipped");
+                observation.fallback = Some(format!("{error:#}"));
+            }
+        }
     }
 
     /// The matching mode's profile, or Global's.
@@ -445,6 +498,50 @@ mod tests {
 
         assert_eq!(processed.text, "Use OpenCode in Hex.");
         assert!(processed.observation.is_none());
+    }
+
+    #[test]
+    fn the_ai_step_runs_between_the_rules_before_and_after_it() {
+        // Port 9 answers nothing, so the model step fails and keeps the text:
+        // what the test checks is where it sat, not what it said.
+        let runtime = runtime(|settings| {
+            settings.llm.port = 9;
+            settings.dictation_processing.default_mode.transformations = vec![
+                "lowercase".into(),
+                crate::dictation::ai_rewrite::TRANSFORMATION_ID.into(),
+                "no-trailing-punctuation".into(),
+            ];
+        });
+        let transformations = crate::personal_commands::TransformationClient::default();
+
+        let processed = runtime.process(
+            "Keep OpenCode Exact!",
+            "en",
+            &crate::dictation::context::ContextSnapshot::default(),
+            &transformations,
+            crate::dictation::processor::Source::Dictation,
+        );
+
+        // Lowercase ran before the model, no-trailing-punctuation after it, and
+        // the model's own failure left the text alone.
+        assert_eq!(processed.text, "keep opencode exact");
+        let observation = processed.observation.as_ref().expect("the step ran");
+        assert!(
+            observation
+                .fallback
+                .as_deref()
+                .is_some_and(|reason| reason.contains("did not answer")),
+            "{observation:?}"
+        );
+        // The full list is left on the result, as before the split.
+        assert_eq!(
+            processed.transformations,
+            [
+                "lowercase".to_string(),
+                crate::dictation::ai_rewrite::TRANSFORMATION_ID.to_string(),
+                "no-trailing-punctuation".to_string()
+            ]
+        );
     }
 
     #[test]

@@ -287,6 +287,46 @@ const KEYS: &[Key] = &[
         "Names that stand for a rewrite instruction, as a JSON array of { name, prompt }",
     ),
     key(
+        "rewrite.source",
+        Kind::Choice(&["local", "remote"]),
+        "Where Rewrite selection's model runs: Hex's own local server, or a remote endpoint",
+    ),
+    key(
+        "rewrite.endpoint",
+        Kind::Text,
+        "The remote endpoint Rewrite selection calls, such as https://api.example.com/v1",
+    ),
+    key(
+        "rewrite.model",
+        Kind::Text,
+        "The model name the remote endpoint expects for Rewrite selection",
+    ),
+    key(
+        "rewrite.api_key",
+        Kind::Text,
+        "The bearer token Rewrite selection sends to its remote endpoint, if it wants one",
+    ),
+    key(
+        "dictation_rewrite.source",
+        Kind::Choice(&["local", "remote"]),
+        "Where the dictation cleanup's model runs: Hex's own local server, or a remote endpoint",
+    ),
+    key(
+        "dictation_rewrite.endpoint",
+        Kind::Text,
+        "The remote endpoint the dictation cleanup calls, such as https://api.example.com/v1",
+    ),
+    key(
+        "dictation_rewrite.model",
+        Kind::Text,
+        "The model name the remote endpoint expects for the dictation cleanup",
+    ),
+    key(
+        "dictation_rewrite.api_key",
+        Kind::Text,
+        "The bearer token the dictation cleanup sends to its remote endpoint, if it wants one",
+    ),
+    key(
         "dictation_processing.default_mode",
         Kind::Json,
         "The Global mode: replacements, transformations, and rewriting",

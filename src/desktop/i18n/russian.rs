@@ -1221,6 +1221,22 @@ const TRANSLATIONS: &[(&str, &str)] = &[
     ("Caps Lock dictation", "Диктовка Caps Lock"),
     ("Press Caps Lock to start dictation and again to finish. Hex keeps Caps Lock off and uses its light while it records and transcribes", "Нажмите Caps Lock, чтобы начать диктовку, и ещё раз, чтобы закончить. Hex держит Caps Lock выключенным и использует его индикатор во время записи и расшифровки"),
     ("Getting Hex ready to listen…", "Hex готовится слушать…"),
+    ("Run on", "Запускать на"),
+    ("Remote", "Удалённо"),
+    ("Endpoint", "Конечная точка"),
+    ("For example https://api.example.com/v1", "Например https://api.example.com/v1"),
+    ("API key", "Ключ API"),
+    ("Left empty when the endpoint takes no key", "Оставьте пустым, если конечной точке ключ не нужен"),
+    ("Remote needs an endpoint that starts with http:// or https:// and a model name", "Удалённому режиму нужна конечная точка, начинающаяся с http:// или https://, и имя модели"),
+    ("Prompts", "Инструкции"),
+    ("1 prompt", "1 инструкция"),
+    ("{} prompts", "Инструкции: {}"),
+    ("Edit", "Изменить"),
+    ("Instruction", "Инструкция"),
+    ("Add prompt", "Добавить инструкцию"),
+    ("Rewrite prompts", "Инструкции переписывания"),
+    ("Say a name alone while text is selected to use its instruction; the default is used when you say nothing", "Скажите только имя при выделенном тексте, чтобы использовать его инструкцию; если ничего не сказать, действует инструкция по умолчанию"),
+    ("Default prompt", "Инструкция по умолчанию"),
 ];
 
 #[cfg(test)]

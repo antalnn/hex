@@ -1,3 +1,4 @@
+pub(crate) mod ai_rewrite;
 #[cfg(target_os = "macos")]
 pub(crate) mod audio;
 #[cfg_attr(not(target_os = "macos"), allow(dead_code))]

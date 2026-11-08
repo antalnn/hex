@@ -32,7 +32,7 @@ pub(super) static LABS_ICON: Icon = Icon {
 /// features turned on (Meetings and Voice Filter from Labs, Annotate in dev
 /// builds).
 pub(super) fn main_panes(ui: &Ui) -> Vec<Pane> {
-    let mut panes = vec![Pane::General, Pane::Output, Pane::History];
+    let mut panes = vec![Pane::General, Pane::Models, Pane::Output, Pane::History];
     #[cfg(hex_capture)]
     let optional = [Pane::Meetings, Pane::Annotate, Pane::VoiceFilter];
     #[cfg(not(hex_capture))]

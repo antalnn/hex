@@ -15,6 +15,7 @@ use serde::{Deserialize, Serialize};
 use crate::dictation::vocabulary::{VocabularyEntry, serialize_saved};
 use crate::transcription::models::{TranscriptionModelId, TranscriptionSelection};
 
+mod ai;
 #[cfg(hex_capture)]
 mod capture;
 mod dictation_processing;
@@ -31,6 +32,7 @@ pub(crate) use persistence::LaunchLoad;
 pub(crate) use persistence::LaunchNote;
 mod shortcut_repair;
 
+pub use ai::*;
 #[cfg(hex_capture)]
 pub use capture::*;
 pub use dictation_processing::{
@@ -319,8 +321,11 @@ pub struct AppSettings {
     pub labs: LabsSettings,
     /// The local model server (`crate::local_model`).
     pub llm: LlmSettings,
-    /// Rewrite selection's snippets and default prompt.
+    /// Rewrite selection's snippets, default prompt, and where its model call
+    /// goes.
     pub rewrite: RewriteSettings,
+    /// Where the dictation cleanup's model call goes (`crate::dictation::ai_rewrite`).
+    pub dictation_rewrite: ModelSource,
     /// Labs › Screenshots' shortcut and folder (macOS).
     pub screenshots: ScreenshotSettings,
     /// Start listening when Hex opens (Windows and Linux, where the
@@ -457,6 +462,7 @@ impl Default for AppSettings {
             labs: LabsSettings::default(),
             llm: LlmSettings::default(),
             rewrite: RewriteSettings::default(),
+            dictation_rewrite: ModelSource::default(),
             screenshots: ScreenshotSettings::default(),
             enable_on_launch: true,
             paste_with_shift: false,

@@ -10,6 +10,7 @@
 //! design language (`rune-theme-opencode`); see `docs/design-system.md`.
 
 mod activity;
+mod ai_models;
 #[cfg(hex_capture)]
 pub(crate) mod capture_capsule;
 mod controls;
@@ -671,6 +672,8 @@ pub(crate) struct Ui {
     build_preview: Option<BuildKind>,
     capture: Capture,
     vocabulary: vocabulary::VocabularyEditor,
+    /// The Models pane's remote addresses and Rewrite prompts, typed.
+    model_sources: ai_models::ModelSources,
     /// The model the service was last seen preparing, and since when.
     preparing: Option<(TranscriptionModelId, Instant)>,
     /// When a text field last changed without being saved.
@@ -711,6 +714,7 @@ pub(crate) struct Ui {
 struct Drafts {
     modes: bool,
     vocabulary: bool,
+    model_sources: bool,
 }
 
 impl Ui {
@@ -765,6 +769,7 @@ impl Ui {
     fn with(settings: AppSettings, service: Service) -> Self {
         let modes = modes::ModesPane::new(&settings);
         let vocabulary = vocabulary::VocabularyEditor::new(&settings.vocabulary);
+        let model_sources = ai_models::ModelSources::new(&settings);
         Self {
             settings,
             service,
@@ -787,6 +792,7 @@ impl Ui {
             build_preview: None,
             capture: Capture::Idle,
             vocabulary,
+            model_sources,
             preparing: None,
             draft_since: None,
             duck_volume_drag: None,
@@ -875,6 +881,7 @@ impl Ui {
         let mut candidate = self.settings.clone();
         self.modes.project(&mut candidate);
         candidate.vocabulary = self.vocabulary.project();
+        self.model_sources.project(&mut candidate);
         candidate
     }
 
@@ -883,9 +890,13 @@ impl Ui {
         let settings = &self.settings;
         let mut modes = settings.clone();
         self.modes.project(&mut modes);
+        let mut model_sources = settings.clone();
+        self.model_sources.project(&mut model_sources);
         Drafts {
             modes: modes.dictation_processing != settings.dictation_processing,
             vocabulary: self.vocabulary.project() != settings.vocabulary,
+            model_sources: model_sources.dictation_rewrite != settings.dictation_rewrite
+                || model_sources.rewrite != settings.rewrite,
         }
     }
 
@@ -1059,6 +1070,12 @@ impl Ui {
             }
             if !drafts.vocabulary && service.vocabulary != self.settings.vocabulary {
                 self.vocabulary.reload(&service.vocabulary);
+            }
+            if !drafts.model_sources
+                && (service.dictation_rewrite != self.settings.dictation_rewrite
+                    || service.rewrite != self.settings.rewrite)
+            {
+                self.model_sources.reload(&service);
             }
             self.settings = service.clone();
             self.settings_changed();
@@ -1363,6 +1380,7 @@ fn view(ui: &Ui, cx: &mut Cx<Ui>) -> El {
     let (actions, body) = match ui.pane {
         _ if ui.labs_open => (vec![labs::tabs(ui, p)], labs::page(ui, p)),
         Pane::General => (Vec::new(), general::pane(ui, p, &mut layer)),
+        Pane::Models => ai_models::pane(ui, p, &mut layer),
         Pane::Output => (Vec::new(), output::pane(ui, p, cx.is_reduced_motion())),
         Pane::Modes => modes::pane(ui, p, &mut layer),
         Pane::History => history::pane(ui, p, &mut layer),
@@ -1423,6 +1441,9 @@ fn view(ui: &Ui, cx: &mut Cx<Ui>) -> El {
         layer.extend(modal);
     }
     if let Some(modal) = vocabulary::modal(ui, p) {
+        layer.extend(modal);
+    }
+    if let Some(modal) = ai_models::prompts_modal(ui, p) {
         layer.extend(modal);
     }
     if let Some(first_run) = onboarding_kit::live::overlay(ui, p, cx.is_reduced_motion()) {

@@ -102,8 +102,23 @@ fn builtin_transformation(id: &str) -> Option<&'static BuiltinTransformation> {
         .find(|transformation| transformation.id == id)
 }
 
+/// Hex's own steps that need more than text in and text out: they run natively
+/// at the point the mode's list names them, and never in the transformation
+/// host, so they need no trust approval.
+pub fn native_transformation(id: &str) -> Option<(&'static str, &'static str)> {
+    match id {
+        crate::dictation::ai_rewrite::TRANSFORMATION_ID => Some((
+            crate::dictation::ai_rewrite::NAME,
+            crate::dictation::ai_rewrite::DESCRIPTION,
+        )),
+        _ => None,
+    }
+}
+
+/// Whether Hex runs `id` itself: a pure rule ([`apply_builtin_transformation`])
+/// or a native step. Either way the transformation host is not involved.
 pub fn is_builtin_transformation(id: &str) -> bool {
-    builtin_transformation(id).is_some()
+    builtin_transformation(id).is_some() || native_transformation(id).is_some()
 }
 
 /// `text` after the built-in transformation `id`, or None when `id` is not
@@ -136,17 +151,29 @@ pub struct StatusTransformation {
 pub fn include_builtin_transformations(status: &mut StatusSnapshot) {
     status
         .transformations
-        .retain(|transformation| builtin_transformation(&transformation.id).is_none());
-    status.transformations.splice(
-        0..0,
-        BUILTIN_TRANSFORMATIONS
-            .iter()
-            .map(|transformation| StatusTransformation {
-                id: transformation.id.into(),
-                name: transformation.name.into(),
-                description: Some(transformation.description.into()),
-            }),
-    );
+        .retain(|transformation| !is_builtin_transformation(&transformation.id));
+    let native = crate::dictation::ai_rewrite::TRANSFORMATION_ID;
+    let mut builtin = BUILTIN_TRANSFORMATIONS
+        .iter()
+        .map(|transformation| StatusTransformation {
+            id: transformation.id.into(),
+            name: transformation.name.into(),
+            description: Some(transformation.description.into()),
+        })
+        .collect::<Vec<_>>();
+    // Listed first: the model step is the one people reach for, and it sits in
+    // the middle of the default order.
+    if let Some((name, description)) = native_transformation(native) {
+        builtin.insert(
+            0,
+            StatusTransformation {
+                id: native.into(),
+                name: name.into(),
+                description: Some(description.into()),
+            },
+        );
+    }
+    status.transformations.splice(0..0, builtin);
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -801,6 +828,12 @@ impl TransformationClient {
                     custom.clear();
                 }
                 output = (builtin.apply)(&output);
+            } else if native_transformation(id).is_some() {
+                // Hex runs this step itself, at this point in the mode's list,
+                // before the chain ever reaches here. Reaching it means the
+                // caller did not, so the text passes through untouched rather
+                // than failing the whole dictation.
+                continue;
             } else {
                 custom.push(id.clone());
             }
@@ -1246,14 +1279,15 @@ mod tests {
                 .map(|transformation| transformation.id.as_str())
                 .collect::<Vec<_>>(),
             [
+                crate::dictation::ai_rewrite::TRANSFORMATION_ID,
                 LOWERCASE_TRANSFORMATION_ID,
                 SPONGEBOB_TRANSFORMATION_ID,
                 NO_TRAILING_PUNCTUATION_TRANSFORMATION_ID,
                 "custom"
             ]
         );
-        assert_eq!(status.transformations[0].name, "Lowercase");
-        assert_eq!(status.transformations[2].name, "No trailing punctuation");
+        assert_eq!(status.transformations[1].name, "Lowercase");
+        assert_eq!(status.transformations[3].name, "No trailing punctuation");
     }
 
     #[cfg(unix)]
