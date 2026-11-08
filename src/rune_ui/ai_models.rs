@@ -225,6 +225,10 @@ fn local_model_card(ui: &Ui, p: Paint) -> El {
         Some(crate::local_model::State::Failed) => {
             (tr("Local model server failed").to_string(), true)
         }
+        Some(crate::local_model::State::Missing) => (
+            tr("llama.cpp is not installed, so the local model is off").to_string(),
+            true,
+        ),
         _ => (tr("Local model server off").to_string(), true),
     };
     let detail = format!("127.0.0.1:{}", ui.settings.llm.port);

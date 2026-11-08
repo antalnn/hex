@@ -807,6 +807,7 @@ const TRANSLATIONS: &[(&str, [&str; 6])] = &[
     ("Loading the model", ["Wczytywanie modelu", "正在加载模型", "モデルを読み込み中", "Modell wird geladen", "Cargando el modelo", "Завантаження моделі"]),
     ("Local model", ["Model lokalny", "本地模型", "ローカルモデル", "Lokales Modell", "Modelo local", "Локальна модель"]),
     ("Local model server failed", ["Serwer modelu lokalnego nie działa", "本地模型服务器失败", "ローカルモデルサーバーが失敗しました", "Lokaler Modellserver fehlgeschlagen", "El servidor del modelo local falló", "Сервер локальної моделі не працює"]),
+    ("llama.cpp is not installed, so the local model is off", ["llama.cpp nie jest zainstalowany, więc model lokalny jest wyłączony", "未安装 llama.cpp，本地模型已关闭", "llama.cpp がインストールされていないため、ローカルモデルはオフです", "llama.cpp ist nicht installiert, daher ist das lokale Modell aus", "llama.cpp no está instalado, así que el modelo local está desactivado", "llama.cpp не встановлено, тож локальна модель вимкнена"]),
     ("Local model server off", ["Serwer modelu lokalnego wyłączony", "本地模型服务器已关闭", "ローカルモデルサーバーは停止中", "Lokaler Modellserver aus", "Servidor del modelo local apagado", "Сервер локальної моделі вимкнено"]),
     ("Local model server running", ["Serwer modelu lokalnego działa", "本地模型服务器运行中", "ローカルモデルサーバーは稼働中", "Lokaler Modellserver läuft", "Servidor del modelo local en marcha", "Сервер локальної моделі працює"]),
     ("Local model server starting", ["Serwer modelu lokalnego uruchamia się", "本地模型服务器正在启动", "ローカルモデルサーバーを起動中", "Lokaler Modellserver startet", "Servidor del modelo local iniciando", "Сервер локальної моделі запускається"]),

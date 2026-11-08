@@ -470,6 +470,7 @@ const TRANSLATIONS: &[(&str, &str)] = &[
     ("Loading the model", "Carregando o modelo"),
     ("Local model", "Modelo local"),
     ("Local model server failed", "O servidor do modelo local falhou"),
+    ("llama.cpp is not installed, so the local model is off", "O llama.cpp não está instalado, então o modelo local está desligado"),
     ("Local model server off", "Servidor do modelo local desligado"),
     ("Local model server running", "Servidor do modelo local em execução"),
     ("Local model server starting", "Servidor do modelo local iniciando"),

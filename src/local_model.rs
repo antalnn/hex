@@ -60,6 +60,8 @@ pub(crate) enum State {
     External,
     /// The child could not start, exited, or never answered.
     Failed,
+    /// No llama-server program is on this computer, so nothing was started.
+    Missing,
 }
 
 impl State {
@@ -71,6 +73,7 @@ impl State {
             Self::Ready => "running",
             Self::External => "running (external)",
             Self::Failed => "failed",
+            Self::Missing => "not installed",
         }
     }
 }
@@ -96,15 +99,7 @@ pub(crate) struct Config {
 
 impl Default for Config {
     fn default() -> Self {
-        let program = std::env::var_os("HEX_LLAMA_SERVER")
-            .map(PathBuf::from)
-            .unwrap_or_else(|| {
-                dirs::home_dir()
-                    .unwrap_or_else(|| PathBuf::from("."))
-                    .join("tools")
-                    .join("llama-cpp")
-                    .join("llama-server.exe")
-            });
+        let program = resolve_program(&program_candidates(None));
         // Hex's own models folder (`%LOCALAPPDATA%\hex\models` on Windows,
         // which this computer's Hex migrates its models into), so the model
         // never depends on another app's install.
@@ -118,6 +113,59 @@ impl Default for Config {
             args: DEFAULT_ARGS.iter().map(|arg| (*arg).to_string()).collect(),
         }
     }
+}
+
+/// The `llama-server` file name this computer runs.
+fn program_name() -> &'static str {
+    if cfg!(windows) {
+        "llama-server.exe"
+    } else {
+        "llama-server"
+    }
+}
+
+/// Where a llama.cpp copy shipped beside Hex's own model lives: the folder a
+/// portable install unpacks into.
+fn bundled_program() -> Option<PathBuf> {
+    crate::app_paths::models_dir()
+        .ok()
+        .map(|dir| dir.join("local-llm").join("llama.cpp").join(program_name()))
+}
+
+/// The places `llama-server` may be, in the order they are tried: an
+/// environment override, the configured path, a copy bundled beside the
+/// model, then the home-folder install.
+fn program_candidates(configured: Option<PathBuf>) -> Vec<PathBuf> {
+    let mut candidates = Vec::new();
+    if let Some(program) = std::env::var_os("HEX_LLAMA_SERVER") {
+        candidates.push(PathBuf::from(program));
+    }
+    if let Some(program) = configured {
+        candidates.push(program);
+    }
+    if let Some(program) = bundled_program() {
+        candidates.push(program);
+    }
+    candidates.push(
+        dirs::home_dir()
+            .unwrap_or_else(|| PathBuf::from("."))
+            .join("tools")
+            .join("llama-cpp")
+            .join(program_name()),
+    );
+    candidates
+}
+
+/// The first candidate that exists, so an installed copy is found wherever it
+/// is; when none does, the first named one, so the message names a path a
+/// person can create.
+fn resolve_program(candidates: &[PathBuf]) -> PathBuf {
+    candidates
+        .iter()
+        .find(|candidate| candidate.is_file())
+        .or_else(|| candidates.first())
+        .cloned()
+        .unwrap_or_else(|| PathBuf::from(program_name()))
 }
 
 impl Config {
@@ -143,7 +191,7 @@ impl Config {
     pub(crate) fn from_settings(llm: &crate::app_settings::LlmSettings) -> Self {
         let defaults = Self::default();
         Self {
-            program: llm.program.clone().unwrap_or(defaults.program),
+            program: resolve_program(&program_candidates(llm.program.clone())),
             model: llm.model.clone().unwrap_or(defaults.model),
             port: llm.port,
             args: if llm.args.is_empty() {
@@ -198,7 +246,7 @@ impl LocalModel {
             return;
         }
         if !self.config.program.is_file() {
-            self.fail(format!(
+            self.missing(format!(
                 "llama-server was not found at {}",
                 self.config.program.display()
             ));
@@ -270,7 +318,7 @@ impl LocalModel {
                     self.detail = None;
                 }
             }
-            State::Stopped | State::Failed => {}
+            State::Stopped | State::Failed | State::Missing => {}
         }
     }
 
@@ -300,6 +348,17 @@ impl LocalModel {
         tracing::warn!(%detail, "the local model server is not running");
         self.kill();
         self.state = State::Failed;
+        self.detail = Some(detail);
+        self.started_at = None;
+    }
+
+    /// Nothing tried to start: no llama-server program is installed. The
+    /// local model stays off until one appears, and nothing logs this as an
+    /// error.
+    fn missing(&mut self, detail: String) {
+        tracing::info!(%detail, "the local model server needs llama.cpp installed");
+        self.kill();
+        self.state = State::Missing;
         self.detail = Some(detail);
         self.started_at = None;
     }
@@ -394,5 +453,80 @@ mod tests {
         model.state = State::Ready;
         model.stop();
         assert_eq!(model.snapshot().state, State::Stopped);
+    }
+
+    fn temp_dir(name: &str) -> PathBuf {
+        let dir =
+            std::env::temp_dir().join(format!("hex-local-model-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn the_first_program_that_exists_wins() {
+        let dir = temp_dir("resolve");
+        let home = dir.join("home").join(program_name());
+        let bundled = dir.join("bundle").join(program_name());
+        std::fs::create_dir_all(bundled.parent().unwrap()).unwrap();
+        std::fs::write(&bundled, b"program").unwrap();
+        assert_eq!(
+            resolve_program(&[home.clone(), bundled.clone()]),
+            bundled,
+            "an existing copy is found past a candidate that is absent"
+        );
+        assert_eq!(
+            resolve_program(std::slice::from_ref(&home)),
+            home,
+            "with nothing installed the message names the first candidate"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn candidates_read_environment_then_settings_then_bundle_then_home() {
+        let dir = temp_dir("candidates");
+        let configured = dir.join("chosen").join(program_name());
+        let candidates = program_candidates(Some(configured.clone()));
+        let configured_at = candidates
+            .iter()
+            .position(|candidate| *candidate == configured)
+            .expect("the configured path is a candidate");
+        if std::env::var_os("HEX_LLAMA_SERVER").is_some() {
+            assert_eq!(configured_at, 1, "the environment override comes first");
+        } else {
+            assert_eq!(configured_at, 0, "the configured path comes first");
+        }
+        assert!(
+            candidates.last().is_some_and(|candidate| candidate
+                .parent()
+                .is_some_and(|parent| parent.ends_with("llama-cpp"))),
+            "the home-folder install is the last candidate: {candidates:?}"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_missing_program_leaves_the_local_model_off() {
+        let dir = temp_dir("missing");
+        let config = Config {
+            program: dir.join("absent").join(program_name()),
+            model: dir.join("model.gguf"),
+            port: 9,
+            args: Vec::new(),
+        };
+        let mut model = LocalModel::new(config);
+        model.start();
+        let snapshot = model.snapshot();
+        assert_eq!(snapshot.state, State::Missing);
+        assert_eq!(snapshot.state.words(), "not installed");
+        assert!(
+            snapshot
+                .detail
+                .as_deref()
+                .is_some_and(|detail| detail.contains("llama-server")),
+            "{snapshot:?}"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

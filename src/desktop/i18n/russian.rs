@@ -463,6 +463,7 @@ const TRANSLATIONS: &[(&str, &str)] = &[
     ("Loading the model", "Загрузка модели"),
     ("Local model", "Локальная модель"),
     ("Local model server failed", "Сервер локальной модели не работает"),
+    ("llama.cpp is not installed, so the local model is off", "llama.cpp не установлен, поэтому локальная модель отключена"),
     ("Local model server off", "Сервер локальной модели выключен"),
     ("Local model server running", "Сервер локальной модели работает"),
     ("Local model server starting", "Сервер локальной модели запускается"),
