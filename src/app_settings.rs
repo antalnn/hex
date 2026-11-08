@@ -24,6 +24,7 @@ mod llm;
 mod meeting_folder;
 mod meetings;
 mod persistence;
+mod rewrite;
 mod screenshots;
 #[cfg(target_os = "linux")]
 pub(crate) use persistence::LaunchLoad;
@@ -40,6 +41,7 @@ pub use labs::*;
 pub use llm::*;
 pub use meeting_folder::default_meeting_output_folder;
 pub use meetings::*;
+pub use rewrite::*;
 #[cfg_attr(not(target_os = "macos"), allow(unused_imports))]
 pub use screenshots::{ScreenshotSettings, screenshot_hotkey, screenshot_settings};
 
@@ -313,6 +315,8 @@ pub struct AppSettings {
     pub labs: LabsSettings,
     /// The local model server (`crate::local_model`).
     pub llm: LlmSettings,
+    /// Rewrite selection's snippets and default prompt.
+    pub rewrite: RewriteSettings,
     /// Labs › Screenshots' shortcut and folder (macOS).
     pub screenshots: ScreenshotSettings,
     /// Start listening when Hex opens (Windows and Linux, where the
@@ -447,6 +451,7 @@ impl Default for AppSettings {
             experimental: ExperimentalSettings::default(),
             labs: LabsSettings::default(),
             llm: LlmSettings::default(),
+            rewrite: RewriteSettings::default(),
             screenshots: ScreenshotSettings::default(),
             enable_on_launch: true,
             paste_with_shift: false,

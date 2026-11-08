@@ -9,7 +9,7 @@ crates/router/src/routing/jev.rs 2300
 crates/router/src/routing/router.rs 2400
 ios/HEXShared/DotScope.swift 1850
 src/capture_host.rs 3100
-src/control/settings.rs 1530
+src/control/settings.rs 1540
 src/desktop/i18n.rs 1521
 src/meeting/query.rs 2450
 src/meeting/transcript.rs 2250
@@ -18,5 +18,5 @@ src/rune_ui.rs 1503
 src/rune_ui/capture_capsule/flow.rs 2050
 src/rune_ui/capture_capsule/mod.rs 2100
 src/rune_ui/onboarding_kit/game.rs 2200
-src/windows/dictation.rs 1598
+src/windows/dictation.rs 1616
 src/windows/input.rs 1576

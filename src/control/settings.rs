@@ -266,6 +266,16 @@ const KEYS: &[Key] = &[
         "How readily transcription swaps heard words for a vocabulary term",
     ),
     key(
+        "rewrite.default_prompt",
+        Kind::Text,
+        "The instruction Rewrite selection uses when the recording said nothing",
+    ),
+    key(
+        "rewrite.snippets",
+        Kind::Json,
+        "Names that stand for a rewrite instruction, as a JSON array of { name, prompt }",
+    ),
+    key(
         "dictation_processing.default_mode",
         Kind::Json,
         "The Global mode: replacements, transformations, and rewriting",

@@ -125,6 +125,10 @@ pub struct WindowsDictationConfig {
     pub paste_with_shift: bool,
     /// The local model server's port, for Rewrite selection.
     pub rewrite_port: u16,
+    /// Rewrite selection's snippet names and their prompts.
+    pub rewrite_snippets: Vec<(String, String)>,
+    /// The instruction for a recording that said nothing.
+    pub rewrite_default_prompt: String,
     /// Paste into the window dictation started in.
     pub paste_to_start_window: bool,
     /// Where the listener reports a model change that failed to load.
@@ -189,6 +193,8 @@ impl WindowsDictationConfig {
             fallback_to_default_device: true,
             paste_with_shift: settings.paste_with_shift,
             rewrite_port: settings.llm.port,
+            rewrite_snippets: settings.rewrite.pairs(),
+            rewrite_default_prompt: settings.rewrite.default_prompt.clone(),
             paste_to_start_window: settings.dictation_processing.paste_to_start_window,
             swap_failures: None,
             commands: None,
@@ -232,6 +238,8 @@ pub fn run(
         paste_with_shift,
         paste_to_start_window,
         rewrite_port,
+        rewrite_snippets,
+        rewrite_default_prompt,
         swap_failures,
         commands,
         dictations,
@@ -332,7 +340,13 @@ pub fn run(
                     // A rewrite is a dictation job whose transcript is the
                     // instruction, so the selection decides the path.
                     OutputJob::Dictation(job) if job.rewrite_selection.is_some() => {
-                        process_rewrite_job(job, &mut paster, rewrite_port)
+                        process_rewrite_job(
+                            job,
+                            &mut paster,
+                            rewrite_port,
+                            &rewrite_snippets,
+                            &rewrite_default_prompt,
+                        )
                     }
                     OutputJob::Dictation(job) => process_dictation_job(
                         job,
@@ -1193,7 +1207,13 @@ fn process_dictation_job(
 /// Rewrites the selection with the instruction the person just spoke. A
 /// failed or empty rewrite pastes nothing, so the selection stays exactly as it
 /// was, and a rewrite never enters History: it is an edit, not a dictation.
-fn process_rewrite_job(mut job: Job, paster: &mut Result<WindowsPaster>, port: u16) -> JobResult {
+fn process_rewrite_job(
+    mut job: Job,
+    paster: &mut Result<WindowsPaster>,
+    port: u16,
+    snippets: &[(String, String)],
+    default_prompt: &str,
+) -> JobResult {
     let started = Instant::now();
     let selection = job.rewrite_selection.take().unwrap_or_default();
     let result = job
@@ -1202,11 +1222,9 @@ fn process_rewrite_job(mut job: Job, paster: &mut Result<WindowsPaster>, port: u
         .map(|transcribed| transcribed.text)
         .and_then(|transcript| {
             let transcript = transcript.trim().to_string();
-            if transcript.is_empty() {
-                return Err("the instruction was empty".to_string());
-            }
-            let instruction = crate::dictation::rewrite::resolve(&transcript, &[], "")
-                .map_err(|error| format!("{error:#}"))?;
+            let instruction =
+                crate::dictation::rewrite::resolve(&transcript, snippets, default_prompt)
+                    .map_err(|error| format!("{error:#}"))?;
             let rewritten = crate::dictation::rewrite::rewrite(port, &instruction, &selection)
                 .map_err(|error| format!("{error:#}"))?;
             paster
