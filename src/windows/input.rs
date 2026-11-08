@@ -1048,8 +1048,7 @@ fn process_button(vk: u32, is_down: bool, time: u32) -> Disposition {
             if rewrite_event {
                 state.mask_release |= is_down && holds_menu(state.rewrite.as_ref());
                 if is_down && !state.rewrite_trigger_down {
-                    // A plain hold, whatever the dictation shortcut's mode is:
-                    // the press records the instruction, the release runs it.
+                    // A plain hold whatever the dictation mode is: press records, release runs.
                     state.rewrite_trigger_down = true;
                     state.capture.claim(Owner::Rewrite);
                     state.capture.active = true;
