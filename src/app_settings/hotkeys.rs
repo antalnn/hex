@@ -1206,6 +1206,8 @@ pub struct RuntimeHotkeys {
     pub raw_dictation: Option<RuntimeHotkey>,
     /// Rewrite the selected text, while it is bound (Windows).
     pub rewrite_selection: Option<RuntimeHotkey>,
+    /// Labs › Transform typed text (Linux), while it is on and bound.
+    pub typed_text: Option<RuntimeHotkey>,
     /// Labs › Second dictation shortcut (macOS), while it is on and bound.
     pub second_dictation: Option<RuntimeHotkey>,
     /// Toggle mode's cancel shortcut. Not among [`RuntimeHotkeys::all`]:
@@ -1215,7 +1217,7 @@ pub struct RuntimeHotkeys {
 
 impl RuntimeHotkeys {
     /// Every shortcut Hex matches, for suppression and chord evidence.
-    pub fn all(self) -> [Option<RuntimeHotkey>; 8] {
+    pub fn all(self) -> [Option<RuntimeHotkey>; 9] {
         [
             Some(self.dictation),
             self.paste_last,
@@ -1224,6 +1226,7 @@ impl RuntimeHotkeys {
             self.capture_replay,
             self.raw_dictation,
             self.rewrite_selection,
+            self.typed_text,
             self.second_dictation,
         ]
     }
@@ -1240,6 +1243,7 @@ impl Default for RuntimeHotkeys {
             capture_replay: None,
             raw_dictation: None,
             rewrite_selection: None,
+            typed_text: None,
             second_dictation: None,
             cancel: None,
         }

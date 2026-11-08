@@ -395,6 +395,8 @@ pub(super) fn conflicts(
         ShortcutTarget::PasteLast => HotkeySlot::PasteLast,
         ShortcutTarget::RawDictation => HotkeySlot::RawDictation,
         ShortcutTarget::RewriteSelection => HotkeySlot::RewriteSelection,
+        #[cfg(target_os = "linux")]
+        ShortcutTarget::TypedText => HotkeySlot::TypedText,
         ShortcutTarget::Cancel => HotkeySlot::Cancel,
         #[cfg(hex_capture)]
         ShortcutTarget::Capture => HotkeySlot::Capture,
@@ -430,6 +432,8 @@ pub(super) fn binding(settings: &AppSettings, target: ShortcutTarget) -> Option<
         ShortcutTarget::PasteLast => settings.paste_last_hotkey.as_ref(),
         ShortcutTarget::RawDictation => settings.raw_dictation_hotkey.as_ref(),
         ShortcutTarget::RewriteSelection => settings.rewrite_hotkey.as_ref(),
+        #[cfg(target_os = "linux")]
+        ShortcutTarget::TypedText => settings.typed_text_hotkey.as_ref(),
         ShortcutTarget::Cancel => Some(&settings.cancel_hotkey),
         #[cfg(hex_capture)]
         ShortcutTarget::Capture => Some(&settings.capture.hotkey),
@@ -452,6 +456,8 @@ pub(super) fn set_binding(
         ShortcutTarget::PasteLast => settings.paste_last_hotkey = Some(binding),
         ShortcutTarget::RawDictation => settings.raw_dictation_hotkey = Some(binding),
         ShortcutTarget::RewriteSelection => settings.rewrite_hotkey = Some(binding),
+        #[cfg(target_os = "linux")]
+        ShortcutTarget::TypedText => settings.typed_text_hotkey = Some(binding),
         ShortcutTarget::Cancel => settings.cancel_hotkey = binding,
         #[cfg(hex_capture)]
         ShortcutTarget::Capture => settings.capture.hotkey = binding,
@@ -470,6 +476,8 @@ pub(super) fn clear_binding(settings: &mut AppSettings, target: ShortcutTarget) 
     match target {
         ShortcutTarget::RawDictation => settings.raw_dictation_hotkey = None,
         ShortcutTarget::RewriteSelection => settings.rewrite_hotkey = None,
+        #[cfg(target_os = "linux")]
+        ShortcutTarget::TypedText => settings.typed_text_hotkey = None,
         #[cfg(target_os = "macos")]
         ShortcutTarget::SecondDictation => settings.second_dictation_hotkey = None,
         #[cfg(all(hex_capture, target_os = "macos"))]
@@ -786,6 +794,8 @@ fn portal_grant(ui: &Ui, target: ShortcutTarget) -> Option<&DesktopGrantedShortc
         ShortcutTarget::RawDictation => "Dictate without processing",
         // The rewrite shortcut is Windows-only, and the portal is Linux's.
         ShortcutTarget::RewriteSelection => return None,
+        #[cfg(target_os = "linux")]
+        ShortcutTarget::TypedText => "Transform typed text",
         // The portal never holds the cancel key.
         ShortcutTarget::Cancel => return None,
         // The portal lists Annotate's shortcut under that name.
@@ -1238,6 +1248,8 @@ pub(super) fn hotkey_key(target: ShortcutTarget) -> &'static str {
         ShortcutTarget::PasteLast => "paste-last-hotkey",
         ShortcutTarget::RawDictation => "raw-dictation-hotkey",
         ShortcutTarget::RewriteSelection => "rewrite-hotkey",
+        #[cfg(target_os = "linux")]
+        ShortcutTarget::TypedText => "typed-text-hotkey",
         ShortcutTarget::Cancel => "cancel-hotkey",
         #[cfg(hex_capture)]
         ShortcutTarget::Capture => "capture-hotkey",

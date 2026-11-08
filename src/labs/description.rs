@@ -114,6 +114,9 @@ impl Feature {
             Self::GnomeClipboardRestore => {
                 "Put the previous clipboard back after a paste on GNOME Wayland, through the XWayland clipboard while XWayland is running"
             }
+            Self::TypedText => {
+                "Run the focused app's Output steps on the text already typed in the focused field and replace it (typed_text_hotkey)"
+            }
             Self::MeetingNotesVocabulary => {
                 "Meeting titles and summaries read your vocabulary, so names are spelled the way you wrote them"
             }
@@ -125,6 +128,9 @@ impl Feature {
             }
             Self::GnomeMeetingCapsules => {
                 "Show the meeting capsules (recording offer, recording indicator) floating over your call on GNOME Wayland, through XWayland while XWayland is running"
+            }
+            Self::GnomeAnnotate => {
+                "Show Annotate's recording capsule and ink over your screen on GNOME Wayland, through XWayland while XWayland is running; Esc can't stop drawing there, so use the capsule's pen button or let go of a held Annotate key"
             }
             Self::Screenshots => {
                 "Take a screenshot of an area or a window with a shortcut (Command-Shift-4 by default): copied, saved, and shown in the corner"

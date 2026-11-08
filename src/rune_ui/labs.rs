@@ -48,13 +48,15 @@ pub(super) fn order(ui: &Ui) -> Vec<Pane> {
 
 /// A sidebar item that isn't a pane: Labs, or the playground. Its slot
 /// takes presses in the gaps around it too; assistive technology sees the
-/// item alone, selected while `on`.
+/// item alone, selected while `on`. A focusable item joins the navigation
+/// list's arrows.
 fn nav_row(
     p: Paint,
     key: &'static str,
     icon: &'static Icon,
     label: &'static str,
     on: bool,
+    focusable: bool,
     press: impl Fn(&mut Ui, &mut Tx) + 'static,
 ) -> El {
     let c = &p.k.c;
@@ -86,6 +88,9 @@ fn nav_row(
                 .color(if on { c.text_base } else { c.text_muted })
                 .a11y_hidden(),
         );
+    if focusable {
+        item = item.focusable(true);
+    }
     if on {
         item = item.fill(c.layer_02);
     }
@@ -108,12 +113,13 @@ pub(super) fn playground_nav(ui: &Ui, p: Paint) -> Option<El> {
             &SPARKLES,
             "Playground",
             false,
+            false,
             |_: &mut Ui, tx: &mut Tx| tx.open_playground(),
         )
     })
 }
 
-/// The Labs item: opens the Labs page, or goes back to General.
+/// The Labs item: opens the Labs page.
 pub(super) fn nav(ui: &Ui, p: Paint) -> El {
     let on = ui.labs_open;
     nav_row(
@@ -122,10 +128,9 @@ pub(super) fn nav(ui: &Ui, p: Paint) -> El {
         &LABS_ICON,
         tr("Labs"),
         on,
-        move |ui: &mut Ui, tx: &mut Tx| {
-            if on {
-                ui.select_pane(Pane::General, tx);
-            } else {
+        true,
+        |ui: &mut Ui, tx: &mut Tx| {
+            if !ui.labs_open {
                 open(ui, tx);
             }
         },
@@ -598,10 +603,22 @@ fn rows(ui: &Ui) -> Vec<Row> {
             tr("Put back what you copied before a dictation, through XWayland. Works only while XWayland is already running"),
         ));
         rows.push(row(
+            Feature::TypedText,
+            Some(&KEYBOARD),
+            tr("Transform typed text"),
+            tr("Adds a shortcut that runs your Output steps on text you typed and replaces it."),
+        ));
+        rows.push(row(
             Feature::GnomeMeetingCapsules,
             None,
             tr("Floating meeting capsules on GNOME"),
             tr("Show the recording offer and recording indicator floating over your call, through XWayland. Works only while XWayland is already running"),
+        ));
+        rows.push(row(
+            Feature::GnomeAnnotate,
+            None,
+            tr("Annotate on GNOME"),
+            tr("Show Annotate's recording capsule and ink over your screen, through XWayland. Works only while XWayland is already running; Esc can't stop drawing there, so use the capsule's pen button or let go of a held Annotate key"),
         ));
     }
     // Linux's and Windows' engines transcribe a whole clip on the CPU.
@@ -796,10 +813,12 @@ fn row_key(lab: Lab) -> &'static str {
         Feature::CapsLockDictation => "lab-caps-lock-dictation",
         Feature::MovableMeetingCapsules => "lab-movable-meeting-capsules",
         Feature::GnomeClipboardRestore => "lab-gnome-clipboard-restore",
+        Feature::TypedText => "lab-typed-text",
         Feature::MeetingNotesVocabulary => "lab-meeting-notes-vocabulary",
         Feature::NotchIndicator => "lab-notch-indicator",
         Feature::MeetingFinishedEvent => "lab-meeting-finished-event",
         Feature::GnomeMeetingCapsules => "lab-gnome-meeting-capsules",
+        Feature::GnomeAnnotate => "lab-gnome-annotate",
         Feature::Screenshots => "lab-screenshots",
         Feature::FollowLiveTranscript => "lab-follow-live-transcript",
         Feature::MoreCallApps => "lab-more-call-apps",

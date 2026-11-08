@@ -161,6 +161,10 @@ impl AppSettings {
             self.rewrite_hotkey = None;
             reset = true;
         }
+        if self.typed_text_hotkey.as_ref().is_some_and(&matches) {
+            self.typed_text_hotkey = None;
+            reset = true;
+        }
         if self.second_dictation_hotkey.as_ref().is_some_and(&matches) {
             self.second_dictation_hotkey = None;
             reset = true;

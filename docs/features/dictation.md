@@ -300,6 +300,81 @@ Checks: `raw_dictation_owns_the_capture_it_starts` (Linux reducer),
 Proof limits: no physical shortcut run on any OS; the macOS machine pairing
 was not compiled or run here (Linux check, Windows cross-clippy only).
 
+### Transform Typed Text (Labs, Linux)
+
+With Labs › Transform typed text on (`labs.typed_text`, off by default),
+Settings › Output adds one section whose shortcut is unbound until recorded.
+The shortcut reads the text already typed in the focused field, runs the
+focused app's Output steps on it, and pastes the result over it. `hex
+typed-text` runs the same job for desktops without the shortcuts portal, and
+refuses clearly while the lab is off or Hex isn't listening. The lab's switch
+and binding are saved like any other Labs feature; the listener registers the
+shortcut only while the lab is on, and restarts registration when either
+changes. The job sends Ctrl+A and Ctrl+C, so it is not meant for terminals.
+
+```ts
+Output > Typed text                        // labs.md
+├── Labs off -> no section, no recorder, no shortcut registered
+├── Labs on -> the section, with the same recorder as Dictate without processing
+│   └── typed_text_hotkey unbound by default -> nothing registered or reserved
+│       ├── Record one -> saved, and conflicts with the other active shortcuts
+│       └── Clear (trash) or `hex settings set typed_text_hotkey none` -> unbound
+├── Settings -> saved to settings.json as typed_text_hotkey
+└── Shortcut pressed while idle, or `hex typed-text` -> one job on the output worker
+    ├── Terminal paste shortcut on -> refused before any key: its Ctrl+V would
+    │   become Ctrl+Shift+V; the job logs why and sends nothing
+    ├── take the clipboard for the job: cancel any paste restore still pending
+    │   and keep the clipboard that paste replaced, else snapshot it now
+    ├── clear the clipboard, then Ctrl+A and Ctrl+C in the focused app
+    │   ├── GNOME without data-control clears through `wl-copy --clear`
+    │   └── a clear that fails, or leaves text behind, aborts before copying
+    │       and restores
+    ├── poll the clipboard for text, up to 500 ms, honoring Cancel
+    ├── read the selection as text/plain, bounded to 1 MiB and one second
+    ├── no text, or only whitespace -> error tone, clipboard restored, nothing pasted
+    ├── run the matching mode's Output steps, with transformation context
+    │   `source: "typed-text"` (dictation passes `"dictation"`); spoken
+    │   formatting, spoken symbols, and filler words are dictation-only
+    ├── processed text equals the selection -> clipboard restored, nothing pasted
+    ├── clear, re-copy the selection -> different text or an ignored copy ->
+    │   abort, clipboard restored, nothing pasted (typing or switching windows
+    │   since the first copy)
+    ├── otherwise Ctrl+V over the selection; a paste failure restores the
+    │   clipboard, and a success restores it 500 ms later unless something newer
+    │   replaced the result first
+    └── a clipboard Hex could not snapshot still clears and runs, but its result
+        stays on the clipboard
+```
+
+Checks: `typed_text_is_its_own_bit_and_off_by_default` ([labs.rs](../../src/labs.rs)),
+`the_typed_text_shortcut_needs_its_lab_and_its_own_keys`
+([app_settings.rs](../../src/app_settings.rs)),
+`typed_text_is_registered_only_while_its_lab_is_on` and
+`typed_text_fires_only_while_idle_and_changes_no_capture_state`
+([input.rs](../../src/linux/input.rs)), `typed_text_skips_the_dictation_only_labs`
+and `transformation_context_names_its_source` ([processor.rs](../../src/dictation/processor.rs),
+[personal_commands.rs](../../src/personal_commands.rs));
+`typed_text_joins_the_commands_only_while_its_lab_is_on`
+([gnome_shortcuts.rs](../../src/linux/gnome_shortcuts.rs)); the fake-backed
+`an_ignored_copy_pastes_nothing_and_restores_the_clipboard`,
+`an_ignored_second_copy_pastes_nothing`, `text_changed_between_copies_pastes_nothing`,
+`a_failed_clear_aborts_before_copying_or_pasting`,
+`a_clear_that_leaves_text_aborts_before_copying`, `a_failed_paste_restores_the_original`,
+`success_pastes_the_result_and_hands_over_the_original`,
+`unchanged_processing_pastes_nothing_and_restores`,
+`a_job_without_a_snapshot_still_clears_and_pastes`, and
+`a_changed_second_copy_aborts_the_replacement`
+([typed_text.rs](../../src/linux/typed_text.rs));
+`a_new_clipboard_job_adopts_the_pending_restore`,
+`a_changed_clipboard_is_not_replaced_by_a_pending_restore`, and
+`a_failed_dictation_paste_leaves_the_transcript_on_the_clipboard`
+([paste.rs](../../src/linux/paste.rs)); and `the_gnome_shortcut_key_tracks_typed_text`
+([app.rs](../../src/linux/app.rs)). Known limits: select-all replaces the
+whole field, so a field with mixed formatting loses it; on GNOME the clipboard
+text is read through `wl-paste`, which may briefly take focus. Proof limits: no
+shortcut press against a real target application was run; the flow is covered
+by unit tests only.
+
 ### Copy Recent Dictation (Labs, macOS)
 
 Paste Last Dictation reaches only the newest dictation. With Labs › Copy
@@ -913,8 +988,12 @@ Model advertises streaming, GPU device             // dictate.streaming
     -> Finalize -> Final text
        ├── Stream failed, produced no text, or was fed > 250 ms past the clip
        │   -> Transcribe the whole clip offline (source=fallback)
+       ├── ≥ 300 ms of speech the stream heard ends > 400 ms before its text's start
+       │   -> Transcribe the whole clip offline (source=fallback)   // lost opening
        ├── ≥ 300 ms of speech the stream heard lies > 400 ms past its text's end
        │   -> Transcribe the whole clip offline (source=fallback)   // #1101
+       ├── The raw decode carries two different <ll-RR> language tags
+       │   -> Transcribe the whole clip offline (source=fallback)   // language switch
        ├── No final text within 1.5 s -> Abort the stream -> Whole clip
        └── Model switched during the capture -> Stream closed -> Whole clip
   Short tap, chord discard, microphone failure -> Drop the stream
@@ -1078,7 +1157,10 @@ words that resumed after 6 s and 13 s pauses were lost or garbled. Replaying
 floor) through `metal_stream_tracks_offline_transcription` lost "I" after the
 8 s gap of digital silence only, and the whole clip kept it: the loss depends
 on where speech resumes against the stream's chunks. Live text does not cause
-it: `HEX_STREAM_LIVE_TEXT=0` gives the same text.
+it: `HEX_STREAM_LIVE_TEXT=0` gives the same text. The losses replayed here sit
+in the middle of transcribed text, so neither coverage check below sees them;
+a loss of at least 300 ms at the stream's very start is checked since
+November 7, 2026 (`a_stream_that_lost_the_opening_phrase_falls_back_to_the_whole_clip`).
 
 **Mitigation, October 29, 2026 (#338's diagnosis, by ElliottH):** the engine's
 `PauseCap` now feeds a dictation stream only the first 2.5 s and last 0.3 s of
@@ -1156,6 +1238,31 @@ would have hidden a dropped phrase; the text's end is now the last token with
 letters or digits (`spoken_text_end_ms`), and no clip fell back. Check:
 `a_closing_full_stop_at_the_clips_end_does_not_cover_a_dropped_phrase`. Not
 macOS or a microphone.
+
+**Guard, November 7, 2026 (opening and language):** the coverage check now
+also runs at the start. `PauseCap` takes the first token with letters or
+digits (`spoken_text_start_ms`, the minimum `t0_ms`) and counts the speech
+frames the stream heard that end more than 400 ms before it; at least 300 ms
+of such speech means the stream lost its opening, so the whole clip is
+transcribed offline (`source=fallback`, reason "the stream's text starts at …
+ms but … ms of speech precedes it"). A short click before the speech is
+shorter than that. Hesitation fillers, coughs, or clicks that together reach
+300 ms before the first word would trip it too, and that false-positive rate
+is unmeasured; a false positive costs only the whole clip's latency, since its
+text is the fallback's. This check cannot see an opening that was garbled
+rather than dropped: a garbled opening still yields word tokens at the speech
+onset. The stream's unfiltered raw decode also keeps Nemotron 3.5's `<ll-RR>`
+language tags, which the public text drops; two distinct tags in one stream
+mean it changed language mid-clip, and the whole clip decides too
+(`language_tags`). That catches a garbled opening only when the garbled part
+carries a different tag, and neither check catches a stream that stays in one
+wrong language for the whole clip. Checks:
+`a_stream_that_lost_the_opening_phrase_falls_back_to_the_whole_clip`,
+`a_short_click_before_the_text_does_not_discard_the_stream`,
+`a_punctuation_token_does_not_start_the_streams_text`, and
+`a_stream_that_switched_language_falls_back_to_the_whole_clip` (synthetic
+tones and tags, a fake stream). Not measured on a real model, microphone, or
+device; the stream's own loss is not fixed upstream.
 
 ### Ongoing Jobs And Output
 

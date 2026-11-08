@@ -282,6 +282,10 @@ pub struct AppSettings {
     /// Rewrite the selected text: records the instruction, then replaces the
     /// selection with the model's result (Windows). Unbound by default.
     pub rewrite_hotkey: Option<HotkeyBinding>,
+    /// Labs › Transform typed text (Linux): runs the focused app's Output
+    /// steps on the text already typed in the focused field and replaces it.
+    /// Unbound by default and ignored while its Labs toggle is off.
+    pub typed_text_hotkey: Option<HotkeyBinding>,
     /// Labs › Second dictation shortcut: another shortcut that dictates
     /// exactly as `dictation_hotkey` does (macOS). Unbound by default and
     /// ignored while its Labs toggle is off.
@@ -434,6 +438,7 @@ impl Default for AppSettings {
             cancel_hotkey: HotkeyBinding::cancel_default(),
             raw_dictation_hotkey: None,
             rewrite_hotkey: None,
+            typed_text_hotkey: None,
             second_dictation_hotkey: None,
             show_dock_icon: true,
             transcription: default_transcription(),
@@ -1065,6 +1070,7 @@ impl AppSettings {
                 .as_ref()
                 .map(HotkeyBinding::runtime),
             rewrite_selection: self.rewrite_hotkey.as_ref().map(HotkeyBinding::runtime),
+            typed_text: self.active_typed_text_hotkey().map(HotkeyBinding::runtime),
             second_dictation: self
                 .active_second_dictation_hotkey()
                 .map(HotkeyBinding::runtime),
@@ -1089,6 +1095,18 @@ impl AppSettings {
         self.second_dictation_hotkey
             .as_ref()
             .filter(|binding| !self.hotkey_in_use(HotkeySlot::SecondDictation, binding))
+    }
+
+    /// Labs › Transform typed text's binding while it takes effect: Linux,
+    /// its toggle on, bound, and sharing no key with another active
+    /// shortcut. Otherwise the listener registers nothing for it.
+    pub fn active_typed_text_hotkey(&self) -> Option<&HotkeyBinding> {
+        if !cfg!(target_os = "linux") || !self.labs.typed_text {
+            return None;
+        }
+        self.typed_text_hotkey
+            .as_ref()
+            .filter(|binding| !self.hotkey_in_use(HotkeySlot::TypedText, binding))
     }
 
     /// Annotate is on: the person hasn't turned it off.
@@ -1152,6 +1170,14 @@ impl AppSettings {
             self.rewrite_hotkey = None;
         }
         if self
+            .typed_text_hotkey
+            .as_ref()
+            .is_some_and(HotkeyBinding::is_bare_primary_click)
+        {
+            tracing::warn!("cleared a left-click typed text shortcut");
+            self.typed_text_hotkey = None;
+        }
+        if self
             .second_dictation_hotkey
             .as_ref()
             .is_some_and(HotkeyBinding::is_bare_primary_click)
@@ -1194,6 +1220,8 @@ pub enum HotkeySlot {
     RawDictation,
     /// Rewrite the selected text (Windows).
     RewriteSelection,
+    /// Labs › Transform typed text's shortcut (Linux).
+    TypedText,
     #[cfg(hex_capture)]
     Capture,
     /// Labs › Annotate 15 s replay shortcut (macOS 27+).
@@ -1231,6 +1259,13 @@ impl AppSettings {
             && let Some(rewrite) = &self.rewrite_hotkey
         {
             others.push(rewrite.clone());
+        }
+        if slot != HotkeySlot::TypedText
+            && cfg!(target_os = "linux")
+            && self.labs.typed_text
+            && let Some(typed) = &self.typed_text_hotkey
+        {
+            others.push(typed.clone());
         }
         if slot != HotkeySlot::Cancel {
             others.push(self.cancel_hotkey.clone());
@@ -1813,6 +1848,44 @@ mod tests {
         assert!(settings.hotkey_in_use(HotkeySlot::SecondDictation, &dictation));
         settings.second_dictation_hotkey = Some(dictation);
         assert_eq!(settings.runtime_hotkeys().second_dictation, None);
+    }
+
+    /// Labs › Transform typed text: its binding takes effect only on Linux
+    /// with its toggle on, never sharing a key with another shortcut, and
+    /// the other shortcuts' checks count it while it is active.
+    #[test]
+    fn the_typed_text_shortcut_needs_its_lab_and_its_own_keys() {
+        let function = HotkeyBinding {
+            modifiers: HotkeyModifiers {
+                function: true,
+                ..HotkeyModifiers::default()
+            },
+            key: None,
+        };
+        let mut settings = AppSettings {
+            typed_text_hotkey: Some(function.clone()),
+            ..AppSettings::default()
+        };
+        assert!(!settings.labs.typed_text);
+        assert_eq!(settings.runtime_hotkeys().typed_text, None);
+        assert!(!settings.hotkey_in_use(HotkeySlot::RawDictation, &function));
+
+        settings.labs.typed_text = true;
+        let active = settings.runtime_hotkeys().typed_text;
+        if cfg!(target_os = "linux") {
+            assert_eq!(active, Some(function.runtime()));
+            assert!(settings.hotkey_in_use(HotkeySlot::RawDictation, &function));
+            assert!(settings.hotkey_in_use(HotkeySlot::Dictation, &function));
+        } else {
+            assert_eq!(active, None);
+        }
+
+        // The dictation shortcut's own keys are refused, and a saved overlap
+        // is dropped rather than matched twice.
+        let dictation = settings.dictation_hotkey.clone();
+        assert!(settings.hotkey_in_use(HotkeySlot::TypedText, &dictation));
+        settings.typed_text_hotkey = Some(dictation);
+        assert_eq!(settings.runtime_hotkeys().typed_text, None);
     }
 
     #[test]

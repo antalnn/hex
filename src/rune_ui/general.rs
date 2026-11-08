@@ -273,7 +273,12 @@ pub(super) fn shortcut_rows(
     let second = target == ShortcutTarget::SecondDictation;
     #[cfg(not(target_os = "macos"))]
     let second = false;
+    #[cfg(target_os = "linux")]
+    let typed_text = target == ShortcutTarget::TypedText;
+    #[cfg(not(target_os = "linux"))]
+    let typed_text = false;
     let optional = second
+        || typed_text
         || matches!(
             target,
             ShortcutTarget::PasteLast

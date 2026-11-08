@@ -235,6 +235,10 @@ Launch Hex, setup incomplete              // setup.tour; every build and OS, ful
 │   │   Hex's own dictation (macOS listener, Linux and Windows event log) holds
 │   │   the keys, flies the live words, and lightning burns the answered card
 │   ├── A short, silent, or failed try -> a hint under the field
+│   ├── Listener running but still loading its model, microphone, or shortcuts
+│   │   -> "Getting Hex ready to listen…" in place of the hold prompt until its
+│   │   first session starts (desktop/host.rs `warming`)
+│   │   // setup.warming; Check: `the_practice_page_waits_for_the_listener`
 │   └── Done at any time -> Hex is ready  // practice is never required
 ├── Listener cannot start after setup     // setup.relaunch; event tap refused
 │   ├── First time -> Hex records a marker, reopens itself, resumes at the practice
@@ -1039,9 +1043,10 @@ the GPUI occlusion regression went with GPUI and has no Rune counterpart.
 
 ```ts
 A pane, detail card or dropdown longer than its space    // ui.scroll-bar (#1209)
-├── Scroll bar -> a thin thumb on the right edge, only while the content overflows
+├── Pane and card bodies -> a wider, clearly visible thumb on the right edge, only while the content overflows
 │   ├── Drag the thumb -> the content follows it
 │   └── Press above or below it -> jumps there
+├── Dropdowns and menus -> the kit's thin thumb, with the same drag and track press
 ├── Page Up / Page Down, Home / End -> page the pane around focus or the pointer
 ├── Open menu or dropdown -> ↑ ↓ move the highlight, Page Up / Down by the rows it
 │   shows, Home / End to the ends; the highlight stays in view
@@ -1050,8 +1055,12 @@ A pane, detail card or dropdown longer than its space    // ui.scroll-bar (#1209
 ```
 
 The bar is Rune's `rune_kit::scroll_bar`, used by `scroll_body`, `faded_body`
-and every kit `Menu`, `Select` and `Combobox`. Checks:
-`a_long_transcript_scrolls_by_dragging_its_scroll_bar`, and in Rune the
+and every kit `Menu`, `Select` and `Combobox`. Hex's pane and card bodies call
+`scroll_bar_styled` instead, with an 8 pt `text_faint` thumb that turns
+`text_muted` and widens to 10 pt under the pointer; dropdowns keep the kit's
+thin thumb. Checks:
+`a_long_transcript_scrolls_by_dragging_its_scroll_bar`,
+`a_long_labs_store_scrolls_by_dragging_its_scroll_bar`, and in Rune the
 `scroll_bar` tests and `page_keys_move_a_scrolling_listbox_highlight_by_what_it_shows`.
 A touchscreen (Wayland, X11, Windows; a pen where the system reports it as a
 touch) acts as the primary button (#1337): a tap clicks, dragging a slider or
@@ -1074,6 +1083,9 @@ Output (main sidebar, replaces the Modes editor) // rune_ui/output.rs; scenes ou
 │   └── Labs > Fix results in Output (off, #989) -> Vocabulary (the shared sheet) and,
 │       with a sentence typed, Fix this: copies Edit with agent's prompt ending
 │       `When I say "<sentence>", Hex pastes "<result>". It should paste: ` (labs.md)
+├── Labs > Transform typed text (Linux, off) -> a Typed text section with typed_text_hotkey,
+│   unbound by default: copies the focused field, runs its Output steps, re-checks the
+│   selection, and replaces it (labs.md, dictation.md)
 └── In some apps -> Each mode's apps and its steps (Only: …), opens to list them
     // the old Modes editor stays in the code for its scenes, unreachable
 
@@ -1702,6 +1714,10 @@ Linux beta                               // not macOS feature parity
 │       │   ├── Meeting capsules take clicks, so they open there only with Labs ›
 │       │   │   Floating meeting capsules on GNOME on and Xwayland already running
 │       │   │   (meetings.md, labs.md; #1274)
+│       │   ├── Annotate's capsule and ink take clicks too, so they open there only
+│       │   │   with Labs › Annotate on GNOME and Xwayland already running; the ink
+│       │   │   takes pointer regions and no keys, Esc can't stop drawing there, and
+│       │   │   the capsule's pen button does (capture.md, labs.md)
 │       │   ├── Drawn on the compositor's GPU only, opaque when its driver offers
 │       │   │   no translucent alpha (NVIDIA), never moved to an iGPU or lavapipe
 │       │   │   that can't make its swapchain (#979, #982)

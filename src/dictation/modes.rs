@@ -67,13 +67,14 @@ impl ModeRuntime {
         language: &str,
         context: &crate::dictation::context::ContextSnapshot,
         transformations: &crate::personal_commands::TransformationClient,
+        source: crate::dictation::processor::Source,
     ) -> Processed {
         let text = self.replacements.replace(raw_text);
         let profile = self.profile(context);
         let cancelled = AtomicBool::new(false);
-        let mut processed =
-            Profiles::new(profile).process_cancellable(&text, language, context, &cancelled);
-        processed.apply_transformations(transformations, context, &cancelled);
+        let mut processed = Profiles::new(profile)
+            .process_cancellable(&text, language, context, &cancelled, source);
+        processed.apply_transformations(transformations, context, &cancelled, source);
         // After the rewrite: the model may lowercase or drop a backtick it saw
         // in its input, so the wrap is the last step that touches the text.
         if self.wrap_code_terms {
@@ -280,6 +281,7 @@ mod tests {
             "en",
             &context,
             &crate::personal_commands::TransformationClient::default(),
+            crate::dictation::processor::Source::Dictation,
         );
         assert_eq!(processed.text, "I opened OpenCode today");
     }
@@ -315,8 +317,17 @@ mod tests {
             input_revision: None,
         };
         let client = crate::personal_commands::TransformationClient::default();
-        let process =
-            |runtime: ModeRuntime, text: &str| runtime.process(text, "en", &context, &client).text;
+        let process = |runtime: ModeRuntime, text: &str| {
+            runtime
+                .process(
+                    text,
+                    "en",
+                    &context,
+                    &client,
+                    crate::dictation::processor::Source::Dictation,
+                )
+                .text
+        };
 
         // The setting corrects the heard spelling and then wraps it.
         assert_eq!(
@@ -424,7 +435,13 @@ mod tests {
         };
         let transformations = crate::personal_commands::TransformationClient::default();
 
-        let processed = runtime.process("Use open code in hex.", "en", &context, &transformations);
+        let processed = runtime.process(
+            "Use open code in hex.",
+            "en",
+            &context,
+            &transformations,
+            crate::dictation::processor::Source::Dictation,
+        );
 
         assert_eq!(processed.text, "Use OpenCode in Hex.");
         assert!(processed.observation.is_none());
@@ -442,6 +459,7 @@ mod tests {
             "en",
             &crate::dictation::context::ContextSnapshot::default(),
             &transformations,
+            crate::dictation::processor::Source::Dictation,
         );
 
         assert_eq!(processed.text, "keep opencode exact.");
