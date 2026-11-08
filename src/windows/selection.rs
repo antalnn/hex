@@ -70,7 +70,8 @@ fn assemble(ranges: &[String]) -> String {
 /// to the clipboard; `Some` with no ranges means nothing is selected.
 fn uia_selection() -> Option<Vec<String>> {
     use windows::Win32::System::Com::{
-        CLSCTX_INPROC_SERVER, COINIT_MULTITHREADED, CoCreateInstance, CoInitializeEx, CoUninitialize,
+        CLSCTX_INPROC_SERVER, COINIT_MULTITHREADED, CoCreateInstance, CoInitializeEx,
+        CoUninitialize,
     };
     use windows::Win32::UI::Accessibility::{
         CUIAutomation, IUIAutomation, IUIAutomationTextPattern, UIA_TextPatternId,
@@ -121,7 +122,11 @@ mod tests {
 
     #[test]
     fn ranges_join_with_one_newline_and_empty_ones_are_skipped() {
-        let ranges = vec!["first line".to_string(), "  ".to_string(), "second".to_string()];
+        let ranges = vec![
+            "first line".to_string(),
+            "  ".to_string(),
+            "second".to_string(),
+        ];
         assert_eq!(assemble(&ranges), "first line\nsecond");
     }
 

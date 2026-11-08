@@ -127,7 +127,10 @@ pub(crate) fn rewrite(port: u16, instruction: &str, selection: &str) -> Result<S
             }
         }
     }
-    let reason = last.map_or_else(|| "no reply".to_string(), |error| crate::net::reason(&error));
+    let reason = last.map_or_else(
+        || "no reply".to_string(),
+        |error| crate::net::reason(&error),
+    );
     Err(eyre!("the local model did not answer: {reason}"))
 }
 
@@ -230,7 +233,8 @@ mod tests {
         assert_eq!(messages[0].role, "system");
         assert_eq!(messages[0].content, SYSTEM_PROMPT);
         assert_eq!(messages[1].role, "user");
-        let expected = format!("make this shorter\n\n{SENTINEL}\nthe original sentence\n{SENTINEL}");
+        let expected =
+            format!("make this shorter\n\n{SENTINEL}\nthe original sentence\n{SENTINEL}");
         assert_eq!(messages[1].content, expected);
         let instruction_at = messages[1].content.find("make this shorter").unwrap();
         let selection_at = messages[1].content.find("the original sentence").unwrap();
@@ -282,15 +286,23 @@ mod tests {
         // error carries the reason rather than a model reply.
         let error = rewrite(9, "make this shorter", "some text").unwrap_err();
         assert!(
-            error.to_string().starts_with("the local model did not answer"),
+            error
+                .to_string()
+                .starts_with("the local model did not answer"),
             "{error}"
         );
     }
 
     fn snippets() -> Vec<(String, String)> {
         vec![
-            ("structured prompt".to_string(), "Turn it into a prompt.".to_string()),
-            ("bullet list".to_string(), "Turn it into bullets.".to_string()),
+            (
+                "structured prompt".to_string(),
+                "Turn it into a prompt.".to_string(),
+            ),
+            (
+                "bullet list".to_string(),
+                "Turn it into bullets.".to_string(),
+            ),
         ]
     }
 

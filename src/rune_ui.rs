@@ -465,6 +465,7 @@ pub(crate) fn shortcut_rule(
         HotkeySlot::Dictation => ShortcutTarget::Dictation,
         HotkeySlot::PasteLast => ShortcutTarget::PasteLast,
         HotkeySlot::RawDictation => ShortcutTarget::RawDictation,
+        HotkeySlot::RewriteSelection => ShortcutTarget::RewriteSelection,
         HotkeySlot::Cancel => ShortcutTarget::Cancel,
         #[cfg(hex_capture)]
         HotkeySlot::Capture => ShortcutTarget::Capture,

@@ -56,6 +56,10 @@ pub(super) fn basics(ui: &Ui, p: Paint, layer: &mut Vec<El>, query: &str) -> Opt
             let (description, cancel) = search::cancel_rows(ui, p);
             rows.extend_described(tr("Cancel"), Some(description), cancel);
         }
+        // Rewrite the selected text (Windows): records an instruction, then
+        // replaces the selection with the local model's result.
+        #[cfg(target_os = "windows")]
+        search::rewrite_rows(&mut rows, ui, p);
         // Labs › Second dictation shortcut (macOS): another key that
         // dictates like the one above, such as on an external keyboard.
         #[cfg(target_os = "macos")]
@@ -272,7 +276,9 @@ pub(super) fn shortcut_rows(
     let optional = second
         || matches!(
             target,
-            ShortcutTarget::PasteLast | ShortcutTarget::RawDictation
+            ShortcutTarget::PasteLast
+                | ShortcutTarget::RawDictation
+                | ShortcutTarget::RewriteSelection
         );
     if optional && s::binding(&ui.settings, target).is_some() {
         control = control.child(icon_button(
@@ -281,11 +287,7 @@ pub(super) fn shortcut_rows(
             &rune_theme_opencode::icons::TRASH,
             tr("Clear shortcut"),
             move |ui: &mut Ui| {
-                ui.update(|settings| match target {
-                    ShortcutTarget::RawDictation => settings.raw_dictation_hotkey = None,
-                    _ if second => settings.second_dictation_hotkey = None,
-                    _ => settings.paste_last_hotkey = None,
-                });
+                ui.update(|settings| s::clear_binding(settings, target));
             },
         ));
     }

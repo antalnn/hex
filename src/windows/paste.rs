@@ -141,6 +141,14 @@ impl WindowsPaster {
 
     /// Puts `text` into the focused window, or into `target` when it is given
     /// and still open: the window dictation started in.
+    ///
+    /// A rewrite reaches the selection the same way: Ctrl+V replaces it in the
+    /// window that had it. An app that drops its selection when the window
+    /// loses focus (some Electron and GTK editors do, and returning to it does
+    /// not restore the highlight) inserts the text at the caret instead. That is
+    /// accepted: the text is still where the person was working, and Hex has no
+    /// way to re-create a selection another app owns. A failed rewrite reaches
+    /// here with nothing at all, so the selection is left untouched.
     pub fn paste(&mut self, text: &str, target: Option<PasteTarget>) -> Result<()> {
         if text.trim().is_empty() {
             return Err(eyre!("refusing to paste an empty transcript"));

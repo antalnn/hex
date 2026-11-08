@@ -277,6 +277,9 @@ pub struct AppSettings {
     /// Dictate without processing: records like the dictation shortcut and
     /// pastes the transcript as heard. Unbound by default.
     pub raw_dictation_hotkey: Option<HotkeyBinding>,
+    /// Rewrite the selected text: records the instruction, then replaces the
+    /// selection with the model's result (Windows). Unbound by default.
+    pub rewrite_hotkey: Option<HotkeyBinding>,
     /// Labs › Second dictation shortcut: another shortcut that dictates
     /// exactly as `dictation_hotkey` does (macOS). Unbound by default and
     /// ignored while its Labs toggle is off.
@@ -426,6 +429,7 @@ impl Default for AppSettings {
             paste_last_hotkey: Some(HotkeyBinding::paste_last_default()),
             cancel_hotkey: HotkeyBinding::cancel_default(),
             raw_dictation_hotkey: None,
+            rewrite_hotkey: None,
             second_dictation_hotkey: None,
             show_dock_icon: true,
             transcription: default_transcription(),
@@ -1055,6 +1059,7 @@ impl AppSettings {
                 .raw_dictation_hotkey
                 .as_ref()
                 .map(HotkeyBinding::runtime),
+            rewrite_selection: self.rewrite_hotkey.as_ref().map(HotkeyBinding::runtime),
             second_dictation: self
                 .active_second_dictation_hotkey()
                 .map(HotkeyBinding::runtime),
@@ -1134,6 +1139,14 @@ impl AppSettings {
             self.raw_dictation_hotkey = None;
         }
         if self
+            .rewrite_hotkey
+            .as_ref()
+            .is_some_and(HotkeyBinding::is_bare_primary_click)
+        {
+            tracing::warn!("cleared a left-click rewrite shortcut");
+            self.rewrite_hotkey = None;
+        }
+        if self
             .second_dictation_hotkey
             .as_ref()
             .is_some_and(HotkeyBinding::is_bare_primary_click)
@@ -1174,6 +1187,8 @@ pub enum HotkeySlot {
     Dictation,
     PasteLast,
     RawDictation,
+    /// Rewrite the selected text (Windows).
+    RewriteSelection,
     #[cfg(hex_capture)]
     Capture,
     /// Labs › Annotate 15 s replay shortcut (macOS 27+).
@@ -1206,6 +1221,11 @@ impl AppSettings {
             && let Some(raw) = &self.raw_dictation_hotkey
         {
             others.push(raw.clone());
+        }
+        if slot != HotkeySlot::RewriteSelection
+            && let Some(rewrite) = &self.rewrite_hotkey
+        {
+            others.push(rewrite.clone());
         }
         if slot != HotkeySlot::Cancel {
             others.push(self.cancel_hotkey.clone());
@@ -2723,6 +2743,27 @@ mod tests {
             serde_json::from_str(r#"{"dictation_processing":{"wrap_code_terms":true}}"#).unwrap();
         assert!(old.dictation_processing.paste_to_start_window);
         assert!(old.dictation_processing.wrap_code_terms);
+    }
+
+    #[test]
+    fn the_rewrite_shortcut_is_unbound_by_default_and_round_trips() {
+        let default = AppSettings::default();
+        assert_eq!(default.rewrite_hotkey, None);
+        assert_eq!(
+            default.runtime_hotkeys().rewrite_selection,
+            None,
+            "an unbound rewrite shortcut is not matched"
+        );
+
+        let binding = HotkeyBinding::paste_last_default();
+        let settings = AppSettings {
+            rewrite_hotkey: Some(binding.clone()),
+            ..Default::default()
+        };
+        let decoded: AppSettings =
+            serde_json::from_str(&serde_json::to_string(&settings).unwrap()).unwrap();
+        assert_eq!(decoded.rewrite_hotkey, Some(binding.clone()));
+        assert!(decoded.runtime_hotkeys().rewrite_selection.is_some());
     }
 
     #[test]

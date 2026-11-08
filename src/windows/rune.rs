@@ -86,6 +86,8 @@ pub(crate) enum ShortcutTarget {
     Capture,
     /// Dictate without processing.
     RawDictation,
+    /// Rewrite the selected text.
+    RewriteSelection,
     /// Toggle mode's cancel shortcut.
     Cancel,
 }

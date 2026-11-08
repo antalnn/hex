@@ -136,6 +136,8 @@ pub(crate) enum ShortcutTarget {
     #[cfg(hex_capture)]
     CaptureReplay,
     RawDictation,
+    /// Rewrite the selected text.
+    RewriteSelection,
     /// Labs › Second dictation shortcut.
     SecondDictation,
     /// Toggle mode's cancel shortcut.

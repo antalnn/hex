@@ -215,6 +215,9 @@ pub struct HotkeyEvent {
     pub action: HotkeyAction,
     /// Dictate without processing's shortcut owns the capture.
     pub raw: bool,
+    /// The rewrite shortcut owns the capture: the transcript is an
+    /// instruction, not the text to paste.
+    pub rewrite: bool,
     timestamp_ms: u32,
 }
 
@@ -252,6 +255,10 @@ struct CallbackState {
     raw: Option<WindowsHotkey>,
     raw_trigger_vk: Option<u32>,
     raw_trigger_down: bool,
+    /// Rewrite the selected text, while it is bound.
+    rewrite: Option<WindowsHotkey>,
+    rewrite_trigger_vk: Option<u32>,
+    rewrite_trigger_down: bool,
     annotate: Option<WindowsHotkey>,
     annotate_trigger_vk: Option<u32>,
     annotate_trigger_down: bool,
@@ -280,6 +287,17 @@ struct CallbackState {
     mask_release: bool,
 }
 
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+enum Owner {
+    /// The dictation shortcut.
+    #[default]
+    Dictation,
+    /// Dictate without processing.
+    Raw,
+    /// Rewrite the selected text.
+    Rewrite,
+}
+
 #[derive(Default)]
 struct CaptureState {
     active: bool,
@@ -290,22 +308,27 @@ struct CaptureState {
     /// Every press acts as the second tap of a double-tap: releasing it
     /// locks the capture, and the next press finishes it.
     toggle: bool,
-    /// The raw shortcut, not the dictation one, owns this capture (or the
-    /// last one).
-    raw: bool,
+    /// Which shortcut owns this capture (or the last one).
+    owner: Owner,
 }
 
 impl CaptureState {
     /// Whether the other shortcut owns a capture in progress.
-    fn owned_by_other(&self, raw: bool) -> bool {
-        self.raw != raw && (self.active || self.locked)
+    fn owned_by_other(&self, owner: Owner) -> bool {
+        self.owner != owner && (self.active || self.locked)
+    }
+
+    /// Whether the plain dictation shortcut owns this capture: only it
+    /// finishes on a modifier press and is interrupted by a chord.
+    fn is_dictation(&self) -> bool {
+        self.owner == Owner::Dictation
     }
 
     /// Hands an idle capture to one shortcut; a tap of the other one never
     /// counts toward its double tap.
-    fn claim(&mut self, raw: bool) {
-        if self.raw != raw && !self.active && !self.locked {
-            self.raw = raw;
+    fn claim(&mut self, owner: Owner) {
+        if self.owner != owner && !self.active && !self.locked {
+            self.owner = owner;
             self.last_release_ms = None;
         }
     }
@@ -480,6 +503,7 @@ impl WindowsHotkeyMonitor {
         binding: WindowsHotkey,
         paste_last: Option<WindowsHotkey>,
         raw: Option<WindowsHotkey>,
+        rewrite: Option<WindowsHotkey>,
         annotate: Option<WindowsHotkey>,
         cancel: Option<WindowsHotkey>,
         double_tap_enabled: bool,
@@ -496,6 +520,7 @@ impl WindowsHotkeyMonitor {
         let trigger_vk = binding.key.as_deref().map(virtual_key).transpose()?;
         let paste_trigger_vk = chord_virtual_key(paste_last.as_ref(), "Paste Last")?;
         let raw_trigger_vk = chord_virtual_key(raw.as_ref(), "Dictate without processing")?;
+        let rewrite_trigger_vk = chord_virtual_key(rewrite.as_ref(), "Rewrite selection")?;
         let annotate_trigger_vk = chord_virtual_key(annotate.as_ref(), "Annotate")?;
         let label = binding.label();
         let (event_sender, events) = mpsc::sync_channel(EVENT_CAPACITY);
@@ -511,6 +536,9 @@ impl WindowsHotkeyMonitor {
             raw,
             raw_trigger_vk,
             raw_trigger_down: false,
+            rewrite,
+            rewrite_trigger_vk,
+            rewrite_trigger_down: false,
             annotate,
             annotate_trigger_vk,
             annotate_trigger_down: false,
@@ -970,7 +998,7 @@ fn process_button(vk: u32, is_down: bool, time: u32) -> Disposition {
                 && (state.raw_trigger_down
                     || (is_down
                         && !state.dirty
-                        && !state.capture.owned_by_other(true)
+                        && !state.capture.owned_by_other(Owner::Raw)
                         && state
                             .raw
                             .as_ref()
@@ -979,7 +1007,7 @@ fn process_button(vk: u32, is_down: bool, time: u32) -> Disposition {
                 state.mask_release |= is_down && holds_menu(state.raw.as_ref());
                 if is_down && !state.raw_trigger_down {
                     state.raw_trigger_down = true;
-                    state.capture.claim(true);
+                    state.capture.claim(Owner::Raw);
                     let was_locked = state.capture.locked;
                     if let Some(action) =
                         state
@@ -1007,6 +1035,33 @@ fn process_button(vk: u32, is_down: bool, time: u32) -> Disposition {
                 }
                 return Disposition::Suppress;
             }
+            let rewrite_event = state.rewrite_trigger_vk == Some(vk)
+                && (state.rewrite_trigger_down
+                    || (is_down
+                        && !state.dirty
+                        && !state.capture.owned_by_other(Owner::Rewrite)
+                        && state
+                            .rewrite
+                            .as_ref()
+                            .is_some_and(|binding| state.modifiers.matches(binding))));
+            if rewrite_event {
+                state.mask_release |= is_down && holds_menu(state.rewrite.as_ref());
+                if is_down && !state.rewrite_trigger_down {
+                    // A plain hold, whatever the dictation shortcut's mode is:
+                    // the press records the instruction, the release runs it.
+                    state.rewrite_trigger_down = true;
+                    state.capture.claim(Owner::Rewrite);
+                    state.capture.active = true;
+                    state.capture.recording = true;
+                    send_event(state, HotkeyAction::Start, time);
+                } else if is_up && state.rewrite_trigger_down {
+                    state.rewrite_trigger_down = false;
+                    state.capture.active = false;
+                    state.capture.recording = false;
+                    send_event(state, HotkeyAction::Finish, time);
+                }
+                return Disposition::Suppress;
+            }
             let paste_event = state.paste_trigger_vk == Some(vk)
                 && (state.paste_trigger_down
                     || (is_down
@@ -1031,12 +1086,12 @@ fn process_button(vk: u32, is_down: bool, time: u32) -> Disposition {
                     if state.trigger_down {
                         suppressed = !state.share_trigger;
                     } else if !state.dirty
-                        && !state.capture.owned_by_other(false)
+                        && !state.capture.owned_by_other(Owner::Dictation)
                         && state.modifiers.matches(&state.binding)
                     {
                         state.trigger_down = true;
                         suppressed = !state.share_trigger;
-                        state.capture.claim(false);
+                        state.capture.claim(Owner::Dictation);
                         let was_locked = state.capture.locked;
                         if let Some(action) = state.capture.press(
                             state.double_tap_enabled,
@@ -1071,7 +1126,7 @@ fn process_button(vk: u32, is_down: bool, time: u32) -> Disposition {
                 if is_down
                     && state.trigger_vk.is_none()
                     && state.capture.active
-                    && !state.capture.raw
+                    && state.capture.is_dictation()
                 {
                     state.dirty = true;
                     if let Some(action) = state.capture.interrupt() {
@@ -1088,7 +1143,7 @@ fn process_button(vk: u32, is_down: bool, time: u32) -> Disposition {
                 }
                 if state.trigger_vk.is_none()
                     && state.capture.locked
-                    && !state.capture.raw
+                    && state.capture.is_dictation()
                     && !state.dirty
                     && is_down
                     && state.modifiers.matches(&state.binding)
@@ -1107,7 +1162,7 @@ fn process_button(vk: u32, is_down: bool, time: u32) -> Disposition {
                         send_event(state, action, time);
                     }
                 } else if state.capture.active
-                    && !state.capture.raw
+                    && state.capture.is_dictation()
                     && !state.modifiers.matches(&state.binding)
                 {
                     if let Some(action) = state.capture.release(state.double_tap_enabled, time) {
@@ -1122,7 +1177,7 @@ fn process_button(vk: u32, is_down: bool, time: u32) -> Disposition {
                     && state.modifiers.matches(&state.binding)
                     && state.side_down.together(&state.binding)
                 {
-                    state.capture.claim(false);
+                    state.capture.claim(Owner::Dictation);
                     if let Some(action) =
                         state
                             .capture
@@ -1160,7 +1215,8 @@ fn holds_menu(binding: Option<&WindowsHotkey>) -> bool {
 fn send_event(state: &mut CallbackState, action: HotkeyAction, timestamp_ms: u32) {
     match state.events.try_send(HotkeyEvent {
         action,
-        raw: state.capture.raw,
+        raw: state.capture.owner == Owner::Raw,
+        rewrite: state.capture.owner == Owner::Rewrite,
         timestamp_ms,
     }) {
         Ok(()) => crate::windows::dictation::wake(),
@@ -1850,6 +1906,7 @@ mod tests {
         let event = HotkeyEvent {
             action: HotkeyAction::Finish,
             raw: false,
+            rewrite: false,
             timestamp_ms: 1_000,
         };
         let captured = CaptureInstant::from_nanos(10_000_000_000);
@@ -1864,6 +1921,7 @@ mod tests {
         let event = HotkeyEvent {
             action: HotkeyAction::Start,
             raw: false,
+            rewrite: false,
             timestamp_ms: u32::MAX - 4,
         };
         let captured = CaptureInstant::from_nanos(1_000_000_000);
@@ -1879,6 +1937,7 @@ mod tests {
             let event = HotkeyEvent {
                 action: HotkeyAction::Start,
                 raw: false,
+                rewrite: false,
                 timestamp_ms,
             };
             assert_eq!(

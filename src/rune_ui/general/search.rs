@@ -181,6 +181,26 @@ pub(super) fn cancel_rows(ui: &Ui, p: Paint) -> (&'static str, Vec<CardRow>) {
     )
 }
 
+/// Rewrite selection's row (Windows): the press records an instruction, then
+/// the selected text is replaced by the local model's result.
+#[cfg(target_os = "windows")]
+pub(super) fn rewrite_rows(rows: &mut Rows, ui: &Ui, p: Paint) {
+    let description = tr("Records an instruction and replaces the text you selected");
+    rows.extend_described(
+        tr("Rewrite selection"),
+        Some(description),
+        shortcut_rows(
+            ui,
+            p,
+            "rewrite-shortcut",
+            &super::super::icons::KEYBOARD,
+            tr("Rewrite selection"),
+            ShortcutTarget::RewriteSelection,
+            Some(description),
+        ),
+    );
+}
+
 /// Rows under construction, kept only while their title, or a description
 /// given to [`Rows::push_described`], contains the query.
 pub(super) struct Rows<'a> {

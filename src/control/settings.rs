@@ -214,6 +214,12 @@ const KEYS: &[Key] = &[
          the Output steps; none (the default) turns it off",
     ),
     optional(
+        "rewrite_hotkey",
+        Kind::Shortcut(HotkeySlot::RewriteSelection),
+        "Rewrite the selected text: records an instruction and replaces the selection \
+         with the local model's result (Windows); none (the default) turns it off",
+    ),
+    optional(
         "second_dictation_hotkey",
         Kind::Shortcut(HotkeySlot::SecondDictation),
         "Labs: another shortcut that dictates like dictation_hotkey, such as a key on an \
@@ -1087,6 +1093,7 @@ pub fn apply(
         "dictation_hotkey"
         | "paste_last_hotkey"
         | "raw_dictation_hotkey"
+        | "rewrite_hotkey"
         | "second_dictation_hotkey"
         | "cancel_hotkey"
         | "screenshots.hotkey"
@@ -1099,6 +1106,7 @@ pub fn apply(
                 HotkeySlot::Dictation => Some(&candidate.dictation_hotkey),
                 HotkeySlot::PasteLast => candidate.paste_last_hotkey.as_ref(),
                 HotkeySlot::RawDictation => candidate.raw_dictation_hotkey.as_ref(),
+                HotkeySlot::RewriteSelection => candidate.rewrite_hotkey.as_ref(),
                 HotkeySlot::SecondDictation => candidate.second_dictation_hotkey.as_ref(),
                 HotkeySlot::Cancel => Some(&candidate.cancel_hotkey),
                 HotkeySlot::Screenshot => Some(&candidate.screenshots.hotkey),

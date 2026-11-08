@@ -58,6 +58,8 @@ pub(crate) enum ShortcutTarget {
     PasteLast,
     Capture,
     RawDictation,
+    /// Rewrite the selected text (Windows).
+    RewriteSelection,
     /// Toggle mode's cancel shortcut.
     Cancel,
 }
@@ -1098,6 +1100,7 @@ impl LinuxDesktopHost {
                         ShortcutTarget::RawDictation => {
                             settings.raw_dictation_hotkey = Some(binding)
                         }
+                        ShortcutTarget::RewriteSelection => settings.rewrite_hotkey = Some(binding),
                         ShortcutTarget::Cancel => settings.cancel_hotkey = binding,
                     }
                 })
