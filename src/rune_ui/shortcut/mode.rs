@@ -7,17 +7,17 @@
 
 use rune::El;
 
-use super::Ui;
-use super::controls::value_button;
-use super::controls::{Paint, copy_row};
-use super::explainer::{self, Script};
-use super::icons::HAND;
+use super::super::Ui;
+use super::super::controls::value_button;
+use super::super::controls::{Paint, copy_row};
+use super::super::explainer::{self, Script};
+use super::super::icons::HAND;
 use crate::app_settings::{AppSettings, HotkeyKey};
 use crate::desktop::i18n::{tr, tr_fill};
 use crate::dictation::ShortcutMode;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum Trigger {
+pub(in crate::rune_ui) enum Trigger {
     HoldOrDoubleTap,
     Hold,
     Tap,
@@ -26,14 +26,14 @@ pub(super) enum Trigger {
 
 impl Trigger {
     /// In the modal's order, the default first.
-    pub(super) const ALL: [Self; 4] = [
+    pub(in crate::rune_ui) const ALL: [Self; 4] = [
         Self::HoldOrDoubleTap,
         Self::Hold,
         Self::Tap,
         Self::DoubleTap,
     ];
 
-    pub(super) fn of(settings: &AppSettings) -> Self {
+    pub(in crate::rune_ui) fn of(settings: &AppSettings) -> Self {
         match settings.shortcut_mode {
             ShortcutMode::Toggle => Self::Tap,
             ShortcutMode::Hold if !settings.double_tap_lock => Self::Hold,
@@ -46,7 +46,7 @@ impl Trigger {
         }
     }
 
-    pub(super) fn apply(self, settings: &mut AppSettings) {
+    pub(in crate::rune_ui) fn apply(self, settings: &mut AppSettings) {
         let (mode, lock, only) = match self {
             Self::HoldOrDoubleTap => (ShortcutMode::Hold, true, false),
             Self::Hold => (ShortcutMode::Hold, false, false),
@@ -58,7 +58,7 @@ impl Trigger {
         settings.double_tap_only = only;
     }
 
-    pub(super) fn key(self) -> &'static str {
+    pub(in crate::rune_ui) fn key(self) -> &'static str {
         match self {
             Self::HoldOrDoubleTap => "trigger-hold-or-double-tap",
             Self::Hold => "trigger-hold",
@@ -67,7 +67,7 @@ impl Trigger {
         }
     }
 
-    pub(super) fn name(self) -> &'static str {
+    pub(in crate::rune_ui) fn name(self) -> &'static str {
         match self {
             Self::HoldOrDoubleTap => tr("Hold or double-tap"),
             Self::Hold => tr("Hold"),
@@ -76,7 +76,7 @@ impl Trigger {
         }
     }
 
-    pub(super) fn caption(self) -> &'static str {
+    pub(in crate::rune_ui) fn caption(self) -> &'static str {
         match self {
             Self::HoldOrDoubleTap => tr("Hold to talk, or double-tap to talk hands-free"),
             Self::Hold => tr("Hold to talk, let go to paste"),
@@ -85,7 +85,7 @@ impl Trigger {
         }
     }
 
-    pub(super) fn script(self) -> &'static Script {
+    pub(in crate::rune_ui) fn script(self) -> &'static Script {
         match self {
             Self::HoldOrDoubleTap => &explainer::HOLD_OR_LOCK,
             Self::Hold => &explainer::HOLD,
@@ -96,7 +96,7 @@ impl Trigger {
 
     /// Why this shortcut can't trigger this way, if it can't: a lone
     /// modifier can't tell a double-tap from a chord.
-    pub(super) fn unavailable(self, settings: &AppSettings) -> Option<String> {
+    pub(in crate::rune_ui) fn unavailable(self, settings: &AppSettings) -> Option<String> {
         (self == Self::DoubleTap && settings.dictation_hotkey.key.is_none()).then(|| {
             let mut example = settings.dictation_hotkey.clone();
             example.key = Some(HotkeyKey::named("space"));
@@ -109,14 +109,14 @@ impl Trigger {
 }
 
 /// Saves `trigger` unless it is already the choice.
-pub(super) fn pick(ui: &mut Ui, trigger: Trigger) {
+pub(in crate::rune_ui) fn pick(ui: &mut Ui, trigger: Trigger) {
     if Trigger::of(&ui.settings) != trigger {
         ui.update(|settings| trigger.apply(settings));
     }
 }
 
 /// General's row, under the shortcut: the choice, opening the modal.
-pub(super) fn row(ui: &Ui, p: Paint) -> El {
+pub(in crate::rune_ui) fn row(ui: &Ui, p: Paint) -> El {
     copy_row(
         p,
         "shortcut-mode",
@@ -147,24 +147,24 @@ enum Example {
     Motion,
 }
 
-pub(super) fn scene_modifier(ui: &mut Ui) {
+pub(in crate::rune_ui) fn scene_modifier(ui: &mut Ui) {
     scene(ui, Example::Modifier);
 }
 
-pub(super) fn scene_key(ui: &mut Ui) {
+pub(in crate::rune_ui) fn scene_key(ui: &mut Ui) {
     scene(ui, Example::Key);
 }
 
-pub(super) fn scene_chord(ui: &mut Ui) {
+pub(in crate::rune_ui) fn scene_chord(ui: &mut Ui) {
     scene(ui, Example::Chord);
 }
 
-pub(super) fn scene_motion(ui: &mut Ui) {
+pub(in crate::rune_ui) fn scene_motion(ui: &mut Ui) {
     scene(ui, Example::Motion);
 }
 
 fn scene(ui: &mut Ui, example: Example) {
-    *ui = super::mac_fixture();
+    *ui = super::super::mac_fixture();
     let hotkey = &mut ui.settings.dictation_hotkey;
     match example {
         Example::Modifier | Example::Motion => hotkey.key = None,

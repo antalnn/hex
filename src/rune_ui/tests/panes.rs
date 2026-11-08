@@ -746,7 +746,7 @@ fn shortcut_mode_opens_from_its_row_and_keeps_focus_inside() {
 
 #[test]
 fn each_option_picks_its_trigger() {
-    use shortcut_mode::Trigger;
+    use crate::rune_ui::shortcut::mode::Trigger;
     let mut rt = runtime("shortcut-mode-key", true, PANE_SIZE);
     let trigger = |rt: &Runtime<Ui>| Trigger::of(&rt.state.settings);
     assert_eq!(trigger(&rt), Trigger::DoubleTap);

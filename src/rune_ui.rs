@@ -58,9 +58,7 @@ mod scrawl;
 #[cfg(hex_capture)]
 pub(crate) mod screenshot_thumbnail;
 mod settings;
-mod shortcut_guard;
-mod shortcut_mode;
-mod shortcut_rule;
+mod shortcut;
 mod sidebar;
 mod sidebar_update;
 mod sound_sets;
@@ -88,7 +86,7 @@ use host::{Backend, Request, ShortcutTarget};
 use onboarding_kit::live::Page;
 use scenes::{SCENES, Scene, fixture, mac_fixture, portal_fixture};
 use settings::Capture;
-pub(crate) use shortcut_rule::shortcut_rule;
+pub(crate) use shortcut::rule::shortcut_rule;
 use sidebar::{BuildKind, Pane, pane_header, sidebar};
 
 /// How long typing pauses before a text field's edit is saved.
@@ -674,7 +672,7 @@ pub(crate) struct Ui {
     capture: Capture,
     vocabulary: vocabulary::VocabularyEditor,
     /// General's Excluded apps sheet: the apps where no shortcut fires.
-    shortcut_guard: shortcut_guard::GuardEditor,
+    shortcut_guard: shortcut::guard::GuardEditor,
     /// The Models pane's remote addresses and Rewrite prompts, typed.
     model_sources: ai_models::ModelSources,
     /// The model the service was last seen preparing, and since when.
@@ -773,7 +771,7 @@ impl Ui {
     fn with(settings: AppSettings, service: Service) -> Self {
         let modes = modes::ModesPane::new(&settings);
         let vocabulary = vocabulary::VocabularyEditor::new(&settings.vocabulary);
-        let shortcut_guard = shortcut_guard::GuardEditor::new(&settings.shortcuts);
+        let shortcut_guard = shortcut::guard::GuardEditor::new(&settings.shortcuts);
         let model_sources = ai_models::ModelSources::new(&settings);
         Self {
             settings,
@@ -1112,7 +1110,7 @@ impl Ui {
         explainer::close(self);
         sound_sets::close(self);
         vocabulary::close(self);
-        shortcut_guard::close(self);
+        shortcut::guard::close(self);
         history::close_stats(self);
     }
 
@@ -1200,7 +1198,7 @@ fn on_key(ui: &mut Ui, event: &rune::KeyEvent, tx: &mut Tx) -> bool {
         vocabulary::close(ui);
         true
     } else if ui.shortcut_guard.open {
-        shortcut_guard::close(ui);
+        shortcut::guard::close(ui);
         true
     } else if ui.picker.open {
         picker::close(ui);
@@ -1459,7 +1457,7 @@ fn view(ui: &Ui, cx: &mut Cx<Ui>) -> El {
     if let Some(modal) = vocabulary::modal(ui, p) {
         layer.extend(modal);
     }
-    if let Some(modal) = shortcut_guard::modal(ui, p) {
+    if let Some(modal) = shortcut::guard::modal(ui, p) {
         layer.extend(modal);
     }
     if let Some(modal) = ai_models::prompts_modal(ui, p) {

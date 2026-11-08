@@ -6,11 +6,11 @@
 use rune::{El, TextEdit, Tx, col, edit_access, el, row, text};
 use rune_kit::{ControlSize, TextInput};
 
-use super::Ui;
-use super::controls::{
+use super::super::Ui;
+use super::super::controls::{
     ButtonKind, DESCRIPTION, Paint, button, modal_scrim_transition, modal_transition, toggle_row,
 };
-use super::lists::remove_button;
+use super::super::lists::remove_button;
 use crate::app_settings::ShortcutGuard;
 use crate::desktop::i18n::{tr, tr_fill};
 
@@ -36,23 +36,23 @@ struct AppRow {
 
 /// The app rows, and whether the sheet is open.
 #[derive(Default)]
-pub(super) struct GuardEditor {
+pub(in crate::rune_ui) struct GuardEditor {
     rows: Vec<AppRow>,
     next_id: u64,
     /// What an edit for a row that is gone lands in; never saved.
     detached: TextEdit,
-    pub(super) open: bool,
+    pub(in crate::rune_ui) open: bool,
 }
 
 impl GuardEditor {
-    pub(super) fn new(guard: &ShortcutGuard) -> Self {
+    pub(in crate::rune_ui) fn new(guard: &ShortcutGuard) -> Self {
         let mut editor = Self::default();
         editor.reload(guard);
         editor
     }
 
     /// Replaces the rows with `guard`'s apps, keeping the sheet open or shut.
-    pub(super) fn reload(&mut self, guard: &ShortcutGuard) {
+    pub(in crate::rune_ui) fn reload(&mut self, guard: &ShortcutGuard) {
         self.rows.clear();
         for app in &guard.excluded_processes {
             self.push(TextEdit::new(app.clone()));
@@ -80,7 +80,7 @@ impl GuardEditor {
 
     /// The rows as the list saves them: trimmed, lowercased, `.exe` gone, each
     /// app once.
-    pub(super) fn project(&self) -> Vec<String> {
+    pub(in crate::rune_ui) fn project(&self) -> Vec<String> {
         let names: Vec<String> = self.rows.iter().map(|row| row.name.text.clone()).collect();
         ShortcutGuard::clean(&names)
     }
@@ -103,7 +103,7 @@ impl GuardEditor {
 
 /// What General's row shows: how many apps are saved, and whether the
 /// fullscreen pause is on.
-pub(super) fn summary(ui: &Ui) -> String {
+pub(in crate::rune_ui) fn summary(ui: &Ui) -> String {
     let count = ui.settings.shortcuts.excluded_processes.len();
     let apps = match count {
         0 => tr("None").to_string(),
@@ -118,14 +118,14 @@ pub(super) fn summary(ui: &Ui) -> String {
 }
 
 /// General's row: the count, opening the sheet.
-pub(super) fn general_row(ui: &Ui, p: Paint) -> El {
-    super::controls::icon_row(
+pub(in crate::rune_ui) fn general_row(ui: &Ui, p: Paint) -> El {
+    super::super::controls::icon_row(
         p,
         "excluded-apps",
         &rune_theme_opencode::icons::KEYBOARD,
         tr("Excluded apps"),
         None,
-        super::controls::value_button(
+        super::super::controls::value_button(
             p,
             "excluded-apps-control",
             tr("Excluded apps"),
@@ -138,12 +138,12 @@ pub(super) fn general_row(ui: &Ui, p: Paint) -> El {
 
 /// Opens the sheet alone, with an empty row to type into when the list is
 /// empty.
-pub(super) fn open(ui: &mut Ui) {
-    super::settings::cancel_capture(ui);
-    super::picker::close(ui);
-    super::explainer::close(ui);
-    super::sound_sets::close(ui);
-    super::vocabulary::close(ui);
+pub(in crate::rune_ui) fn open(ui: &mut Ui) {
+    super::super::settings::cancel_capture(ui);
+    super::super::picker::close(ui);
+    super::super::explainer::close(ui);
+    super::super::sound_sets::close(ui);
+    super::super::vocabulary::close(ui);
     ui.open = None;
     ui.shortcut_guard.open = true;
     if ui.shortcut_guard.rows.is_empty() {
@@ -152,7 +152,7 @@ pub(super) fn open(ui: &mut Ui) {
 }
 
 /// Saves what was typed, drops rows left blank, and closes the sheet.
-pub(super) fn close(ui: &mut Ui) {
+pub(in crate::rune_ui) fn close(ui: &mut Ui) {
     if !ui.shortcut_guard.open {
         return;
     }
@@ -219,7 +219,7 @@ fn app_row(p: Paint, entry: &AppRow) -> El {
         ))
 }
 
-pub(super) fn modal(ui: &Ui, p: Paint) -> Option<[El; 2]> {
+pub(in crate::rune_ui) fn modal(ui: &Ui, p: Paint) -> Option<[El; 2]> {
     if !ui.shortcut_guard.open {
         return None;
     }
@@ -233,7 +233,7 @@ pub(super) fn modal(ui: &Ui, p: Paint) -> Option<[El; 2]> {
         .key("app-column")
         .h(height.min(ROWS_HEIGHT))
         .mx(-SIDE_ROOM)
-        .child(super::faded_body(p.k, "app-scroll", rows, FADES));
+        .child(super::super::faded_body(p.k, "app-scroll", rows, FADES));
     let add = button(p, "add-app", tr("Add app"), ButtonKind::Secondary, add_app);
     let footer = row()
         .key("footer")
@@ -336,7 +336,7 @@ mod tests {
     fn ui() -> Ui {
         Ui::with(
             crate::app_settings::AppSettings::default(),
-            super::super::Service::Fixture(Vec::new()),
+            super::super::super::Service::Fixture(Vec::new()),
         )
     }
 

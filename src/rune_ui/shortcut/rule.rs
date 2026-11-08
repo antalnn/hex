@@ -2,8 +2,8 @@
 //! one; shared with `hex settings set`. Kept out of `rune_ui.rs` so its
 //! source stays under the file cap.
 
-use super::host;
-use super::host::ShortcutTarget;
+use super::super::host;
+use super::super::host::ShortcutTarget;
 use crate::app_settings::{HotkeyBinding, HotkeySlot};
 
 pub(crate) fn shortcut_rule(slot: HotkeySlot, binding: &HotkeyBinding) -> Result<(), &'static str> {

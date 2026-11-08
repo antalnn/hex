@@ -206,10 +206,10 @@ pub(super) const SCENES: &[Scene] = &[
         ui.picker.installed = Some(vec![TranscriptionModelId::WhisperLargeV3Turbo]);
         ui.open = Some(Menu::Pick("transcription-language"));
     }),
-    ("shortcut-mode", shortcut_mode::scene_modifier),
-    ("shortcut-mode-key", shortcut_mode::scene_key),
-    ("shortcut-mode-chord", shortcut_mode::scene_chord),
-    ("shortcut-mode-motion", shortcut_mode::scene_motion),
+    ("shortcut-mode", shortcut::mode::scene_modifier),
+    ("shortcut-mode-key", shortcut::mode::scene_key),
+    ("shortcut-mode-chord", shortcut::mode::scene_chord),
+    ("shortcut-mode-motion", shortcut::mode::scene_motion),
     // The Shortcut row with a modifier-only shortcut, Left Option, beside
     // its side picker (macOS), in each face of the recorder.
     ("shortcut-row", |ui| shortcut_row(ui, Capture::Idle)),

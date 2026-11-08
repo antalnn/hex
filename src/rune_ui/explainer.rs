@@ -17,7 +17,7 @@ use super::Ui;
 use super::controls::{
     ButtonKind, DESCRIPTION, KEY_GAP, KeySize, Paint, TRAY_PADDING, button, key_tray, keycap,
 };
-use super::shortcut_mode::{Trigger, pick};
+use super::shortcut::mode::{Trigger, pick};
 use crate::desktop::i18n::tr;
 
 const MODAL_WIDTH: f32 = 600.0;

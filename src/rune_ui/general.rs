@@ -50,7 +50,7 @@ pub(super) fn basics(ui: &Ui, p: Paint, layer: &mut Vec<El>, query: &str) -> Opt
                 None,
             ),
         );
-        rows.push(tr("Shortcut mode"), super::shortcut_mode::row(ui, p));
+        rows.push(tr("Shortcut mode"), super::shortcut::mode::row(ui, p));
         // Toggle has a cancel shortcut; Hold has none.
         if ui.settings.shortcut_mode == crate::dictation::ShortcutMode::Toggle {
             let (description, cancel) = search::cancel_rows(ui, p);
@@ -107,7 +107,7 @@ pub(super) fn basics(ui: &Ui, p: Paint, layer: &mut Vec<El>, query: &str) -> Opt
         #[cfg(target_os = "windows")]
         rows.push(
             tr("Excluded apps"),
-            super::shortcut_guard::general_row(ui, p),
+            super::shortcut::guard::general_row(ui, p),
         );
     }
     let picker_button = value_button(

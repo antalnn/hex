@@ -1777,10 +1777,10 @@ mod tests {
         #[cfg(hex_capture)]
         include_str!("../rune_ui/capture_capsule/view.rs"),
         include_str!("../rune_ui/settings.rs"),
-        include_str!("../rune_ui/shortcut_mode.rs"),
+        include_str!("../rune_ui/shortcut/mode.rs"),
         include_str!("../rune_ui/sound_sets.rs"),
         include_str!("../rune_ui/vocabulary.rs"),
-        include_str!("../rune_ui/shortcut_guard.rs"),
+        include_str!("../rune_ui/shortcut/guard.rs"),
         include_str!("../rune_ui/ai_models.rs"),
         include_str!("../rune_ui/windows_host.rs"),
         include_str!("tray_menu.rs"),
