@@ -465,6 +465,7 @@ pub(crate) fn set_capture_inhibited(inhibited: bool) {
         state.trigger_down = false;
         state.paste_trigger_down = false;
         state.raw_trigger_down = false;
+        state.rewrite_trigger_down = false;
         if let Some(action) = state.capture.cancel() {
             send_event(state, action, now);
         }
