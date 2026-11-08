@@ -229,11 +229,18 @@ pub(in crate::rune_ui) fn modal(ui: &Ui, p: Paint) -> Option<[El; 2]> {
         .px(SIDE_ROOM)
         .children(ui.shortcut_guard.rows.iter().map(|entry| app_row(p, entry)));
     let height = ui.shortcut_guard.rows.len() as f32 * ROW_HEIGHT + FADES.0 + FADES.1;
-    let apps = col()
-        .key("app-column")
-        .h(height.min(ROWS_HEIGHT))
-        .mx(-SIDE_ROOM)
-        .child(super::super::faded_body(p.k, "app-scroll", rows, FADES));
+    // At rest the rows fit, so they sit in a plain column: a scroll area with
+    // nothing to scroll still paints its bar's collapsed thumb, a hairline
+    // above the first row's remove button.
+    let apps = if height > ROWS_HEIGHT {
+        col()
+            .key("app-column")
+            .h(ROWS_HEIGHT)
+            .mx(-SIDE_ROOM)
+            .child(super::super::faded_body(p.k, "app-scroll", rows, FADES))
+    } else {
+        col().key("app-column").h(height).mx(-SIDE_ROOM).child(rows)
+    };
     let add = button(p, "add-app", tr("Add app"), ButtonKind::Secondary, add_app);
     let footer = row()
         .key("footer")
@@ -380,5 +387,92 @@ mod tests {
         editor.reload(&guard);
         assert!(editor.open);
         assert_eq!(editor.rows.len(), 1);
+    }
+
+    #[test]
+    fn the_rows_keep_clear_above_their_remove_buttons() {
+        let mut ui = ui();
+        ui.settings.shortcuts.excluded_processes = vec!["cs2".to_string(), "eldenring".to_string()];
+        ui.shortcut_guard = GuardEditor::new(&ui.settings.shortcuts);
+        open(&mut ui);
+        let env = rune::Env::new(true, 1.0);
+        let text =
+            rune::text::TextSystem::new(rune_theme_opencode::FONTS, rune_theme_opencode::FAMILIES);
+        let mut rt = crate::rune_ui::offscreen::runtime(
+            ui,
+            super::super::super::view,
+            (980.0, 760.0),
+            env,
+            text,
+        );
+        rt.settle_all();
+        rt.frame(0.0);
+        let Ok(gpu) = rune::render::Gpu::try_new(rune::render::Gpu::instance(), None) else {
+            eprintln!("no gpu adapter; skipping the painted-line check");
+            return;
+        };
+        let (w, h) = (980_u32, 760_u32);
+        let pixels = crate::rune_ui::offscreen::draw(&gpu, &mut rt, w, h);
+        let path = std::path::PathBuf::from(
+            "C:/Users/pepsi/AppData/Local/Temp/opencode/excluded-sheet-1x.png",
+        );
+        rune::render::write_png(&path, w, h, &pixels).unwrap();
+        // A collapsed scroll bar used to paint a hairline just above the first
+        // row's remove button. The rows fit, so they need no scroll area.
+        let elements = rt.elements();
+        let removes: Vec<_> = elements
+            .iter()
+            .filter(|e| e.key.as_deref() == Some("remove"))
+            .collect();
+        assert_eq!(removes.len(), 2, "one remove button per row");
+        for remove in removes {
+            let r = remove.rect;
+            let mut run = 0;
+            let mut longest = 0;
+            for y in ((r[1] - 8.0) as u32)..(r[1] as u32) {
+                run = 0;
+                for x in (r[0] as u32)..((r[0] + r[2]) as u32) {
+                    let i = ((y * w + x) * 4) as usize;
+                    let l = 0.2126 * f32::from(pixels[i])
+                        + 0.7152 * f32::from(pixels[i + 1])
+                        + 0.0722 * f32::from(pixels[i + 2]);
+                    run = if l > 34.0 { run + 1 } else { 0 };
+                    longest = longest.max(run);
+                }
+            }
+            assert!(
+                longest < 4,
+                "a {longest}px line is painted above the remove button at {:?}",
+                r
+            );
+        }
+    }
+
+    #[test]
+    fn a_full_sheet_still_scrolls() {
+        let mut ui = ui();
+        ui.settings.shortcuts.excluded_processes =
+            (0..8).map(|index| format!("app{index}")).collect();
+        ui.shortcut_guard = GuardEditor::new(&ui.settings.shortcuts);
+        open(&mut ui);
+        let env = rune::Env::new(true, 1.0);
+        let text =
+            rune::text::TextSystem::new(rune_theme_opencode::FONTS, rune_theme_opencode::FAMILIES);
+        let rt = crate::rune_ui::offscreen::runtime(
+            ui,
+            super::super::super::view,
+            (980.0, 760.0),
+            env,
+            text,
+        );
+        let mut rt = rt;
+        rt.settle_all();
+        rt.frame(0.0);
+        assert!(
+            rt.elements()
+                .iter()
+                .any(|e| e.key.as_deref() == Some("app-scroll")),
+            "eight rows still get a scroll area"
+        );
     }
 }
