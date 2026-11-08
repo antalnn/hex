@@ -3,15 +3,15 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use arboard::SetExtWindows;
 use color_eyre::eyre::{Result, WrapErr, eyre};
 use windows_sys::Win32::System::DataExchange::{CountClipboardFormats, GetClipboardSequenceNumber};
 use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
     GetAsyncKeyState, GetKeyboardLayout, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT,
-    KEYEVENTF_KEYUP, MAPVK_VK_TO_VSC, MapVirtualKeyExW, SendInput, VK_CONTROL, VK_LWIN, VK_MENU,
-    VK_RWIN, VK_SHIFT, VK_V,
+    KEYEVENTF_KEYUP, MAPVK_VK_TO_VSC, MapVirtualKeyExW, SendInput, VK_C, VK_CONTROL, VK_LWIN,
+    VK_MENU, VK_RWIN, VK_SHIFT, VK_V,
 };
 use windows_sys::Win32::UI::WindowsAndMessaging::{GetForegroundWindow, GetWindowThreadProcessId};
 
@@ -41,7 +41,10 @@ fn paste_with_shift_into(stem: Option<&str>, terminal_paste: bool) -> bool {
     terminal_paste && !stem.is_some_and(|stem| PLAIN_PASTE_STEMS.contains(&stem))
 }
 
-enum ClipboardSnapshot {
+/// The clipboard's contents before a paste, so it can be put back afterwards.
+/// Also used by the rewrite hotkey's selection read, which copies to the
+/// clipboard and must not leave the person's own clipboard replaced.
+pub(crate) enum ClipboardSnapshot {
     Empty,
     Files(Vec<PathBuf>),
     Html { html: String, text: Option<String> },
@@ -50,7 +53,7 @@ enum ClipboardSnapshot {
 }
 
 impl ClipboardSnapshot {
-    fn read(clipboard: &mut arboard::Clipboard) -> Result<Self> {
+    pub(crate) fn read(clipboard: &mut arboard::Clipboard) -> Result<Self> {
         if let Ok(html) = clipboard.get().html() {
             return Ok(Self::Html {
                 html,
@@ -76,7 +79,7 @@ impl ClipboardSnapshot {
         ))
     }
 
-    fn restore(self, clipboard: &mut arboard::Clipboard) -> Result<()> {
+    pub(crate) fn restore(self, clipboard: &mut arboard::Clipboard) -> Result<()> {
         match self {
             Self::Empty => clipboard.clear()?,
             Self::Files(files) => clipboard.set().file_list(&files)?,
@@ -305,7 +308,71 @@ fn key_down(key: u16) -> bool {
 }
 
 fn send_paste_shortcut(shift: bool) -> Result<()> {
-    let inputs = control_chord(VK_V, shift, key_down(VK_CONTROL), foreground_scan_code);
+    send_chord(control_chord(
+        VK_V,
+        shift,
+        key_down(VK_CONTROL),
+        foreground_scan_code,
+    ))
+}
+
+/// Sends Ctrl+C and waits for the window to put the selected text on the
+/// clipboard, then puts the previous clipboard back. The rewrite hotkey uses
+/// it for an app with no UI Automation text pattern; the selection comes back
+/// through the clipboard because that is the only way such an app will hand it
+/// over.
+pub(crate) fn read_copied_selection(wait: Duration, poll: Duration) -> Result<String> {
+    let mut clipboard =
+        arboard::Clipboard::new().wrap_err("could not open the Windows clipboard")?;
+    let original_sequence = clipboard_sequence();
+    let snapshot = match ClipboardSnapshot::read(&mut clipboard) {
+        Ok(snapshot) => Some(snapshot),
+        Err(error) => {
+            tracing::warn!(%error, "copying the selection without restoring the previous Windows clipboard");
+            None
+        }
+    };
+    wait_for_conflicting_modifiers();
+    send_chord(control_chord(
+        VK_C,
+        false,
+        key_down(VK_CONTROL),
+        foreground_scan_code,
+    ))?;
+
+    let deadline = Instant::now() + wait;
+    let mut copied = String::new();
+    let mut copied_sequence = original_sequence;
+    loop {
+        let sequence = clipboard_sequence();
+        if sequence != original_sequence
+            && let Ok(text) = clipboard.get_text()
+        {
+            copied_sequence = sequence;
+            copied = text;
+            break;
+        }
+        if Instant::now() >= deadline {
+            break;
+        }
+        thread::sleep(poll);
+    }
+
+    // Only replace a clipboard that still holds what this copy put there: if
+    // the window never copied, it was never touched, and if something else
+    // wrote since, that is the person's newer clipboard.
+    if snapshot.is_some() && clipboard_sequence() == copied_sequence {
+        if let Ok(mut clipboard) = arboard::Clipboard::new()
+            && let Some(snapshot) = snapshot
+            && let Err(error) = snapshot.restore(&mut clipboard)
+        {
+            tracing::warn!(%error, "could not restore the previous Windows clipboard");
+        }
+    }
+    Ok(copied)
+}
+
+fn send_chord(inputs: Vec<INPUT>) -> Result<()> {
     let sent = send_inputs(&inputs);
     if sent != inputs.len() as u32 {
         // Release only what this chord pressed; never a key the user holds.
@@ -316,7 +383,7 @@ fn send_paste_shortcut(shift: bool) -> Result<()> {
             .collect::<Vec<_>>();
         send_inputs(&cleanup);
         return Err(eyre!(
-            "Windows accepted only {sent} of {} synthetic paste events; an elevated target window may reject input",
+            "Windows accepted only {sent} of {} synthetic key events; an elevated target window may reject input",
             inputs.len()
         ));
     }
