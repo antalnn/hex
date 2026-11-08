@@ -35,6 +35,7 @@ mod list_detail;
 mod lists;
 mod live_notes;
 pub(crate) mod live_text;
+mod local_models;
 pub(crate) mod meeting_capsules;
 mod meetings;
 pub(crate) use self::meetings::meeting_import_failed;
@@ -676,6 +677,8 @@ pub(crate) struct Ui {
     vocabulary: vocabulary::VocabularyEditor,
     /// General's Excluded apps sheet: the apps where no shortcut fires.
     shortcut_guard: shortcut::guard::GuardEditor,
+    /// The Models card's file sheet for llama.cpp and its GGUF.
+    local_models: local_models::LocalModels,
     /// The Models pane's remote addresses and Rewrite prompts, typed.
     model_sources: ai_models::ModelSources,
     /// The model the service was last seen preparing, and since when.
@@ -801,6 +804,7 @@ impl Ui {
             capture: Capture::Idle,
             vocabulary,
             shortcut_guard,
+            local_models: local_models::LocalModels::default(),
             model_sources,
             preparing: None,
             draft_since: None,
@@ -1126,6 +1130,7 @@ impl Ui {
         sound_sets::close(self);
         vocabulary::close(self);
         shortcut::guard::close(self);
+        local_models::close(self);
         history::close_stats(self);
     }
 
@@ -1190,6 +1195,7 @@ fn on_key(ui: &mut Ui, event: &rune::KeyEvent, tx: &mut Tx) -> bool {
         && !ui.sound_sets.open
         && !ui.vocabulary.open
         && !ui.shortcut_guard.open
+        && !ui.local_models.open
         && !ui.history.stats_open
         && ui.tour.is_none()
     {
@@ -1214,6 +1220,9 @@ fn on_key(ui: &mut Ui, event: &rune::KeyEvent, tx: &mut Tx) -> bool {
         true
     } else if ui.shortcut_guard.open {
         shortcut::guard::close(ui);
+        true
+    } else if ui.local_models.open {
+        local_models::close(ui);
         true
     } else if ui.picker.open {
         picker::close(ui);
@@ -1311,6 +1320,7 @@ fn poll(ui: &mut Ui, clock: f64, tx: &mut Tx) -> bool {
     changed |= ui.modes.poll(ui.live());
     changed |= modes::poll_chooser(ui);
     changed |= model_import::poll(ui);
+    changed |= local_models::poll(ui);
     changed |= meetings::poll_import(ui);
     changed |= found::poll(ui);
     let login_unknown = ui.platform.login_item.is_none();
@@ -1473,6 +1483,9 @@ fn view(ui: &Ui, cx: &mut Cx<Ui>) -> El {
         layer.extend(modal);
     }
     if let Some(modal) = shortcut::guard::modal(ui, p) {
+        layer.extend(modal);
+    }
+    if let Some(modal) = local_models::modal(ui, p) {
         layer.extend(modal);
     }
     if let Some(modal) = ai_models::prompts_modal(ui, p) {

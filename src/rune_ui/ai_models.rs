@@ -215,22 +215,7 @@ pub(super) fn pane(ui: &Ui, p: Paint, layer: &mut Vec<El>) -> (Vec<El>, El) {
 /// The llama.cpp server Hex owns, with its state and a start or stop button.
 fn local_model_card(ui: &Ui, p: Paint) -> El {
     let snapshot = ui.view.as_ref().and_then(|view| view.local_model.as_ref());
-    let (title, start) = match snapshot.map(|snapshot| snapshot.state) {
-        Some(crate::local_model::State::Ready) | Some(crate::local_model::State::External) => {
-            (tr("Local model server running").to_string(), false)
-        }
-        Some(crate::local_model::State::Starting) => {
-            (tr("Local model server starting").to_string(), false)
-        }
-        Some(crate::local_model::State::Failed) => {
-            (tr("Local model server failed").to_string(), true)
-        }
-        Some(crate::local_model::State::Missing) => (
-            tr("llama.cpp is not installed, so the local model is off").to_string(),
-            true,
-        ),
-        _ => (tr("Local model server off").to_string(), true),
-    };
+    let (title, start) = local_model_copy(snapshot.map(|snapshot| snapshot.state));
     let detail = format!("127.0.0.1:{}", ui.settings.llm.port);
     let control = button(
         p,
@@ -257,14 +242,49 @@ fn local_model_card(ui: &Ui, p: Paint) -> El {
         p,
         "local-model-section",
         tr("Local model"),
-        vec![described_row(
-            p,
-            "local-model-state",
-            &title,
-            Some((detail, p.muted())),
-            control,
-        )],
+        vec![
+            described_row(
+                p,
+                "local-model-state",
+                &title,
+                Some((detail, p.muted())),
+                control,
+            ),
+            described_row(
+                p,
+                "local-model-files",
+                tr("Local model files"),
+                Some((
+                    tr("llama.cpp and the GGUF the server loads").to_string(),
+                    p.muted(),
+                )),
+                super::controls::value_button(
+                    p,
+                    "local-model-files-control",
+                    tr("Local model files"),
+                    tr("Edit"),
+                    &rune_theme_opencode::icons::CHEVRON_RIGHT,
+                    super::local_models::open,
+                ),
+            ),
+        ],
     )
+}
+
+/// The card's title and whether it offers Start, for each server state.
+fn local_model_copy(state: Option<crate::local_model::State>) -> (&'static str, bool) {
+    match state {
+        Some(crate::local_model::State::Ready) | Some(crate::local_model::State::External) => {
+            (tr("Local model server running"), false)
+        }
+        Some(crate::local_model::State::Starting) => (tr("Local model server starting"), false),
+        Some(crate::local_model::State::Failed) => (tr("Local model server failed"), true),
+        Some(crate::local_model::State::Missing) => (
+            tr("llama.cpp is not installed, so the local model is off"),
+            true,
+        ),
+        _ => (tr("Local model server off"), true),
+    }
 }
 
 fn dictation_card(ui: &Ui, p: Paint, layer: &mut Vec<El>) -> El {
@@ -621,6 +641,26 @@ mod tests {
         ui.update(|settings| settings.rewrite.model.source = AiSource::Local);
         assert_eq!(ui.settings.dictation_rewrite.source, AiSource::Remote);
         assert_eq!(ui.settings.rewrite.model.source, AiSource::Local);
+    }
+
+    #[test]
+    fn the_local_card_names_a_missing_llama_cpp() {
+        assert_eq!(
+            local_model_copy(Some(crate::local_model::State::Missing)),
+            (
+                "llama.cpp is not installed, so the local model is off",
+                true
+            )
+        );
+        assert_eq!(
+            local_model_copy(Some(crate::local_model::State::Ready)),
+            ("Local model server running", false)
+        );
+        assert_eq!(
+            local_model_copy(Some(crate::local_model::State::Failed)),
+            ("Local model server failed", true)
+        );
+        assert_eq!(local_model_copy(None), ("Local model server off", true));
     }
 
     #[test]
