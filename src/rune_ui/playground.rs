@@ -142,6 +142,8 @@ const PATHS: &[(&str, &str)] = &[
     ("shortcut-mode-motion", "Window/Shortcut mode/Looping"),
     ("sound-sets", "Window/Sounds/Sheet"),
     ("sound-sets-playing", "Window/Sounds/Playing"),
+    ("sound-sets-hud-recording", "Window/Sounds/HUD recording"),
+    ("sound-sets-hud-processing", "Window/Sounds/HUD processing"),
     ("output", "Window/Output/Steps"),
     ("output-open", "Window/Output/App rule open"),
     ("output-trust", "Window/Output/Trust prompt"),
