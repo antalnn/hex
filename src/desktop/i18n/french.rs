@@ -1271,6 +1271,7 @@ const TRANSLATIONS: &[(&str, &str)] = &[
     ("Rewrite snippet match", "Correspondance d’extrait pour la réécriture"),
     ("Let the model match a spoken rewrite instruction to one of your saved snippets", "Laisse le modèle associer une instruction de réécriture dictée à l’un de tes extraits enregistrés"),
     ("Dictate shortcut", "Raccourci de dictée"),
+    ("Keys", "Touches"),
     ("Rewrite shortcut", "Raccourci de réécriture"),
     ("OpenCode in WSL", "OpenCode dans WSL"),
     ("Use an OpenCode service running in your default WSL distribution for Modes rewriting and the Modes model picker. Looking for it can start WSL.", "Utilise un service OpenCode exécuté dans votre distribution WSL par défaut pour la réécriture des modes et le sélecteur de modèles des modes. Sa recherche peut démarrer WSL."),

@@ -11,9 +11,9 @@ use rune::{Color, El, Tx, col, el, row, text};
 use rune_kit::{Placement, Select, SelectAppearance};
 
 use super::controls::{
-    self, ButtonKind, CardRow, DEVICE_SELECT_WIDTH, KeySize, METRICS, Paint, button, card, folding,
+    self, ButtonKind, CardRow, DEVICE_SELECT_WIDTH, KeySize, METRICS, Paint, button, folding,
     icon_button, icon_described_row, icon_row, icon_toggle_row, key_tray, keycap, note,
-    pressable_row, row_switch, value_button, value_font,
+    pressable_row, row_switch, section, value_button, value_font,
 };
 use super::icons::*;
 use super::lists::{PermissionControl, permission_control, slider};
@@ -36,14 +36,16 @@ pub(super) use self::shortcuts::shortcut_rows;
 // ---------------------------------------------------------------------------
 // The basics
 
-/// Air between the General card's groups of rows: the microphone, the keys,
-/// the shortcut mode, Vocabulary, and Launch at login.
-const GROUP_GAP: f32 = 10.0;
+/// The pane's top group, one card per section: the hardware, the keys, the
+/// mode they share, Vocabulary, and Launch at login. Each card opens with a
+/// section heading, as the Models pane's do; an empty section (a search with
+/// no match) draws nothing.
+pub(super) fn basics(ui: &Ui, p: Paint, layer: &mut Vec<El>, query: &str) -> Vec<El> {
+    let mut sections = Vec::new();
 
-pub(super) fn basics(ui: &Ui, p: Paint, layer: &mut Vec<El>, query: &str) -> Option<El> {
-    let mut rows = search::Rows::new(query);
     // The hardware block sits directly under the status card: the input in
     // use, and whether it closes between dictations.
+    let mut rows = search::Rows::new(query);
     rows.extend(tr("Microphone"), microphone_rows(ui, p, layer));
     let (description, row) = microphone_release_row(ui, p);
     rows.push_described(
@@ -51,12 +53,20 @@ pub(super) fn basics(ui: &Ui, p: Paint, layer: &mut Vec<El>, query: &str) -> Opt
         Some(description),
         row,
     );
+    if !rows.is_empty() {
+        sections.push(section(
+            p,
+            "basics-microphone",
+            tr("Microphone"),
+            rows.into_rows(),
+        ));
+    }
+
     if ui.records_shortcuts() {
-        rows.space("general-space-keys", GROUP_GAP);
-        // The keys block: the dictation key, the rewrite key (Windows), the
-        // platform's optional keys, then the mode they share and its cancel
-        // key.
-        rows.extend(
+        // The keys block: the dictation key, the rewrite key (Windows), and
+        // the platform's optional keys.
+        let mut keys = search::Rows::new(query);
+        keys.extend(
             tr("Dictate shortcut"),
             shortcut_rows(
                 ui,
@@ -71,12 +81,12 @@ pub(super) fn basics(ui: &Ui, p: Paint, layer: &mut Vec<El>, query: &str) -> Opt
         // Rewrite the selected text (Windows): records an instruction, then
         // replaces the selection with the remote model's result.
         #[cfg(target_os = "windows")]
-        search::rewrite_rows(&mut rows, ui, p);
+        search::rewrite_rows(&mut keys, ui, p);
         // Labs › Second dictation shortcut (macOS): another key that
         // dictates like the one above, such as on an external keyboard.
         #[cfg(target_os = "macos")]
         if crate::labs::Feature::SecondDictationShortcut.on(&ui.settings) {
-            rows.extend_described(
+            keys.extend_described(
                 tr("Second dictation shortcut"),
                 Some(tr("Dictates like the shortcut above")),
                 shortcut_rows(
@@ -94,7 +104,7 @@ pub(super) fn basics(ui: &Ui, p: Paint, layer: &mut Vec<El>, query: &str) -> Opt
         // dictates like the one above and always pastes with Ctrl+Shift+V.
         #[cfg(any(target_os = "windows", target_os = "linux"))]
         if crate::labs::Feature::TerminalPasteShortcut.on(&ui.settings) {
-            rows.extend_described(
+            keys.extend_described(
                 tr("Terminal paste shortcut"),
                 Some(tr("Dictates like the shortcut above")),
                 shortcut_rows(
@@ -112,7 +122,7 @@ pub(super) fn basics(ui: &Ui, p: Paint, layer: &mut Vec<El>, query: &str) -> Opt
         // lists both and a lone F9 is otherwise easy to miss (#723).
         #[cfg(all(target_os = "linux", hex_capture))]
         if ui.platform.scrawl.is_some() && ui.settings.capture.enabled {
-            rows.extend(
+            keys.extend(
                 tr("Annotate"),
                 shortcut_rows(
                     ui,
@@ -125,24 +135,38 @@ pub(super) fn basics(ui: &Ui, p: Paint, layer: &mut Vec<El>, query: &str) -> Opt
                 ),
             );
         }
-        rows.space("general-space-shortcut-mode", GROUP_GAP);
-        rows.push(tr("Shortcut mode"), super::shortcut::mode::row(ui, p));
+        if !keys.is_empty() {
+            sections.push(section(p, "basics-keys", tr("Keys"), keys.into_rows()));
+        }
+
+        // The mode the keys share, and its cancel key.
+        let mut mode = search::Rows::new(query);
+        mode.push(tr("Shortcut mode"), super::shortcut::mode::row(ui, p));
         // Toggle has a cancel shortcut; Hold has none.
         if ui.settings.shortcut_mode == crate::dictation::ShortcutMode::Toggle {
             let (description, cancel) = search::cancel_rows(ui, p);
-            rows.extend_described(tr("Cancel"), Some(description), cancel);
+            mode.extend_described(tr("Cancel"), Some(description), cancel);
         }
         if let Some(row) = configure_shortcuts_row(ui, p) {
-            rows.push_described(
+            mode.push_described(
                 tr("Desktop shortcuts"),
                 Some(tr("Change the keys your desktop gave Hex")),
                 row,
             );
         }
-        rows.space("general-space-vocabulary", GROUP_GAP);
+        if !mode.is_empty() {
+            sections.push(section(
+                p,
+                "basics-shortcut-mode",
+                tr("Shortcut mode"),
+                mode.into_rows(),
+            ));
+        }
     }
+
+    let mut vocabulary = search::Rows::new(query);
     let vocabulary_note = super::vocabulary::unused_note(ui);
-    rows.push_described(
+    vocabulary.push_described(
         tr("Vocabulary"),
         vocabulary_note.as_deref(),
         icon_row(
@@ -161,12 +185,27 @@ pub(super) fn basics(ui: &Ui, p: Paint, layer: &mut Vec<El>, query: &str) -> Opt
             ),
         ),
     );
-    let launch_at_login = launch_at_login_rows(ui, p);
-    if !launch_at_login.is_empty() {
-        rows.space("general-space-launch", GROUP_GAP);
-        rows.extend(tr("Launch at login"), launch_at_login);
+    if !vocabulary.is_empty() {
+        sections.push(section(
+            p,
+            "basics-vocabulary",
+            tr("Vocabulary"),
+            vocabulary.into_rows(),
+        ));
     }
-    (!rows.is_empty()).then(|| card(p, "basics", rows.into_rows()))
+
+    let mut launch = search::Rows::new(query);
+    launch.extend(tr("Launch at login"), launch_at_login_rows(ui, p));
+    if !launch.is_empty() {
+        sections.push(section(
+            p,
+            "basics-launch",
+            tr("Launch at login"),
+            launch.into_rows(),
+        ));
+    }
+
+    sections
 }
 
 /// The selected speech model's download, while it is not installed, so
