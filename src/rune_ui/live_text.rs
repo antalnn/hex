@@ -16,8 +16,8 @@ use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 use rune::{
-    Anim, Cx, El, OverlayHandle, OverlayOptions, OverlayPlacement, OverlaySpec, ScreenEdge, Spring,
-    row, text,
+    Anim, Cx, El, Icon, OverlayHandle, OverlayOptions, OverlayPlacement, OverlaySpec, ScreenEdge,
+    Spring, row, text,
 };
 
 use super::controls::Paint;
@@ -33,15 +33,23 @@ const PAD: f32 = (SIZE.1 - PLATE_H) / 2.0;
 pub(crate) const PLATE_CENTER: f32 = SIZE.1 / 2.0 - PAD;
 /// How long the unified failure pill shows its exclamation alone before it
 /// expands to the message: 0.75 to 1 second, per the indicator's goal.
-pub(crate) const FAILURE_MARK_VISIBLE: Duration = Duration::from_millis(875);
+pub(crate) const FAILURE_MARK_VISIBLE: Duration = Duration::from_millis(750);
 /// How long the expanded pill holds the error text before it fades: 2.5 to
 /// 3 seconds, and never longer.
-pub(crate) const FAILURE_TEXT_VISIBLE: Duration = Duration::from_millis(2750);
+pub(crate) const FAILURE_TEXT_VISIBLE: Duration = Duration::from_millis(2500);
 /// The unified failure pill's height.
 const FAILURE_PLATE_H: f32 = 36.0;
 /// The pill's width while it shows the exclamation alone: the HUD's own
 /// processing plate, so the pill appears where the plate was.
 const FAILURE_MARK_W: f32 = 76.0;
+/// The HUD's failed mark, drawn on a 24 point grid: the plate's danger disc
+/// with the exclamation cut out of it. The disc is 20 pt across and the mark
+/// 13 pt tall when the icon is drawn at 24 pt.
+static FAILURE_MARK_ICON: Icon = Icon {
+    name: "hex-failure-mark",
+    view: 24.0,
+    body: "<path fill-rule=\"evenodd\" d=\"M2 12a10 10 0 1 0 20 0a10 10 0 1 0-20 0ZM11.15 6.45a0.85 0.85 0 0 1 1.7 0v6.3a0.85 0.85 0 0 1-1.7 0ZM10.4 17a1.6 1.6 0 1 0 3.2 0a1.6 1.6 0 1 0-3.2 0Z\"/>",
+};
 
 /// The two looks of the unified failure pill.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -548,18 +556,14 @@ fn plate(p: &Paint, line: El) -> El {
 /// The spring the unified failure pill expands on.
 const EXPAND: Spring = Spring::new(0.28, 0.0);
 
-/// The unified failure pill: the exclamation alone, then the message beside
-/// it as the pill widens. The exclamation is the HUD's failed mark, drawn in
-/// the plate's own colours.
+/// The unified failure pill: the HUD's original mark alone, then the message
+/// as the pill widens. The mark leaves with the phase change, so the expanded
+/// pill holds the words alone.
 fn failure_pill(p: &Paint, failure: &Failure) -> El {
     let c = &p.k.c;
-    let mut mark_style = p.k.ty.ui_medium;
-    mark_style.size = 16.0;
-    mark_style.line_height = 18.0;
     let mark = || {
-        text("!")
+        rune::icon(&FAILURE_MARK_ICON, 24.0)
             .key("failure-mark")
-            .font(mark_style)
             .color(p.danger())
     };
     let pill = row()
@@ -579,9 +583,7 @@ fn failure_pill(p: &Paint, failure: &Failure) -> El {
                 .truncate()
                 .font(p.k.ty.ui)
                 .color(p.danger());
-            pill.max_w(SIZE.0 - 8.0)
-                .child(mark().mr(8.0))
-                .child(message)
+            pill.max_w(SIZE.0 - 8.0).child(message)
         }
     }
 }
@@ -855,8 +857,26 @@ mod tests {
         );
         assert!(rect(&rt, "failure-pill").is_some());
         assert!(rect(&rt, "failure").is_some());
+        assert!(
+            rect(&rt, "failure-mark").is_none(),
+            "the expanded pill holds the message alone"
+        );
         assert!(rect(&rt, "stable").is_none());
         assert!(rect(&rt, "tentative").is_none());
+    }
+
+    #[test]
+    fn the_failure_mark_is_the_disc_with_the_exclamation_cut_out() {
+        let px = 64;
+        let coverage = rune::text::icon_coverage(&FAILURE_MARK_ICON, px);
+        let at = |x: usize, y: usize| coverage[y * px as usize + x];
+        // Inside the disc, left of the bar: painted.
+        assert!(at(8, 32) > 200, "the disc paints: {}", at(8, 32));
+        // The bar and the dot are holes in it.
+        assert!(at(32, 22) < 10, "the bar is cut out: {}", at(32, 22));
+        assert!(at(32, 46) < 10, "the dot is cut out: {}", at(32, 46));
+        // Just beside the bar the disc is solid again.
+        assert!(at(38, 22) > 200, "the disc around the bar: {}", at(38, 22));
     }
 
     #[test]
@@ -900,6 +920,10 @@ mod tests {
             "the pill expands between {FAILURE_MARK_W} and {width}: {between}"
         );
         assert!(rect(&growing, "failure").is_some());
+        assert!(
+            rect(&growing, "failure-mark").is_none(),
+            "the mark leaves as the pill expands"
+        );
         assert!(
             width > FAILURE_MARK_W + 20.0,
             "the expanded pill fits the message: {width}"
