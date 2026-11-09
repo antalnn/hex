@@ -42,13 +42,13 @@ const FAILURE_PLATE_H: f32 = 36.0;
 /// The pill's width while it shows the exclamation alone: the HUD's own
 /// processing plate, so the pill appears where the plate was.
 const FAILURE_MARK_W: f32 = 76.0;
-/// The HUD's failed mark, drawn on a 24 point grid: the plate's danger disc
-/// with the exclamation cut out of it. The disc is 20 pt across and the mark
+/// The HUD's failed mark, drawn on a 24 point grid: the plate's soft danger
+/// disc behind a solid exclamation. The disc is 20 pt across and the mark
 /// 13 pt tall when the icon is drawn at 24 pt.
 static FAILURE_MARK_ICON: Icon = Icon {
     name: "hex-failure-mark",
     view: 24.0,
-    body: "<path fill-rule=\"evenodd\" d=\"M2 12a10 10 0 1 0 20 0a10 10 0 1 0-20 0ZM11.15 6.45a0.85 0.85 0 0 1 1.7 0v6.3a0.85 0.85 0 0 1-1.7 0ZM10.4 17a1.6 1.6 0 1 0 3.2 0a1.6 1.6 0 1 0-3.2 0Z\"/>",
+    body: "<circle cx=\"12\" cy=\"12\" r=\"10\" fill-opacity=\"0.16\"/><path d=\"M10.605 6.885a1.395 1.395 0 0 1 2.79 0v6.355a1.395 1.395 0 0 1-2.79 0ZM10.45 16.805a1.55 1.55 0 1 0 3.1 0a1.55 1.55 0 1 0-3.1 0Z\"/>",
 };
 
 /// The two looks of the unified failure pill.
@@ -866,17 +866,17 @@ mod tests {
     }
 
     #[test]
-    fn the_failure_mark_is_the_disc_with_the_exclamation_cut_out() {
+    fn the_failure_mark_is_a_soft_disc_behind_the_exclamation() {
         let px = 64;
         let coverage = rune::text::icon_coverage(&FAILURE_MARK_ICON, px);
         let at = |x: usize, y: usize| coverage[y * px as usize + x];
-        // Inside the disc, left of the bar: painted.
-        assert!(at(8, 32) > 200, "the disc paints: {}", at(8, 32));
-        // The bar and the dot are holes in it.
-        assert!(at(32, 22) < 10, "the bar is cut out: {}", at(32, 22));
-        assert!(at(32, 46) < 10, "the dot is cut out: {}", at(32, 46));
-        // Just beside the bar the disc is solid again.
-        assert!(at(38, 22) > 200, "the disc around the bar: {}", at(38, 22));
+        // The disc is soft: 16% of the danger colour, inside but beside the bar.
+        let disc = at(8, 32);
+        assert!(disc > 30 && disc < 70, "the disc is soft: {disc}");
+        // The bar and the dot are solid on top of it.
+        assert!(at(32, 22) > 245, "the bar is solid: {}", at(32, 22));
+        assert!(at(32, 46) > 245, "the dot is solid: {}", at(32, 46));
+        assert!(at(38, 22) < 70, "the disc around the bar: {}", at(38, 22));
     }
 
     #[test]
