@@ -662,8 +662,16 @@ mod tests {
         assert_eq!(frame.dots.len(), frame.columns * frame.rows);
         // The bars carry the voice into the plate; quiet syllables sit a
         // little lower, so this checks the loud ones light it, not a bound
-        // on the shaping.
-        assert!(frame.dots.iter().any(|[power, _]| *power > 20_000));
+        // on the shaping. The floor is coarse on purpose: the heard curve is
+        // steep now, so a naturally spoken level lands near a fifth of full
+        // scale rather than over a third.
+        let loudest = frame
+            .dots
+            .iter()
+            .map(|[power, _]| *power)
+            .max()
+            .unwrap_or(0);
+        assert!(loudest > 8_000, "loudest bar {loudest}");
         assert!(frame.pose.opacity > 0.98 && frame.pose.cool < 0.01);
 
         // A fast transcription: the job finishes as soon as it is submitted.
