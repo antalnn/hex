@@ -445,17 +445,21 @@ const AUTO_MIN_SPAN: f32 = 16.0;
 const AUTO_RANGE: f32 = 24.0;
 /// How far above the room the level starts.
 const AUTO_ROOM_MARGIN: f32 = 5.0;
+/// How far above the room a frame must sit to count as the speaker's voice
+/// rather than a pause. The peak may only ease down on a voice frame, so a
+/// pause can no longer walk the window down to its floor between phrases.
+const AUTO_VOICE_MARGIN: f32 = 10.0;
 const AUTO_ATTACK: f32 = 0.04;
 const ROOM_FALL: f32 = 0.3;
 const ROOM_RISE: f32 = 6.0;
 
 /// A slow auto level: the loudest the speaker has recently been reads as
 /// full and the room as silent, so a quiet microphone and a loud one move
-/// the scope alike. The peak rises within 40 ms and falls back over
-/// `release`; the room level falls to any quieter moment in 0.3 s and
-/// creeps up over 6 s, so speech never becomes the room. The peak never
-/// sits less than 16 dB above the room or `noise_floor`, so silence is
-/// never boosted to full.
+/// the scope alike. The peak rises within 40 ms and, on a voice frame only,
+/// eases down over `release` toward the level being spoken; the room level
+/// falls to any quieter moment in 0.3 s and creeps up over 6 s, so speech
+/// never becomes the room. The peak never sits less than 16 dB above the
+/// room or `noise_floor`, so silence is never boosted to full.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct AutoLevel {
     peak: f32,
@@ -480,13 +484,21 @@ impl AutoLevel {
         let follow = |value: &mut f32, target: f32, time: f32| {
             *value += (target - *value) * (1.0 - (-h / time.max(1e-3)).exp());
         };
+        // The room is what the silences sound like. Speech must not drag it
+        // up: a held room keeps the window the same width through a phrase.
+        let floor_frame = db > self.room.max(noise_floor) + AUTO_VOICE_MARGIN;
         let room_time = if db < self.room { ROOM_FALL } else { ROOM_RISE };
-        follow(&mut self.room, db, room_time);
+        let room_target = if floor_frame { self.room } else { db };
+        follow(&mut self.room, room_target, room_time);
         let lowest = self.room.max(noise_floor) + AUTO_MIN_SPAN;
         if db > self.peak {
             follow(&mut self.peak, db, AUTO_ATTACK);
-        } else {
-            follow(&mut self.peak, lowest, release);
+        } else if floor_frame {
+            // A voice frame, not the room: ease the peak down toward the
+            // level actually being spoken, never toward the room's floor.
+            // Silence leaves the peak alone, so a pause between phrases no
+            // longer narrows the window and pins the next phrase.
+            follow(&mut self.peak, db.max(lowest), release);
         }
         self.peak = self.peak.max(lowest);
         self.level(db, noise_floor)

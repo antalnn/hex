@@ -393,12 +393,14 @@ pub(super) const SCENES: &[Scene] = &[
         );
     }),
     // A fixed, mid voice, so the render keeps the height variety that the
-    // auto level flattens at full voice.
+    // auto level flattens at full voice. The demo voice is quiet against the
+    // fixed window, and the bars' steeper heard curve would leave it as
+    // dots, so the fixture lifts the gain to land it mid-plate.
     ("sound-sets-hud-voice", |ui| {
         *ui = mac_fixture();
         let mut tuning = ui.platform.hud.tuning;
         tuning.auto_level = false;
-        tuning.gain = 1.0;
+        tuning.gain = 3.0;
         sound_sets::fixture_tuning(
             ui,
             Some((

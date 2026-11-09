@@ -917,35 +917,34 @@ impl Scope {
             }
             self.bar_age += hb;
             let level = self.voices[0].level.clamp(0.0, 1.0);
-            // Ordinary speech reaches most of the plate, so the bars read at
-            // a normal voice as well as a loud one.
-            let heard = level.powf(0.7);
+            // Reaching near-full length needs near-full volume: the steeper
+            // curve leaves ordinary speech in the middle of the plate with
+            // room to rise, instead of lifting it to the top.
+            let heard = level.powf(1.5);
             let glow = self.traces[0].glow.clamp(0.0, 1.0);
-            // The bars calm only once the voice is near its own peak: a loud
-            // syllable flattens the wave instead of shaking it, while normal
-            // speech keeps the motion that makes the pill feel alive.
-            let calm = smoothstep(0.6, 0.95, level);
             // The bars rise into the recording instead of appearing at the
             // voice's first level.
             let birth = smoothstep(0.0, 0.16, self.bar_age);
             let count = bars as f32;
             for (index, dot) in self.dots.iter_mut().take(bars).enumerate() {
-                let phase = self.time * 5.5 - index as f32 * 0.65;
-                let wave = (0.5 + 0.5 * phase.sin()).powf(0.7);
-                let shape = 0.66 + 0.34 * wave;
-                let shape = shape + (1.0 - shape) * 0.8 * calm;
-                // A gentle arch gives the row a profile; it flattens at full
-                // level with the wave, so the pill stays calm at its top.
+                // Two slow sines at different rates and offsets: every bar
+                // moves at its own pace, so the row never shares one peak or
+                // sits still at the top.
+                let slow = self.time * 2.6 - index as f32 * 0.65;
+                let drift = self.time * (1.1 + 0.06 * index as f32) + index as f32 * 1.07;
+                let wave = 0.5 + 0.25 * slow.sin() + 0.25 * drift.sin();
+                let shape = 0.5 + 0.4 * wave;
+                // A gentle arch gives the row a profile; it stays because
+                // the wave already keeps the row from pinning.
                 let arch = (PI * (index as f32 + 0.5) / count).sin();
                 let profile = 0.9 + 0.14 * arch;
-                let profile = 1.0 + (profile - 1.0) * (1.0 - calm);
                 let target = (heard * shape * profile * birth).clamp(0.0, 1.0);
                 // Each bar follows on its own time constant, so a syllable
                 // glides instead of flickering up and down at frame rate.
                 let follow = if target > self.bar_levels[index] {
-                    0.075
+                    0.09
                 } else {
-                    0.16
+                    0.22
                 };
                 let value = &mut self.bar_levels[index];
                 *value += (target - *value) * (1.0 - (-hb / follow).exp());
@@ -1387,7 +1386,7 @@ mod tests {
     }
 
     #[test]
-    fn a_full_voice_flattens_the_bars_instead_of_shaking_them() {
+    fn a_full_voice_keeps_the_bars_varied_and_unpinned() {
         let bars_tuning = |auto_level| Tuning {
             auto_level,
             look: Look::Bars,
@@ -1402,20 +1401,136 @@ mod tests {
         };
         let mut loud = Scope::new(bars_tuning(false));
         run(&mut loud, 1.0, recording(1.0));
-        let mut widest = 0.0_f32;
+        let bars = loud.tuning().bars as usize;
+        let (mut lowest, mut highest, mut widest) = (1.0_f32, 0.0_f32, 0.0_f32);
         for _ in 0..180 {
             loud.advance(1.0 / 60.0, recording(1.0));
+            for dot in &loud.dots()[..bars] {
+                lowest = lowest.min(dot[0]);
+                highest = highest.max(dot[0]);
+            }
             widest = widest.max(spread_of(&loud));
         }
-        assert!(widest < 0.08, "full voice bar spread {widest}");
-        // A mid voice keeps its wave.
+        assert!(widest > 0.04, "full voice keeps a wave: {widest}");
+        assert!(highest < 0.99, "no bar pins at the top: {highest}");
+        assert!(lowest > 0.3, "a full voice still reads high: {lowest}");
+        // A mid voice keeps its own visible variety.
         let mut mid = Scope::new(bars_tuning(false));
         let mut alive = 0.0_f32;
         for _ in 0..90 {
             mid.advance(1.0 / 60.0, recording(0.55));
             alive = alive.max(spread_of(&mid));
         }
-        assert!(alive > 0.06, "mid voice bar spread {alive}");
+        assert!(alive > 0.04, "mid voice bar spread {alive}");
+    }
+
+    #[test]
+    fn the_same_voice_maps_within_a_band_across_a_pause() {
+        let tuning = Tuning {
+            look: Look::Bars,
+            ..Tuning::default()
+        };
+        let frame = |db: f32| Frame {
+            stage: Stage::Recording,
+            visible: true,
+            loudness: db,
+            reduce_motion: false,
+        };
+        let mut scope = Scope::new(tuning);
+        run(&mut scope, 2.0, frame(-34.0));
+        let first = scope.level();
+        run(&mut scope, 4.0, frame(-68.0));
+        let (paused_peak, _) = scope.auto.levels();
+        run(&mut scope, 2.0, frame(-34.0));
+        let second = scope.level();
+        assert!(
+            (second - first).abs() < 0.12,
+            "the same voice maps like itself: {first} then {second}"
+        );
+        let (resumed_peak, _) = scope.auto.levels();
+        assert!(
+            resumed_peak >= paused_peak - 1.0,
+            "a pause does not pull the peak to the floor: {paused_peak} then {resumed_peak}"
+        );
+    }
+
+    #[test]
+    fn two_captures_at_one_loudness_keep_the_bars_unpinned() {
+        let tuning = Tuning {
+            look: Look::Bars,
+            ..Tuning::default()
+        };
+        let frame = |db: f32| Frame {
+            stage: Stage::Recording,
+            visible: true,
+            loudness: db,
+            reduce_motion: false,
+        };
+        let high = |scope: &Scope| {
+            let bars = scope.tuning().bars as usize;
+            scope.dots()[..bars]
+                .iter()
+                .map(|dot| dot[0])
+                .fold(0.0, f32::max)
+        };
+        let mut scope = Scope::new(tuning);
+        run(&mut scope, 2.0, frame(-34.0));
+        let first = high(&scope);
+        scope.restart(false);
+        run(&mut scope, 2.0, frame(-34.0));
+        let second = high(&scope);
+        assert!(
+            first < 0.99 && second < 0.99,
+            "not pinned: {first} {second}"
+        );
+        assert!(
+            (first - second).abs() < 0.12,
+            "the second capture reads like the first: {first} then {second}"
+        );
+    }
+
+    #[test]
+    #[ignore = "C1 measurement; run with --ignored --nocapture"]
+    fn measure_the_auto_level_drift_across_a_pause() {
+        let tuning = Tuning {
+            look: Look::Bars,
+            ..Tuning::default()
+        };
+        let frame = |db: f32| Frame {
+            stage: Stage::Recording,
+            visible: true,
+            loudness: db,
+            reduce_motion: false,
+        };
+        let log = |label: &str, scope: &Scope| {
+            let (peak, room) = scope.auto.levels();
+            let bars = &scope.dots()[..tuning.bars as usize];
+            let high = bars.iter().map(|dot| dot[0]).fold(0.0, f32::max);
+            let low = bars.iter().map(|dot| dot[0]).fold(1.0, f32::min);
+            println!(
+                "{label}: level={:.3} peak={peak:.1} room={room:.1} bars={low:.2}..{high:.2} spread={:.2}",
+                scope.level(),
+                high - low
+            );
+        };
+        let db = -34.0;
+        let mut auto = Scope::new(tuning);
+        log("auto start", &auto);
+        run(&mut auto, 2.0, frame(db));
+        log("auto capture 1", &auto);
+        run(&mut auto, 4.0, frame(-68.0));
+        log("auto pause 4 s", &auto);
+        run(&mut auto, 2.0, frame(db));
+        log("auto capture 2", &auto);
+        let mut fixed = Scope::new(Tuning {
+            auto_level: false,
+            ..tuning
+        });
+        run(&mut fixed, 2.0, frame(db));
+        log("fixed capture 1", &fixed);
+        run(&mut fixed, 4.0, frame(-68.0));
+        run(&mut fixed, 2.0, frame(db));
+        log("fixed capture 2", &fixed);
     }
 
     #[test]

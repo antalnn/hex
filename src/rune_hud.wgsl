@@ -263,7 +263,7 @@ fn voice_bars(
     let step = bar_width + gap;
     let radius = bar_width * 0.5;
     let track = max(radius, 1.0);
-    let reach = max(u.height * 0.5 - 3.5, track);
+    let reach = max(u.height * 0.5 - 6.5, track);
     let unlit = select(0.085, 0.07, u.dark > 0.5);
     let full = select(1.0, 0.96, u.dark > 0.5);
     for (var i = 0; i < count; i++) {
