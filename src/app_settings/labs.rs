@@ -100,6 +100,8 @@ pub struct LabsSettings {
     pub keep_recordings: bool,
     /// General's pane starts with a search field that filters its rows.
     pub settings_search: bool,
+    /// The sidebar footer links this build's release notes.
+    pub release_notes_link: bool,
     pub hide_menu_bar_icon: bool,
     /// ⌘Q closes the Settings window instead of quitting Hex (macOS).
     pub quit_closes_window: bool,
@@ -144,6 +146,10 @@ pub struct LabsSettings {
     pub annotate_replay: bool,
     /// Calls in more apps (Signal, Telegram, WeChat, LINE, Webex, Element, Phone) and on more websites are offered and named.
     pub more_call_apps: bool,
+    /// An OpenCode service running in the default WSL distribution is used
+    /// for Modes rewriting and the Modes model picker when no Windows
+    /// service answers (Windows).
+    pub opencode_in_wsl: bool,
     /// Settings › Labs' groups opened or closed by hand, by `labs::Group`
     /// id; a group not here is open while it holds a lab that's on.
     #[serde(skip_serializing_if = "std::collections::BTreeMap::is_empty")]
@@ -192,6 +198,7 @@ impl Default for LabsSettings {
             section_key_alone: false,
             keep_recordings: false,
             settings_search: false,
+            release_notes_link: false,
             hide_menu_bar_icon: false,
             quit_closes_window: false,
             caps_lock_dictation: false,
@@ -205,6 +212,7 @@ impl Default for LabsSettings {
             meeting_finished_event: false,
             annotate_replay: false,
             more_call_apps: false,
+            opencode_in_wsl: false,
             gnome_meeting_capsules: false,
             gnome_annotate: false,
             screenshots: false,

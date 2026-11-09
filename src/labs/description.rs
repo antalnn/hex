@@ -108,6 +108,9 @@ impl Feature {
                 "Keep the audio of dictations saved to History, so you can transcribe them again with another model"
             }
             Self::SettingsSearch => "Find any setting in General with a search field",
+            Self::ReleaseNotesLink => {
+                "Show a link to this build's release notes in the sidebar footer"
+            }
             Self::HideMenuBarIcon => {
                 "Hide Hex's menu bar icon; shortcuts keep working, and opening Hex again shows Settings"
             }
@@ -164,6 +167,9 @@ impl Feature {
             }
             Self::RewriteSnippetMatch => {
                 "Let the model match a spoken rewrite instruction to one of your saved snippets"
+            }
+            Self::OpenCodeInWsl => {
+                "Use an OpenCode service running in your default WSL distribution for Modes rewriting and the Modes model picker; looking for it can start WSL"
             }
         }
     }

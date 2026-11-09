@@ -63,6 +63,7 @@ impl Feature {
             | Self::QuitClosesWindow
             | Self::SettingsSearch
             | Self::RewriteSnippetMatch
+            | Self::ReleaseNotesLink
             | Self::Playground => Group::Dictation,
             Self::SmartSpacing
             | Self::SpokenFormatting
@@ -73,7 +74,8 @@ impl Feature {
             | Self::GnomeClipboardRestore
             | Self::TypedText
             | Self::TerminalPaste
-            | Self::OutputFixes => Group::Output,
+            | Self::OutputFixes
+            | Self::OpenCodeInWsl => Group::Output,
             Self::KeepRecordings | Self::HistoryStats | Self::RecentDictations => Group::History,
             Self::Meetings
             | Self::LiveChapters

@@ -105,6 +105,7 @@ pub enum Feature {
     SectionKeyAlone,
     KeepRecordings,
     SettingsSearch,
+    ReleaseNotesLink,
     HideMenuBarIcon,
     MovableMeetingCapsules,
     GnomeClipboardRestore,
@@ -124,10 +125,11 @@ pub enum Feature {
     ExpireMeetingAudio,
     CapsLockDictation,
     RewriteSnippetMatch,
+    OpenCodeInWsl,
 }
 
 impl Feature {
-    pub const ALL: [Self; 60] = [
+    pub const ALL: [Self; 62] = [
         Self::Meetings,
         Self::VoiceFilter,
         Self::Playground,
@@ -169,6 +171,7 @@ impl Feature {
         Self::SectionKeyAlone,
         Self::KeepRecordings,
         Self::SettingsSearch,
+        Self::ReleaseNotesLink,
         Self::HideMenuBarIcon,
         Self::MovableMeetingCapsules,
         Self::GnomeClipboardRestore,
@@ -188,6 +191,7 @@ impl Feature {
         Self::ExpireMeetingAudio,
         Self::CapsLockDictation,
         Self::RewriteSnippetMatch,
+        Self::OpenCodeInWsl,
     ];
 
     /// The features this OS and build have.
@@ -254,6 +258,7 @@ impl Feature {
             | Self::SectionKeyAlone
             | Self::KeepRecordings
             | Self::SettingsSearch
+            | Self::ReleaseNotesLink
             | Self::HideMenuBarIcon
             | Self::MovableMeetingCapsules
             | Self::GnomeClipboardRestore
@@ -272,7 +277,8 @@ impl Feature {
             | Self::QuitClosesWindow
             | Self::GnomeAnnotate
             | Self::CapsLockDictation
-            | Self::RewriteSnippetMatch => Audience::Everyone,
+            | Self::RewriteSnippetMatch
+            | Self::OpenCodeInWsl => Audience::Everyone,
         }
     }
 
@@ -334,7 +340,10 @@ impl Feature {
             | Self::ExpireMeetingAudio
             | Self::FailureNotices
             | Self::TypedText => 20261107,
-            Self::GnomeAnnotate | Self::TerminalPasteShortcut => 20261108,
+            Self::GnomeAnnotate
+            | Self::TerminalPasteShortcut
+            | Self::ReleaseNotesLink
+            | Self::OpenCodeInWsl => 20261108,
             Self::RewriteSnippetMatch => 20261109,
         }
     }
@@ -377,7 +386,10 @@ impl Feature {
             | Self::MovableMeetingCapsules
             | Self::MeetingImport => cfg!(target_os = "macos"),
             Self::VoiceFilter => cfg!(any(target_os = "macos", target_os = "linux")),
-            Self::TerminalPaste | Self::ShareShortcut | Self::RewriteSnippetMatch => {
+            Self::TerminalPaste
+            | Self::ShareShortcut
+            | Self::RewriteSnippetMatch
+            | Self::OpenCodeInWsl => {
                 cfg!(target_os = "windows")
             }
             Self::SectionKeyAlone
@@ -439,6 +451,7 @@ impl Feature {
             | Self::MoreCallApps
             | Self::ExpireMeetingAudio
             | Self::SettingsSearch
+            | Self::ReleaseNotesLink
             | Self::FillerWords => true,
         }
     }
@@ -487,6 +500,7 @@ impl Feature {
             Self::SectionKeyAlone => "section-key",
             Self::KeepRecordings => "keep-recordings",
             Self::SettingsSearch => "settings-search",
+            Self::ReleaseNotesLink => "release-notes-link",
             Self::HideMenuBarIcon => "hide-menu-bar-icon",
             Self::MovableMeetingCapsules => "movable-meeting-capsules",
             Self::GnomeClipboardRestore => "gnome-clipboard-restore",
@@ -506,6 +520,7 @@ impl Feature {
             Self::ExpireMeetingAudio => "expire-meeting-audio",
             Self::CapsLockDictation => "caps-lock-dictation",
             Self::RewriteSnippetMatch => "rewrite-snippet-match",
+            Self::OpenCodeInWsl => "opencode-in-wsl",
         }
     }
 
@@ -553,6 +568,7 @@ impl Feature {
             Self::SectionKeyAlone => "labs.section_key_alone",
             Self::KeepRecordings => "labs.keep_recordings",
             Self::SettingsSearch => "labs.settings_search",
+            Self::ReleaseNotesLink => "labs.release_notes_link",
             Self::HideMenuBarIcon => "labs.hide_menu_bar_icon",
             Self::MovableMeetingCapsules => "labs.movable_meeting_capsules",
             Self::GnomeClipboardRestore => "labs.gnome_clipboard_restore",
@@ -572,6 +588,7 @@ impl Feature {
             Self::ExpireMeetingAudio => "labs.expire_meeting_audio",
             Self::CapsLockDictation => "labs.caps_lock_dictation",
             Self::RewriteSnippetMatch => "labs.rewrite_snippet_match",
+            Self::OpenCodeInWsl => "labs.opencode_in_wsl",
         }
     }
 
@@ -623,6 +640,7 @@ impl Feature {
             Self::SectionKeyAlone => settings.labs.section_key_alone,
             Self::KeepRecordings => settings.labs.keep_recordings,
             Self::SettingsSearch => settings.labs.settings_search,
+            Self::ReleaseNotesLink => settings.labs.release_notes_link,
             Self::HideMenuBarIcon => settings.labs.hide_menu_bar_icon,
             Self::MovableMeetingCapsules => settings.labs.movable_meeting_capsules,
             Self::GnomeClipboardRestore => settings.labs.gnome_clipboard_restore,
@@ -642,6 +660,7 @@ impl Feature {
             Self::ExpireMeetingAudio => settings.labs.expire_meeting_audio,
             Self::CapsLockDictation => settings.labs.caps_lock_dictation,
             Self::RewriteSnippetMatch => settings.labs.rewrite_snippet_match,
+            Self::OpenCodeInWsl => settings.labs.opencode_in_wsl,
         }
     }
 
@@ -691,6 +710,7 @@ impl Feature {
             &mut labs.section_key_alone,
             &mut labs.keep_recordings,
             &mut labs.settings_search,
+            &mut labs.release_notes_link,
             &mut labs.hide_menu_bar_icon,
             &mut labs.movable_meeting_capsules,
             &mut labs.gnome_clipboard_restore,
@@ -710,6 +730,7 @@ impl Feature {
             &mut labs.expire_meeting_audio,
             &mut labs.caps_lock_dictation,
             &mut labs.rewrite_snippet_match,
+            &mut labs.opencode_in_wsl,
         ]
     }
 
@@ -759,6 +780,7 @@ impl Feature {
             Self::PickerDownloaded => settings.labs.picker_downloaded = on,
             Self::KeepRecordings => settings.labs.keep_recordings = on,
             Self::SettingsSearch => settings.labs.settings_search = on,
+            Self::ReleaseNotesLink => settings.labs.release_notes_link = on,
             Self::HideMenuBarIcon => settings.labs.hide_menu_bar_icon = on,
             Self::MovableMeetingCapsules => settings.labs.movable_meeting_capsules = on,
             Self::GnomeClipboardRestore => settings.labs.gnome_clipboard_restore = on,
@@ -778,6 +800,7 @@ impl Feature {
             Self::ExpireMeetingAudio => settings.labs.expire_meeting_audio = on,
             Self::CapsLockDictation => settings.labs.caps_lock_dictation = on,
             Self::RewriteSnippetMatch => settings.labs.rewrite_snippet_match = on,
+            Self::OpenCodeInWsl => settings.labs.opencode_in_wsl = on,
             // Off, no shortcut keeps a key only the feature allows.
             Self::StandaloneSpecialKeys => {
                 settings.labs.standalone_special_keys = on;
@@ -850,8 +873,11 @@ const TYPED_TEXT: u64 = GNOME_ANNOTATE << 1;
 /// The next bit above Typed text's switch: Caps Lock dictation's recording
 /// light blinks slowly instead of staying solid.
 const CAPS_LOCK_SLOW_BLINK: u64 = TYPED_TEXT << 1;
-/// The next bit above Caps Lock dictation's slow blink.
-const REWRITE_SNIPPET_MATCH: u64 = CAPS_LOCK_SLOW_BLINK << 1;
+/// The next bit above Caps Lock's slow blink: an OpenCode service in WSL is
+/// found when no Windows one answers (Windows).
+const OPENCODE_IN_WSL: u64 = CAPS_LOCK_SLOW_BLINK << 1;
+/// The next bit above the WSL OpenCode switch.
+const REWRITE_SNIPPET_MATCH: u64 = OPENCODE_IN_WSL << 1;
 
 /// This process's `labs` switches: unknown until settings load or one is
 /// first read.
@@ -1144,6 +1170,14 @@ pub fn caps_lock_slow_blink() -> bool {
     on(CAPS_LOCK_SLOW_BLINK) && Feature::CapsLockDictation.on_this_os()
 }
 
+/// An OpenCode service running in the default WSL distribution is used when
+/// no Windows registration answers (Windows; read as each service search
+/// starts).
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+pub fn opencode_in_wsl() -> bool {
+    on(OPENCODE_IN_WSL) && Feature::OpenCodeInWsl.on_this_os()
+}
+
 /// Finished meetings may drop their WAV tracks on `meetings.audio_retention`
 /// (read by the meeting controller's expiry pass and the window's Settings
 /// row).
@@ -1307,6 +1341,11 @@ fn encode_where(settings: &LabsSettings, reaches: impl Fn(Feature) -> bool) -> u
             Feature::CapsLockDictation,
             settings.caps_lock_light == CapsLockLight::SlowBlink,
             CAPS_LOCK_SLOW_BLINK,
+        ),
+        (
+            Feature::OpenCodeInWsl,
+            settings.opencode_in_wsl,
+            OPENCODE_IN_WSL,
         ),
         (
             Feature::QuitClosesWindow,
@@ -1863,6 +1902,23 @@ mod tests {
         assert_ne!(state & CAPS_LOCK_DICTATION, 0);
         assert_eq!(state & GNOME_ANNOTATE, 0);
         assert_eq!((state >> MINUTES_SHIFT) & MINUTES_MASK, 15);
+    }
+
+    #[test]
+    fn opencode_in_wsl_is_its_own_bit_and_windows_only() {
+        let mut labs = LabsSettings::default();
+        assert_eq!(encode_where(&labs, |_| true) & OPENCODE_IN_WSL, 0);
+        labs.opencode_in_wsl = true;
+        labs.unload_idle_minutes = 24 * 60;
+        let state = encode_where(&labs, |_| true);
+        assert_ne!(state & OPENCODE_IN_WSL, 0);
+        assert_eq!(state & CAPS_LOCK_SLOW_BLINK, 0);
+        assert_eq!(state & TYPED_TEXT, 0);
+        assert_eq!((state >> MINUTES_SHIFT) & MINUTES_MASK, 24 * 60);
+        assert_eq!(
+            Feature::OpenCodeInWsl.on_this_os(),
+            cfg!(target_os = "windows")
+        );
     }
 
     #[test]

@@ -385,6 +385,11 @@ const KEYS: &[Key] = &[
         "Labs: a search field at the top of General that filters its rows",
     ),
     key(
+        "labs.release_notes_link",
+        Kind::Bool,
+        "Labs: a link to this build's release notes in the sidebar footer",
+    ),
+    key(
         "labs.live_chapters",
         Kind::Bool,
         "Labs: chapter meeting transcripts while recording",
@@ -459,6 +464,12 @@ const KEYS: &[Key] = &[
         Kind::Bool,
         "Labs: terminal_paste_hotkey dictates like the dictation shortcut and always pastes \
          with Ctrl+Shift+V (Windows, Linux)",
+    ),
+    key(
+        "labs.opencode_in_wsl",
+        Kind::Bool,
+        "Labs: use an OpenCode service running in the default WSL distribution for Modes \
+         rewriting and the Modes model picker; looking for it can start WSL (Windows)",
     ),
     key(
         "labs.smart_spacing",

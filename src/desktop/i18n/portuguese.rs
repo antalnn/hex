@@ -1223,6 +1223,9 @@ const TRANSLATIONS: &[(&str, &str)] = &[
     ("Open Keyboard Settings", "Abrir Ajustes de Teclado"),
     ("Full screen · Click to capture", "Tela inteira · Clique para capturar"),
     ("Settings search", "Pesquisa em Ajustes"),
+    ("Release notes link", "Link para as notas da versão"),
+    ("Show a link to this build's release notes in the sidebar footer", "Mostra um link para as notas da versão desta compilação no rodapé da barra lateral"),
+    ("Release notes", "Notas da versão"),
     ("Find any setting in General with a search field", "Encontre qualquer ajuste na seção Geral com um campo de pesquisa"),
     ("Search settings", "Pesquisar ajustes"),
     ("No settings match", "Nenhum ajuste corresponde"),
@@ -1264,6 +1267,8 @@ const TRANSLATIONS: &[(&str, &str)] = &[
     ("Let the model match a spoken rewrite instruction to one of your saved snippets", "Deixe o modelo associar uma instrução de reescrita falada a um dos seus trechos salvos"),
     ("Dictate shortcut", "Atalho de ditado"),
     ("Rewrite shortcut", "Atalho de reescrita"),
+    ("OpenCode in WSL", "OpenCode no WSL"),
+    ("Use an OpenCode service running in your default WSL distribution for Modes rewriting and the Modes model picker. Looking for it can start WSL.", "Usa um serviço do OpenCode rodando na sua distribuição WSL padrão para a reescrita de Modos e o seletor de modelos de Modos. Procurá-lo pode iniciar o WSL."),
 ];
 
 #[cfg(test)]

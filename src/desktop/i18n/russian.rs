@@ -1226,6 +1226,9 @@ const TRANSLATIONS: &[(&str, &str)] = &[
     ("Replay last 15 s", "Сохранить последние 15 с"),
     ("Press to save the last 15 s; hold to narrate over it", "Нажмите, чтобы сохранить последние 15 с; удерживайте, чтобы озвучить"),
     ("Settings search", "Поиск по настройкам"),
+    ("Release notes link", "Ссылка на примечания к выпуску"),
+    ("Show a link to this build's release notes in the sidebar footer", "Показывать ссылку на примечания к выпуску этой сборки в нижней части боковой панели"),
+    ("Release notes", "Примечания к выпуску"),
     ("Find any setting in General with a search field", "Находите любую настройку в разделе «Основные» с помощью поля поиска"),
     ("Search settings", "Поиск настроек"),
     ("No settings match", "Нет подходящих настроек"),
@@ -1267,6 +1270,8 @@ const TRANSLATIONS: &[(&str, &str)] = &[
     ("Let the model match a spoken rewrite instruction to one of your saved snippets", "Позвольте модели сопоставить произнесённую инструкцию переписывания с сохранённым фрагментом"),
     ("Dictate shortcut", "Сочетание для диктовки"),
     ("Rewrite shortcut", "Сочетание для переписывания"),
+    ("OpenCode in WSL", "OpenCode в WSL"),
+    ("Use an OpenCode service running in your default WSL distribution for Modes rewriting and the Modes model picker. Looking for it can start WSL.", "Использует службу OpenCode, запущенную в вашем дистрибутиве WSL по умолчанию, для переписывания в режимах и выбора моделей в режимах. Её поиск может запустить WSL."),
 ];
 
 #[cfg(test)]

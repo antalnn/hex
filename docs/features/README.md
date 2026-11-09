@@ -39,7 +39,9 @@ models toggle (off by default) adds a sort and a saved-language filter to the
 Local transcription picker (#645); its Benchmark details toggle (off by
 default) shows each model's raw WER or CER with its language, dataset, source,
 and conditions (#647); its Settings search toggle (off by default) puts a
-search field at the top of General that filters its rows.
+search field at the top of General that filters its rows; its Release notes
+link toggle (off by default) puts a link to this build's release notes in the
+sidebar footer.
 General › Advanced › Interface language offers Português (Brasil), and Hex
 uses it for any Portuguese system language (#867); it also offers Français,
 used for any French system language (#892), and Русский, used for any
@@ -298,10 +300,13 @@ General > Dictation > Speech model, then Language below it   // setup.language-s
 │   ├── Model without the saved language -> Row: "Choosing it switches the
 │   │   language to English"
 │   └── Choose it -> ChooseModel(model, model's default: English, else its first)
+│       ├── Warmed on silence without the vocabulary prompt; a warm-up that
+│       │   stops at its output limit still counts as warm (same as the menu bar)
 │       └── Saved -> Language row: "<Model> doesn't support Japanese, so the
 │           language changed to English" until the next choice
 ├── Language -> Select of the saved model's languages (catalog order, Auto first
-│   when it detects); one language -> the field shows it, disabled
+│   when it detects, including a model that takes no language input); one
+│   language -> the field shows it, disabled
 │   └── Choose -> ChooseModel(same model, language): the same preparation as a
 │       model choice, so per-language assets (Apple Speech locales) install
 └── The saved TranscriptionSelection is always a pair the model supports
@@ -324,9 +329,10 @@ Language row is unexercised.
 
 ```ts
 Choose a supported language              // setup.language-conditioning; macOS + Linux picker
-├── Parakeet v3 and Orukeet -> Detect language from audio; selected language does not constrain output
+├── Parakeet v3, Orukeet, and Parakeet Ultra -> Detect language from audio;
+│   also offered under Auto; the selected language does not constrain output
 ├── Granite Speech 5.0 -> No language input; transcribes whichever of en, fr,
-│   de, es, pt, it, ja it hears (#1252)
+│   de, es, pt, it, ja it hears, so it is offered under Auto too (#1252)
 ├── Whisper -> Use selected language to guide decoding; accuracy is not guaranteed
 ├── Whisper (ivrit.ai's and NB-Whisper too), Qwen3-ASR 0.6B, QwenCleo-ASR 1.7B -> Vocabulary ->
 │   context prompt (vocabulary.md); output that only repeats it is dropped
@@ -433,8 +439,10 @@ macOS (Metal), Windows, and Japanese, Korean, Chinese, or Vietnamese audio.
 
 Parakeet v3 remains available for Portuguese and its other existing language
 choices. Its card explains the limitation and suggests Whisper for
-language-guided transcription. This does not change saved selections or expand
-the Auto picker choices. Multilingual audio support is not language conditioning:
+language-guided transcription. It is also offered under Auto: it detects the
+language from the audio and takes no hint, as do Orukeet, Parakeet Ultra, and
+Granite Speech 5.0. A hint-taking model without `stt.capability.lang_detect`
+stays out of Auto. Multilingual audio support is not language conditioning:
 the pinned v3 GGUF has no `stt.parakeet.prompt.num_prompts` metadata, which gates
 language prompting in `transcribe-cpp-sys` 0.1.3.
 
@@ -523,7 +531,16 @@ every interface language; its headings, buttons, and hints are translated.
 Menu bar > Speech Model                   // setup.quick-model-switch; macOS
 ├── Downloaded models -> Last selected language shown beside each model
 ├── Choose -> Verify installed artifact -> Prewarm -> Save selection
-│   ├── Success -> Checkmark moves; Settings reflects the saved selection
+│   ├── Prewarm runs silence without the vocabulary prompt, so a term list
+│   │   can't be read back to Qwen3-ASR's token cap
+│   ├── Warm-up still stops at its output limit (Qwen3-ASR 1.7B) -> Counts as
+│   │   warm; saved (same as Linux and Windows, and as the Settings picker)
+│   │   // gguf_session::RunKind; checks:
+│   │   // a_warmup_leaves_the_vocabulary_out_and_counts_when_truncated,
+│   │   // a_decode_stopped_at_its_output_limit_is_recognised_through_its_context
+│   │   // Proof limit: the classifier test covers only error recognition and
+│   │   // the warm-up test only the option choice; accepting a Mac prewarm has
+│   │   // no automated check, and no Mac run was observed.
 │   └── Failure -> Previous selection remains; open Settings for the error
 ├── Preparing -> Cancel Model Switch      // never cancels dictation/output jobs
 └── Manage Models… -> Settings picker      // downloads; languages in the Language row
@@ -789,6 +806,7 @@ General                                  // settings
 ├── Microphone -> Value names the input in use, with live level bars // settings.microphone
 │   ├── "System default · Kit Pods", or a saved device
 │   ├── Level bars -> peak of the audio Hex receives, ~30 fps while General shows them above rest // input_level
+│   │   ├── Peak measured around each chunk's mean, so a microphone's DC offset never lights them
 │   │   ├── Read from one atomic the audio owner stores per chunk; never opens or blocks the mic
 │   │   ├── Quiet room (bars at rest) -> no 30 fps frames; the window's 250 ms tick notices a rise.
 │   │   │   An open General window with a warm mic woke 34.5 times a second in a quiet room before
@@ -1210,6 +1228,25 @@ something uses the page, macOS asks the front tab of Safari, Orion, Chrome,
 Brave, Edge, Arc, Vivaldi, Opera, Helium, and Chromium over AppleScript (one
 Automation prompt per browser; a refusal keeps the application context) and
 reads any other app's focused AXWebArea `AXURL` (Firefox, Zen, web views).
+That AppleScript read is not part of the 500 ms foreground-context poll: the
+poll reads it once when a scriptable browser becomes the frontmost process
+(caching its address, or no address after a failed read, per pid), so
+switching away and back reads the page again. A capture asks for one more
+read only once it is real, never on every press: the shortcut held past its
+hold threshold, a finish that lands before that, or a control start
+(`hex dictation start`). A press a chord discards before that hold threshold
+reads nothing; holding the shortcut past the threshold first still reads the
+page once.
+A finish waits at most 1 s for the refreshed page and otherwise hands its
+capture the same app and window title with no page, never the previous
+dictation's. Checks:
+`the_scripted_page_is_read_once_per_pid_and_on_refresh_only`,
+`a_refresh_the_full_channel_held_back_completes_once_delivered`, and
+`a_press_discarded_as_a_chord_never_reads_the_page` in
+[dictation/context.rs](../../src/dictation/context.rs); not run against a live
+browser, and the recognition loop's wiring of that refresh
+([recognition/context_watch.rs](../../src/recognition/context_watch.rs)) is
+covered only by the macOS build, not by a test.
 Linux matches the focused window from X11 or the Wayland foreign-toplevel list
 to an AT-SPI window by title and process and reads its showing web
 document's `DocURL` (Firefox) or `URI` (Chromium, only with
@@ -1225,7 +1262,10 @@ though the race it prevents is not reproduced in a test.
 
 OpenCode transformation talks only to an already running OpenCode service,
 found through its registration file ([desktop/opencode_service.rs](../../src/desktop/opencode_service.rs));
-Hex runs no OpenCode executable and starts nothing. The catalog loads only while
+Hex runs no OpenCode executable and starts nothing. On Windows, Labs › OpenCode
+in WSL adds the default WSL distribution's registration and a Linux
+`x-opencode-directory` workspace when no Windows registration answers; off,
+only the Windows registration is read. The catalog loads only while
 the Modes pane shows. Without a service, "OpenCode isn't running" shows beside
 the switch and the setup/retry notice below;
 `unavailable_opencode_is_explained_beside_each_switch` covers it headlessly, and
@@ -1502,7 +1542,10 @@ Hex checks the release service            // maintain.updates
 │       first changes and What's new (https://anoma.ly/hex/dev) under it (updater/notes.rs)
 │       ├── One more check first (manifest within 15 s) -> Checking / Downloading -> newest staged
 │       │   └── A release published after the relaunch -> the next launch's check
-│       └── macOS -> renamex_np swap (also at quit) -> relaunch -> old bundle removed at launch
+│       ├── macOS -> renamex_np swap (also at quit) -> relaunch -> old bundle removed at launch
+│       └── Labs › Release notes link -> a release build's footer carries this build's notes:
+│           anoma.ly/hex/dev#<version> for a dev build, github.com/anomalyco/hex/releases/tag/v<version> for a stable one;
+│           local and test builds show no link (by build kind, not version string)
 ├── macOS location not replaceable (read-only, translocated, root-owned) -> Download update (DMG)
 ├── Package manager (pacman, Nix) -> its command, once it serves another version
 ├── Source build, test build -> never checks

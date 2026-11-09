@@ -384,6 +384,12 @@ fn rows(ui: &Ui) -> Vec<Row> {
         tr("Rewrite snippet match"),
         tr("Let the model match a spoken rewrite instruction to one of your saved snippets"),
     ));
+    rows.push(row(
+        Feature::ReleaseNotesLink,
+        None,
+        tr("Release notes link"),
+        tr("Show a link to this build's release notes in the sidebar footer"),
+    ));
     if caps.meetings {
         rows.push(row(
             Feature::LiveChapters,
@@ -752,6 +758,12 @@ fn rows(ui: &Ui) -> Vec<Row> {
             tr("Terminal paste"),
             tr("Paste with Ctrl+Shift+V so terminals accept it"),
         ));
+        rows.push(row(
+            Feature::OpenCodeInWsl,
+            Some(&TERMINAL),
+            tr("OpenCode in WSL"),
+            tr("Use an OpenCode service running in your default WSL distribution for Modes rewriting and the Modes model picker. Looking for it can start WSL."),
+        ));
     }
     if caps.os != super::platform::Os::Macos {
         rows.push(row(
@@ -829,6 +841,7 @@ fn row_key(lab: Lab) -> &'static str {
         Feature::SectionKeyAlone => "lab-section-key",
         Feature::KeepRecordings => "lab-keep-recordings",
         Feature::SettingsSearch => "lab-settings-search",
+        Feature::ReleaseNotesLink => "lab-release-notes-link",
         Feature::HideMenuBarIcon => "lab-hide-menu-bar-icon",
         Feature::QuitClosesWindow => "lab-quit-closes-window",
         Feature::CapsLockDictation => "lab-caps-lock-dictation",
@@ -848,6 +861,7 @@ fn row_key(lab: Lab) -> &'static str {
         Feature::MeetingDescriptiveFilenames => "lab-meeting-descriptive-filenames",
         Feature::ExpireMeetingAudio => "lab-expire-meeting-audio",
         Feature::RewriteSnippetMatch => "lab-rewrite-snippet-match",
+        Feature::OpenCodeInWsl => "lab-opencode-in-wsl",
     }
 }
 

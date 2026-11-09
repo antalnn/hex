@@ -328,11 +328,14 @@ Output > Typed text                        // labs.md
     │   become Ctrl+Shift+V; the job logs why and sends nothing
     ├── take the clipboard for the job: cancel any paste restore still pending
     │   and keep the clipboard that paste replaced, else snapshot it now
-    ├── clear the clipboard, then Ctrl+A and Ctrl+C in the focused app
+    ├── clear the clipboard, then Ctrl+A and Ctrl+C in the focused app,
+    │   pausing 30 ms so the selection settles before the copy
     │   ├── GNOME without data-control clears through `wl-copy --clear`
     │   └── a clear that fails, or leaves text behind, aborts before copying
     │       and restores
-    ├── poll the clipboard for text, up to 500 ms, honoring Cancel
+    ├── pause 40 ms, then poll the clipboard for text, up to 600 ms, honoring
+    │   Cancel; a read that races the copy can take the focus it needs on
+    │   GNOME, where every read runs `wl-paste`
     ├── read the selection as text/plain, bounded to 1 MiB and one second
     ├── no text, or only whitespace -> error tone, clipboard restored, nothing pasted
     ├── run the matching mode's Output steps, with transformation context
@@ -1075,12 +1078,13 @@ Model advertises streaming, GPU device             // dictate.streaming
   │   test against Whisper turbo's 8.94%, Hex's run), then Whisper turbo for
   │   Vocabulary (#1150)
   ├── en, fr, de, es, pt, it, ja: Granite Speech 5.0 (IBM's TurboCTC, 506 MB,
-  │   no hint) follows without a badge: on FLEURS test it trailed Parakeet
-  │   Unified/v3 in every European language and tied Whisper turbo in Japanese
-  │   (5.04% CER against 5.02%), Hex's run (#1252)
-  ├── Orukeet: Oruk AI's Parakeet v3 fine-tune (740 MB, no hint) follows without
-  │   a badge; 1.86% WER on LibriSpeech test-clean from transcribe.cpp's
-  │   published conversion benchmark, with its FLEURS figures in Details
+  │   no hint, also offered under Auto) follows without a badge: on FLEURS
+  │   test it trailed Parakeet Unified/v3 in every European language and tied
+  │   Whisper turbo in Japanese (5.04% CER against 5.02%), Hex's run (#1252)
+  ├── Orukeet: Oruk AI's Parakeet v3 fine-tune (740 MB, no hint, also offered
+  │   under Auto) follows without a badge; 1.86% WER on LibriSpeech test-clean
+  │   from transcribe.cpp's published conversion benchmark, with its FLEURS
+  │   figures in Details
   └── Every other available model follows without a badge, selectable and
       deletable; never auto-switched or auto-downloaded (setup.language-select)
 ```
@@ -1818,7 +1822,15 @@ Each time the HUD shows, Rune clears and resets those collection behaviors
 before ordering the panel in, and orders it out first if it is still shown on
 another Space (#1084). Changing the activation policy (the Dock icon follows
 Settings) could leave the panel tied to one Space while AppKit still reported
-the old mask, and re-setting an unchanged mask does nothing. Not yet observed
+the old mask, and re-setting an unchanged mask does nothing. Rune repairs that
+only as its panel shows, so while the HUD is shown Hex also checks each pump
+turn that the panel is on the active Space, and re-homes it when a Space switch
+or a full-screen exit left it behind: it orders the panel out, clears and
+restores the mask, and orders it back in. That reorders the panel but leaves
+Rune's presence state and alpha alone. It is attempted once per show, and once
+more for each later Space change after the panel has been seen on the active
+Space, so a repair that did not take cannot loop. The live-text plate beside
+the HUD is a separate panel and does not get this repair yet. Not yet observed
 on hardware; only the macOS compile is checked.
 
 At the top position the HUD sits 6 pt below the menu bar (`rune_hud::hud_placement::TOP_OFFSET`), or below the
@@ -1877,6 +1889,11 @@ and also when the indicator is set to Hidden while the HUD shows; macOS keeps
 it. The GPU device itself frees only once Rune's parked device also expires,
 and on Wayland layer-shell Rune keeps its own device regardless. The memory
 drop is not yet measured on a real Windows machine (#1431).
+
+Each chunk's meter removes the chunk's mean before measuring RMS and peak, so
+a microphone's DC offset (a Ryzen built-in digital microphone, #841) never
+reads as loudness; the dictation silence gate and the meeting pause detector
+remove it the same way.
 
 ```ts
 Dot scope                                    // dot_scope
