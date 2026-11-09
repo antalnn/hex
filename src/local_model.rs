@@ -1,12 +1,16 @@
-//! The local llama.cpp server that backs the local rewrite transformation.
+//! The local llama.cpp server the dictation cleanup calls, and one job for the
+//! personal `local-rewrite` transformation.
 //!
 //! Hex starts one child (`llama-server`) and owns it: it is started when the
-//! app opens, its health is polled until it answers, and it is killed when Hex
-//! quits, so the console window a person would otherwise leave open is never
-//! needed. A server already answering the port is adopted instead of fought:
-//! two servers cannot share one port, and the one that is already there is
-//! the one the transformation talks to.
+//! app opens, its health is polled until it answers, and it dies whenever Hex
+//! ends, however it ends: a Windows job object kills it when Hex's process
+//! closes the handle, including on a crash or a force kill. A server already
+//! answering the port is adopted instead of fought, unless Hex recorded its pid
+//! at spawn: that is Hex's own orphan from an earlier run, and it is stopped so
+//! the GPU memory comes back.
 
+#[cfg(windows)]
+use std::fs;
 use std::path::PathBuf;
 use std::process::{Child, Stdio};
 use std::time::{Duration, Instant};
@@ -207,6 +211,9 @@ impl Config {
 pub(crate) struct LocalModel {
     config: Config,
     child: Option<Child>,
+    /// Windows: ends the child when Hex's process ends, even without Drop.
+    #[cfg(windows)]
+    job: Option<crate::personal_commands::process::windows_job::Job>,
     state: State,
     detail: Option<String>,
     started_at: Option<Instant>,
@@ -218,6 +225,8 @@ impl LocalModel {
         Self {
             config,
             child: None,
+            #[cfg(windows)]
+            job: None,
             state: State::Stopped,
             detail: None,
             started_at: None,
@@ -239,6 +248,9 @@ impl LocalModel {
         if self.child.is_some() || matches!(self.state, State::Ready | State::External) {
             return;
         }
+        // A server Hex left behind on a previous run is Hex's own, not one a
+        // person started: stop it instead of adopting it.
+        self.kill_orphan();
         if answering(&self.config) {
             self.state = State::External;
             self.detail = Some(format!("already answering on port {}", self.config.port));
@@ -259,6 +271,16 @@ impl LocalModel {
             ));
             return;
         }
+        // Every child goes into a job that kills it when Hex's process ends,
+        // so a crash or a force kill cannot leave it holding GPU memory.
+        #[cfg(windows)]
+        let job = match crate::personal_commands::process::windows_job::Job::new() {
+            Ok(job) => job,
+            Err(error) => {
+                self.fail(format!("could not tie llama-server to Hex: {error}"));
+                return;
+            }
+        };
         let mut command = crate::desktop::background_process::command(&self.config.program);
         command
             .args(self.config.argv())
@@ -266,13 +288,27 @@ impl LocalModel {
             .stdout(Stdio::null())
             .stderr(Stdio::null());
         match command.spawn() {
-            Ok(child) => {
+            Ok(mut child) => {
+                #[cfg(windows)]
+                if let Err(error) = job.assign(&child) {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    self.fail(format!("could not tie llama-server to Hex: {error}"));
+                    return;
+                }
+                let pid = child.id();
                 tracing::info!(
                     program = %self.config.program.display(),
                     model = %self.config.model.display(),
                     port = self.config.port,
+                    pid,
                     "starting the local model server"
                 );
+                write_pid(pid);
+                #[cfg(windows)]
+                {
+                    self.job = Some(job);
+                }
                 self.child = Some(child);
                 self.state = State::Starting;
                 self.detail = None;
@@ -373,11 +409,157 @@ impl LocalModel {
     }
 
     fn kill(&mut self) {
+        let owned = self.child.is_some();
         if let Some(mut child) = self.child.take() {
             let _ = child.kill();
             let _ = child.wait();
         }
+        if owned {
+            clear_pid();
+        }
+        #[cfg(windows)]
+        {
+            self.job = None;
+        }
     }
+
+    /// A pid Hex recorded at spawn and left behind means the server answering
+    /// the port is Hex's own orphan: stop it so the GPU memory comes back.
+    /// A server Hex never recorded is adopted by [`Self::start`] as before.
+    fn kill_orphan(&mut self) {
+        #[cfg(windows)]
+        if let Some(path) = state_path() {
+            self.kill_orphan_at(&path);
+        }
+    }
+
+    #[cfg(windows)]
+    fn kill_orphan_at(&mut self, path: &std::path::Path) {
+        let Some(pid) = read_pid_at(path) else {
+            return;
+        };
+        if pid != 0
+            && pid != std::process::id()
+            && process_alive(pid)
+            && process_name(pid).is_some_and(|name| is_llama_server(&name))
+        {
+            tracing::info!(
+                pid,
+                "stopping the local model server a previous Hex left behind"
+            );
+            kill_pid(pid);
+            // Wait for the port to free before the health probe can adopt the
+            // dying server as external.
+            for _ in 0..40 {
+                if !process_alive(pid) {
+                    break;
+                }
+                std::thread::sleep(Duration::from_millis(50));
+            }
+        }
+        let _ = fs::remove_file(path);
+    }
+}
+
+/// Where Hex records its child's pid across a run that ends without Drop.
+#[cfg(windows)]
+fn state_path() -> Option<PathBuf> {
+    crate::app_paths::support_dir()
+        .ok()
+        .map(|dir| dir.join("local-model.pid"))
+}
+
+#[cfg(windows)]
+fn read_pid_at(path: &std::path::Path) -> Option<u32> {
+    fs::read_to_string(path).ok()?.trim().parse().ok()
+}
+
+#[cfg(windows)]
+fn write_pid(pid: u32) {
+    let Some(path) = state_path() else { return };
+    if let Err(error) = fs::write(&path, pid.to_string()) {
+        tracing::warn!(%error, "could not record the local model server's pid");
+    }
+}
+
+#[cfg(not(windows))]
+fn write_pid(_pid: u32) {}
+
+#[cfg(windows)]
+fn clear_pid() {
+    if let Some(path) = state_path() {
+        let _ = fs::remove_file(path);
+    }
+}
+
+#[cfg(not(windows))]
+fn clear_pid() {}
+
+/// Whether `pid` names a running process.
+#[cfg(windows)]
+fn process_alive(pid: u32) -> bool {
+    use windows_sys::Win32::Foundation::{CloseHandle, STILL_ACTIVE};
+    use windows_sys::Win32::System::Threading::{
+        GetExitCodeProcess, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION,
+    };
+    // SAFETY: the handle is closed before returning; a null handle is checked.
+    unsafe {
+        let handle = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid);
+        if handle.is_null() {
+            return false;
+        }
+        let mut code = 0;
+        let read = GetExitCodeProcess(handle, &mut code);
+        CloseHandle(handle);
+        read != 0 && code == STILL_ACTIVE as u32
+    }
+}
+
+/// Ends `pid`, which [`process_alive`] reported.
+#[cfg(windows)]
+fn kill_pid(pid: u32) {
+    use windows_sys::Win32::Foundation::CloseHandle;
+    use windows_sys::Win32::System::Threading::{OpenProcess, PROCESS_TERMINATE, TerminateProcess};
+    // SAFETY: the handle is closed before returning; a null handle is checked.
+    unsafe {
+        let handle = OpenProcess(PROCESS_TERMINATE, 0, pid);
+        if handle.is_null() {
+            return;
+        }
+        TerminateProcess(handle, 1);
+        CloseHandle(handle);
+    }
+}
+
+/// The full path of `pid`'s executable, when it can be read.
+#[cfg(windows)]
+fn process_name(pid: u32) -> Option<String> {
+    use windows_sys::Win32::Foundation::CloseHandle;
+    use windows_sys::Win32::System::Threading::{
+        OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION, QueryFullProcessImageNameW,
+    };
+    // SAFETY: the handle is closed before returning; the buffer is sized by
+    // the call and read only as far as it reports.
+    unsafe {
+        let handle = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid);
+        if handle.is_null() {
+            return None;
+        }
+        let mut buffer = [0u16; 1024];
+        let mut size = buffer.len() as u32;
+        let read = QueryFullProcessImageNameW(handle, 0, buffer.as_mut_ptr(), &mut size);
+        CloseHandle(handle);
+        (read != 0).then(|| String::from_utf16_lossy(&buffer[..size as usize]))
+    }
+}
+
+/// Whether `path` names the server Hex starts, so a reused pid is never killed.
+#[cfg(windows)]
+fn is_llama_server(path: &str) -> bool {
+    std::path::Path::new(path)
+        .file_name()
+        .and_then(|name| name.to_str())
+        .is_some_and(|name| name.eq_ignore_ascii_case("llama-server.exe"))
 }
 
 impl Drop for LocalModel {
@@ -543,5 +725,78 @@ mod tests {
             "{snapshot:?}"
         );
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The job object is what makes the child die with Hex; closing the handle
+    /// is the same event a crash or a force kill produces.
+    #[cfg(windows)]
+    #[test]
+    fn closing_the_job_ends_the_server_child() {
+        use crate::personal_commands::process::windows_job::Job;
+        let mut child = std::process::Command::new("cmd")
+            .args(["/c", "ping", "-n", "30", "127.0.0.1"])
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .expect("a child to tie to the job");
+        let job = Job::new().expect("a job object");
+        job.assign(&child).expect("the child joins the job");
+        drop(job);
+        let ended = wait_for_exit(&mut child);
+        let _ = child.kill();
+        assert!(ended, "closing the job did not end the child");
+    }
+
+    /// A pid Hex recorded at spawn and never cleared is killed at the next
+    /// start, before the health probe can adopt it as external. Hex never
+    /// kills a pid that is its own, and clears the record either way.
+    #[cfg(windows)]
+    #[test]
+    fn a_recorded_pid_from_a_previous_run_is_stopped() {
+        let dir = temp_dir("orphan");
+        let path = dir.join("local-model.pid");
+        std::fs::write(&path, std::process::id().to_string()).unwrap();
+        let mut model = LocalModel::new(Config::default());
+        model.kill_orphan_at(&path);
+        assert!(process_alive(std::process::id()), "Hex never kills itself");
+        assert!(!path.exists(), "the recorded pid is cleared");
+
+        let mut child = fake_server(&dir);
+        std::fs::write(&path, child.id().to_string()).unwrap();
+        model.kill_orphan_at(&path);
+        let ended = wait_for_exit(&mut child);
+        let _ = child.kill();
+        assert!(ended, "the recorded orphan kept running");
+        assert!(!path.exists(), "the recorded pid is cleared");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A running process whose file name is `llama-server.exe`, so the orphan
+    /// cleanup's own-name check admits it.
+    #[cfg(windows)]
+    fn fake_server(dir: &std::path::Path) -> Child {
+        let program = dir.join("llama-server.exe");
+        if !program.exists() {
+            std::fs::copy(r"C:\Windows\System32\cmd.exe", &program).unwrap();
+        }
+        std::process::Command::new(&program)
+            .args(["/c", "ping", "-n", "30", "127.0.0.1"])
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .expect("a fake server to stop")
+    }
+
+    #[cfg(windows)]
+    fn wait_for_exit(child: &mut Child) -> bool {
+        for _ in 0..100 {
+            if child.try_wait().ok().flatten().is_some() {
+                return true;
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        false
     }
 }

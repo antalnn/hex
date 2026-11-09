@@ -403,7 +403,7 @@ impl ProcessTree {
 }
 
 #[cfg(windows)]
-mod windows_job {
+pub(crate) mod windows_job {
     use std::os::windows::io::AsRawHandle;
     use std::process::Child;
 
