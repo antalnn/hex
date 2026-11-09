@@ -47,13 +47,16 @@ fn nodes(tree: &Value) -> Vec<(String, &Value)> {
     out
 }
 
-/// General reads the hardware first, then the keys with their mode and cancel,
-/// then Vocabulary and Launch at login, one card per section.
+/// General reads the hardware first, then the keys with their mode, then
+/// Vocabulary, one card per section. Under Advanced, Dictation puts the
+/// Speech engine above the Bluetooth switch, and Application carries the
+/// launch toggle and Launch at login together.
 #[test]
 #[cfg(target_os = "windows")]
 fn general_reads_the_hardware_then_the_keys_then_the_rest() {
     let mut rt = runtime();
     rt.state.settings.shortcut_mode = crate::dictation::ShortcutMode::Toggle;
+    rt.state.advanced = vec![Pane::General];
     rt.settle_all();
     rt.frame(0.0);
     let tree = rt.accessibility_json();
@@ -71,6 +74,9 @@ fn general_reads_the_hardware_then_the_keys_then_the_rest() {
         "shortcut-mode",
         "cancel-shortcut",
         "vocabulary",
+        "speech-engine",
+        "avoid-bluetooth-microphone",
+        "enable-on-launch",
         "launch-at-login",
     ];
     let indices: Vec<usize> = order.iter().map(|key| index(key)).collect();
@@ -85,7 +91,9 @@ fn general_reads_the_hardware_then_the_keys_then_the_rest() {
         "Keys",
         "Shortcut mode",
         "Vocabulary",
-        "Launch at login",
+        "Dictation",
+        "Output",
+        "Application",
     ];
     let heading = |title: &str| {
         all.iter()
@@ -100,12 +108,17 @@ fn general_reads_the_hardware_then_the_keys_then_the_rest() {
         heading_indices.windows(2).all(|pair| pair[0] < pair[1]),
         "General's sections read out of order: {headings:?} at {heading_indices:?}"
     );
-    let sections: [(&str, &[&str]); 5] = [
+    let sections: [(&str, &[&str]); 7] = [
         ("Microphone", &["microphone", "microphone-mode"]),
         ("Keys", &["dictation-shortcut", "rewrite-shortcut"]),
         ("Shortcut mode", &["shortcut-mode", "cancel-shortcut"]),
         ("Vocabulary", &["vocabulary"]),
-        ("Launch at login", &["launch-at-login"]),
+        (
+            "Dictation",
+            &["speech-engine", "avoid-bluetooth-microphone"],
+        ),
+        ("Output", &[]),
+        ("Application", &["enable-on-launch", "launch-at-login"]),
     ];
     for (position, (title, rows)) in sections.iter().enumerate() {
         let start = heading_indices[position];
@@ -120,5 +133,53 @@ fn general_reads_the_hardware_then_the_keys_then_the_rest() {
                 "{row}({row}) does not sit under the {title} heading at {start}"
             );
         }
+    }
+    // The toggle names dictation, and Launch at login sits directly under it.
+    let toggle = index("enable-on-launch");
+    assert_eq!(
+        all[toggle].1["name"].as_str(),
+        Some("Enable dictation on launch")
+    );
+    assert!(
+        index("launch-at-login") > toggle,
+        "Launch at login does not follow the launch toggle"
+    );
+}
+
+/// `HEX_SANDBOX_SNAPS=<folder>` writes the General pane with its Advanced
+/// cards open, light and dark, tall enough to show the changed rows.
+#[test]
+#[cfg(target_os = "windows")]
+fn general_pane_snapshots() {
+    let Some(folder) = std::env::var_os("HEX_SANDBOX_SNAPS") else {
+        return;
+    };
+    let folder = std::path::PathBuf::from(folder);
+    std::fs::create_dir_all(&folder).unwrap();
+    let Ok(gpu) = rune::render::Gpu::try_new(rune::render::Gpu::instance(), None) else {
+        eprintln!("skipping General snapshots: no GPU adapter");
+        return;
+    };
+    let size = (980.0, 1900.0);
+    let scale = 2.0;
+    for dark in [false, true] {
+        let state = Ui::with(AppSettings::default(), Service::Fixture(Vec::new()));
+        let env = Env {
+            system_dark: dark,
+            scale,
+        };
+        let text = TextSystem::new(rune_theme_opencode::FONTS, rune_theme_opencode::FAMILIES);
+        let mut rt = Runtime::with_text(state, view, size, env, text);
+        rt.set_srgb_blend(true);
+        rt.poll = Some(Ui::poll);
+        rt.on_key = Some(Ui::on_key);
+        rt.state.advanced = vec![Pane::General];
+        let width = (size.0 * scale) as u32;
+        let height = (size.1 * scale) as u32;
+        let pixels = crate::rune_ui::offscreen::draw(&gpu, &mut rt, width, height);
+        let theme = if dark { "dark" } else { "light" };
+        let path = folder.join(format!("general-rows-{theme}.png"));
+        rune::render::write_png(&path, width, height, &pixels).unwrap();
+        println!("wrote {}", path.display());
     }
 }

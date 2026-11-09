@@ -602,7 +602,7 @@ const TRANSLATIONS: &[(&str, &str)] = &[
     ("Disable", "Отключить"),
     ("Either", "Любая"),
     ("Enable", "Включить"),
-    ("Enable on launch", "Включать при запуске"),
+    ("Enable dictation on launch", "Включать диктовку при запуске"),
     ("Every registered transformation is already included.", "Все зарегистрированные преобразования уже добавлены."),
     ("Finding applications…", "Поиск приложений…"),
     ("Hex could not load the OpenCode model catalog.", "Hex не удалось загрузить каталог моделей OpenCode."),

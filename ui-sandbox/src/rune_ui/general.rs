@@ -1,7 +1,7 @@
 //! The General pane: one card per section (Microphone, Keys, Shortcut mode,
-//! Vocabulary, Launch at login), each row led by an icon, and every other
-//! setting behind the pane's Advanced fold. Also the pieces the other panes'
-//! rows share: the fold, the quiet select, and the shortcut's keys.
+//! Vocabulary), each row led by an icon, and every other setting behind the
+//! pane's Advanced fold. Also the pieces the other panes' rows share: the
+//! fold, the quiet select, and the shortcut's keys.
 
 use std::path::Path;
 use std::time::Duration;
@@ -36,9 +36,9 @@ pub(super) use self::shortcuts::shortcut_rows;
 // The basics
 
 /// The pane's top group, one card per section: the hardware, the keys, the
-/// mode they share, Vocabulary, and Launch at login. Each card opens with a
-/// section heading, as the Models pane's do; an empty section (a search with
-/// no match) draws nothing.
+/// mode they share, and Vocabulary. Each card opens with a section heading,
+/// as the Models pane's do; an empty section (a search with no match) draws
+/// nothing.
 pub(super) fn basics(ui: &Ui, p: Paint, layer: &mut Vec<El>, query: &str) -> Vec<El> {
     let mut sections = Vec::new();
 
@@ -190,17 +190,6 @@ pub(super) fn basics(ui: &Ui, p: Paint, layer: &mut Vec<El>, query: &str) -> Vec
             "basics-vocabulary",
             tr("Vocabulary"),
             vocabulary.into_rows(),
-        ));
-    }
-
-    let mut launch = search::Rows::new(query);
-    launch.extend(tr("Launch at login"), launch_at_login_rows(ui, p));
-    if !launch.is_empty() {
-        sections.push(section(
-            p,
-            "basics-launch",
-            tr("Launch at login"),
-            launch.into_rows(),
         ));
     }
 
@@ -843,6 +832,11 @@ pub(super) fn dictation(ui: &Ui, p: Paint, layer: &mut Vec<El>, query: &str) -> 
             ),
         );
     }
+    // macOS runs its models on Metal or Apple's speech engine.
+    #[cfg(any(target_os = "linux", target_os = "windows"))]
+    if ui.platform.caps.os != super::platform::Os::Macos {
+        rows.push(tr("Speech engine"), speech_engine_row(ui, p, layer));
+    }
     rows.push_described(
         if ui.platform.caps.os == super::platform::Os::Macos {
             tr("Use the Mac's microphone instead of Bluetooth")
@@ -869,11 +863,6 @@ pub(super) fn dictation(ui: &Ui, p: Paint, layer: &mut Vec<El>, query: &str) -> 
             },
         ),
     );
-    // macOS runs its models on Metal or Apple's speech engine.
-    #[cfg(any(target_os = "linux", target_os = "windows"))]
-    if ui.platform.caps.os != super::platform::Os::Macos {
-        rows.push(tr("Speech engine"), speech_engine_row(ui, p, layer));
-    }
     rows.into_rows()
 }
 
@@ -1051,19 +1040,19 @@ fn clipboard_note_shown(ui: &Ui) -> bool {
         && !crate::labs::Feature::GnomeClipboardRestore.on(&ui.settings)
 }
 
-/// Enable on launch (Linux and Windows), the Dock icon, sounds, the
-/// interface language, and the update channel.
+/// Enable dictation on launch (Linux and Windows), Launch at login, the Dock
+/// icon, sounds, the interface language, and the update channel.
 pub(super) fn application(ui: &Ui, p: Paint, layer: &mut Vec<El>, query: &str) -> Vec<CardRow> {
     let settings = &ui.settings;
     let mut rows = search::Rows::new(query);
     if ui.platform.caps.listener_control {
         rows.push(
-            tr("Enable on launch"),
+            tr("Enable dictation on launch"),
             icon_toggle_row(
                 p,
                 "enable-on-launch",
                 &PLAY,
-                tr("Enable on launch"),
+                tr("Enable dictation on launch"),
                 None,
                 settings.enable_on_launch,
                 |ui: &mut Ui| {
@@ -1073,6 +1062,7 @@ pub(super) fn application(ui: &Ui, p: Paint, layer: &mut Vec<El>, query: &str) -
             ),
         );
     }
+    rows.extend(tr("Launch at login"), launch_at_login_rows(ui, p));
     if ui.platform.caps.dock_icon {
         rows.push(
             tr("Show Dock icon"),

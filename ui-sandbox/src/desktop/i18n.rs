@@ -942,7 +942,7 @@ const TRANSLATIONS: &[(&str, [&str; 6])] = &[
     ("Disable", ["Wyłącz", "停用", "無効にする", "Deaktivieren", "Desactivar", "Вимкнути"]),
     ("Either", ["Dowolny", "任意", "どちらでも", "Beide", "Cualquiera", "Обидві"]),
     ("Enable", ["Włącz", "启用", "有効にする", "Aktivieren", "Activar", "Увімкнути"]),
-    ("Enable on launch", ["Włączaj przy uruchomieniu", "启动时启用", "起動時に有効にする", "Beim Start aktivieren", "Activar al iniciar", "Вмикати під час запуску"]),
+    ("Enable dictation on launch", ["Włączaj dyktowanie przy uruchomieniu", "启动时启用听写", "起動時にディクテーションを有効にする", "Diktat beim Start aktivieren", "Activar el dictado al iniciar", "Вмикати диктування під час запуску"]),
     ("Every registered transformation is already included.", ["Wszystkie zarejestrowane transformacje są już dodane.", "所有已注册的转换都已包含。", "登録済みの変換はすべて追加されています。", "Alle registrierten Transformationen sind bereits enthalten.", "Todas las transformaciones registradas ya están incluidas.", "Усі зареєстровані перетворення вже додано."]),
     ("Finding applications…", ["Wyszukiwanie aplikacji…", "正在查找应用…", "アプリを検索中…", "Apps werden gesucht…", "Buscando aplicaciones…", "Пошук програм…"]),
     ("Hex could not load the OpenCode model catalog.", ["Hex nie mógł wczytać katalogu modeli OpenCode.", "Hex 无法加载 OpenCode 模型目录。", "Hex は OpenCode のモデル一覧を読み込めませんでした。", "Hex konnte den OpenCode-Modellkatalog nicht laden.", "Hex no pudo cargar el catálogo de modelos de OpenCode.", "Hex не вдалося завантажити каталог моделей OpenCode."]),

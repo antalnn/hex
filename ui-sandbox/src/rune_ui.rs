@@ -27,6 +27,9 @@ mod shortcut;
 mod sound_sets;
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod offscreen;
 mod vocabulary;
 
 use controls::Paint;
