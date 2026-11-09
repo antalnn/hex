@@ -381,8 +381,8 @@ fn rows(ui: &Ui) -> Vec<Row> {
     rows.push(row(
         Feature::RewriteSnippetMatch,
         Some(&KEYBOARD),
-        tr("Rewrite snippet match"),
-        tr("Let the model match a spoken rewrite instruction to one of your saved snippets"),
+        tr("Rewrite semantic match"),
+        tr("Let the model match a spoken instruction to one of your saved snippets"),
     ));
     rows.push(row(
         Feature::ReleaseNotesLink,

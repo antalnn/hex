@@ -163,7 +163,7 @@ impl Feature {
                 "Press Caps Lock to start and stop dictation; its light shows when Hex records and transcribes"
             }
             Self::RewriteSnippetMatch => {
-                "Let the model match a spoken rewrite instruction to one of your saved snippets"
+                "Let the model match a spoken instruction to one of your saved snippets"
             }
             Self::OpenCodeInWsl => {
                 "Use an OpenCode service running in your default WSL distribution for Modes rewriting and the Modes model picker; looking for it can start WSL"
