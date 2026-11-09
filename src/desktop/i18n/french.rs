@@ -664,6 +664,8 @@ const TRANSLATIONS: &[(&str, &str)] = &[
     ("OpenCode model", "Modèle OpenCode"),
     ("OpenCode transformation", "Transformation OpenCode"),
     ("OpenCode transformation will be available after Hex connects to OpenCode.", "La transformation OpenCode sera disponible une fois Hex connecté à OpenCode."),
+    ("AI rewrite", "Réécriture IA"),
+    ("Clean up dictation with a model: the local one, or the remote endpoint the settings name", "Nettoie la dictée avec un modèle : le modèle local ou le point de terminaison distant indiqué dans les réglages"),
     ("Share dictation shortcut with other apps", "Partager le raccourci de dictée avec d'autres apps"),
     ("Use another microphone instead of Bluetooth", "Utiliser un autre micro plutôt que le Bluetooth"),
     ("Use the Mac's microphone instead of Bluetooth", "Utiliser le micro du Mac plutôt que le Bluetooth"),

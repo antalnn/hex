@@ -1278,6 +1278,24 @@ fn unavailable_opencode_is_explained_beside_each_switch() {
 }
 
 #[test]
+fn modes_ai_rewrite_has_its_own_switch_beside_the_opencode_rewrite() {
+    let ai = crate::dictation::ai_rewrite::TRANSFORMATION_ID.to_string();
+    let mut rt = runtime("modes", true, PANE_SIZE);
+    let chat = |rt: &Runtime<Ui>| rt.state.settings.dictation_processing.modes[0].clone();
+    assert!(chat(&rt).post_processing.enabled);
+    assert!(!chat(&rt).transformations.contains(&ai));
+    tap(&mut rt, "ai-rewrite-toggle");
+    assert!(chat(&rt).transformations.contains(&ai));
+    assert!(
+        chat(&rt).post_processing.enabled,
+        "the legacy switch keeps its own step"
+    );
+    tap(&mut rt, "ai-rewrite-toggle");
+    assert!(!chat(&rt).transformations.contains(&ai));
+    assert!(chat(&rt).post_processing.enabled);
+}
+
+#[test]
 fn history_selects_deletes_and_clears_in_two_steps() {
     let mut rt = runtime("history", true, PANE_SIZE);
     tap(&mut rt, "history-entry3");

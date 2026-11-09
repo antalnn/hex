@@ -385,6 +385,17 @@ fn update_mode(ui: &mut Ui, change: impl FnOnce(&mut DictationMode)) -> bool {
     ui.update(|settings| change(mode_mut(settings, selection)))
 }
 
+/// Adds or removes the native AI rewrite step in a mode's transformation list.
+/// Adding appends, as the Transformations + menu does; the row can be dragged
+/// to the position the mode needs.
+fn set_ai_rewrite(mode: &mut DictationMode, on: bool) {
+    let id = crate::dictation::ai_rewrite::TRANSFORMATION_ID;
+    mode.transformations.retain(|candidate| candidate != id);
+    if on {
+        mode.transformations.push(id.into());
+    }
+}
+
 fn add_mode(ui: &mut Ui) {
     ui.flush_drafts();
     let mut new = ui.settings.dictation_processing.default_mode.clone();
@@ -1108,13 +1119,40 @@ fn processing(
     let reason = (!can_toggle)
         .then(|| models::unavailable_reason(ui, OpenCodeFeature::Transformation))
         .flatten();
-    let mut rows = vec![setting_row(
+    let mut rows = Vec::new();
+    // The native AI rewrite is a transformation, not the OpenCode rewrite: it
+    // gets its own switch so turning one on never turns the other off.
+    if !crate::policy::Policy::current().locks(crate::policy::Lock::Transforms) {
+        let ai_rewrite = current
+            .transformations
+            .iter()
+            .any(|id| id == crate::dictation::ai_rewrite::TRANSFORMATION_ID);
+        let ai_toggle = Switch::new(ai_rewrite)
+            .on_toggle(|ui: &mut Ui| {
+                let on = !mode(&ui.settings, ui.modes.selected)
+                    .transformations
+                    .iter()
+                    .any(|id| id == crate::dictation::ai_rewrite::TRANSFORMATION_ID);
+                update_mode(ui, |mode| set_ai_rewrite(mode, on));
+            })
+            .build(p.k)
+            .key("ai-rewrite-toggle")
+            .label(tr(crate::dictation::ai_rewrite::NAME));
+        rows.push(setting_row(
+            p,
+            "ai-rewrite",
+            tr(crate::dictation::ai_rewrite::NAME),
+            Some(tr(crate::dictation::ai_rewrite::DESCRIPTION)),
+            ai_toggle,
+        ));
+    }
+    rows.push(setting_row(
         p,
         "processing-enabled",
         tr("OpenCode transformation"),
         reason,
         toggle,
-    )];
+    ));
     if enabled {
         rows.extend(models::rows(ui, p, Target::Mode(selection), layer));
         rows.push(setting_row(
@@ -1269,7 +1307,24 @@ fn fixture_icon(rgb: [u8; 3]) -> Vec<u8> {
 
 #[cfg(test)]
 mod tests {
-    use super::reorder_transformation;
+    use super::{reorder_transformation, set_ai_rewrite};
+    use crate::app_settings::DictationMode;
+    use crate::dictation::ai_rewrite::TRANSFORMATION_ID;
+
+    #[test]
+    fn the_ai_switch_adds_and_removes_only_its_step() {
+        let mut mode = DictationMode::default();
+        mode.transformations = vec!["lowercase".into(), "paragraphs".into()];
+        set_ai_rewrite(&mut mode, true);
+        assert_eq!(
+            mode.transformations,
+            ["lowercase", "paragraphs", TRANSFORMATION_ID]
+        );
+        set_ai_rewrite(&mut mode, true);
+        assert_eq!(mode.transformations.len(), 3, "the step is added once");
+        set_ai_rewrite(&mut mode, false);
+        assert_eq!(mode.transformations, ["lowercase", "paragraphs"]);
+    }
 
     #[test]
     fn transformations_reorder_in_both_directions() {
