@@ -56,11 +56,17 @@ The settings those steps produce look like this:
 ```
 
 With both paths unset, Hex resolves the server at
-`<models>\local-llm\llama.cpp\llama-server.exe` and the model at
-`<models>\local-llm\fluid-1-mini-q6_k.gguf`, where `<models>` is
-`%LOCALAPPDATA%\hex\models` on Windows. The resolver also honors
-`HEX_LLAMA_SERVER` and `llm.program`. A missing program leaves the local model
-off and Remote keeps working for every feature.
+`<models>\local-llm\llama.cpp\llama-server.exe` and uses the default model in the
+same `local-llm` folder, where `<models>` is `%LOCALAPPDATA%\hex\models` on
+Windows. The resolver also honors `HEX_LLAMA_SERVER` and `llm.program`. A
+missing program leaves the local model off and Remote keeps working for every
+feature.
+
+The local model is a text model, not a speech model: it receives the transcript
+and returns a cleaned version. Hex loads any GGUF chat model its llama.cpp
+server supports, such as a model from the Qwen family. Browse models on
+[Hugging Face](https://huggingface.co/models), pick one that publishes GGUF
+files, and add the file from the local model card's files sheet.
 
 If another server already answers the port, Hex adopts it instead of starting a
 second one. A server Hex recorded from an earlier crash is killed and replaced,
