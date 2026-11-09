@@ -37,6 +37,103 @@ Add the AI rewrite step on the Modes pane: its switch adds the step to a mode's
 transformations, and the list can be reordered so rules that read the raw words
 run before the model and rules that shape its output run after.
 
+## Local model
+
+The local model is the dictation cleanup's model call, served by a llama.cpp
+server Hex runs itself.
+
+1. Open Models and find the Dictation card. Set its source to Local.
+2. The local model card below shows the server state and Start or Stop. Hex
+   starts the server with the app and stops it when Hex ends; on Windows the
+   child runs in a job object, so a crash cannot leave it holding GPU memory.
+3. Open the card's files sheet to see the llama.cpp folder and the model file.
+   Add a model file there when the default is missing.
+
+The settings those steps produce look like this:
+
+```json
+"llm": { "enabled": true, "program": null, "model": null, "port": 8081 }
+```
+
+With both paths unset, Hex resolves the server at
+`<models>\local-llm\llama.cpp\llama-server.exe` and the model at
+`<models>\local-llm\fluid-1-mini-q6_k.gguf`, where `<models>` is
+`%LOCALAPPDATA%\hex\models` on Windows. The resolver also honors
+`HEX_LLAMA_SERVER` and `llm.program`. A missing program leaves the local model
+off and Remote keeps working for every feature.
+
+If another server already answers the port, Hex adopts it instead of starting a
+second one. A server Hex recorded from an earlier crash is killed and replaced,
+so it does not stay behind as an external process.
+
+## Rewrites
+
+Rewrite selection replaces text you already selected with a model's result.
+
+1. General carries the Rewrite shortcut row. Record a key there.
+2. Models carries the Rewrite selection card with the endpoint, the model, and
+   the API key. This feature is remote only.
+3. Select text, press the shortcut, and speak an instruction. The result
+   replaces the selection in place.
+
+```json
+"rewrite": {
+  "endpoint": "https://opencode.ai/inference/go/openai/v1/chat/completions",
+  "model": "mimo-v2.6-flash",
+  "api_key": "your key"
+}
+```
+
+The card warns while the endpoint or model is empty. With no text selected the
+HUD reports the failure and nothing pastes.
+
+Labs carries a snippet match switch. When it is on, a rewrite instruction of 3
+to 24 words may be mapped by the remote model to one saved prompt snippet. A
+name the model invents, or a reply of none, leaves the instruction as spoken.
+
+## Prompts
+
+The Rewrite prompts sheet holds named snippets and the default prompt.
+
+- A snippet is a name plus the text that replaces your instruction.
+- The Rewrite selection card's sheet lists them in their saved order; the
+  switch on the sheet decides whether a snippet is used when the instruction
+  names one.
+- `default_prompt` names the snippet an unnamed instruction starts from. Here
+  the saved snippets are `prompt`, `polish`, `prompt concise`, `tighten`, and
+  `structure`, and the default is `polish`.
+
+The saved prompt text is private, so this row shows the shape of a snippet with
+an invented prompt:
+
+| Snippet | Prompt |
+|---|---|
+| `tighten` | `Keep every fact and remove filler. Keep my sentence order.` |
+
+That prompt is an example, not a saved one. A snippet you save works the same
+way: the model receives its text instead of your spoken words.
+
+## How it all works
+
+A dictation runs through the same stages on every OS, and each stage has one
+place to change it:
+
+1. Labs rules rewrite the raw transcript first: spoken formatting, spoken
+   symbols, and filler words.
+2. Vocabulary corrections replace `sounds_like` spellings with the saved term,
+   from General › Vocabulary. A mode's own vocabulary and swaps apply next.
+3. The mode's transformations run in the order listed on the Modes pane. The
+   native AI rewrite step runs where its id sits in that list; the personal
+   rules in `~/.config/hex` follow their own order around it.
+4. Paragraph and colon rules run after the model, and a saved snippet replaces a
+   whole-utterance cue last, so its text is never reformatted by an earlier
+   step.
+5. The code-term wrap runs last, adding backticks around terms marked as code
+   in Vocabulary. It is off by default.
+
+Editing a loaded rule in `~/.config/hex` changes the trust hash, so Hex asks
+for Allow in the Output pane once before the rules run again.
+
 ## Build and run
 
 Requirements: Rust 1.97 or newer and the Vulkan SDK, with `VULKAN_SDK` set.
