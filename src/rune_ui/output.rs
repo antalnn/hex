@@ -215,6 +215,11 @@ fn steps(ui: &Ui, mode: &DictationMode) -> Vec<Step> {
 
 /// A built-in transformation's name and what it does.
 fn builtin(id: &str) -> Option<(&'static str, &'static str)> {
+    // A native step carries its own label and description, the same pair the
+    // Modes pane and the transformation host read.
+    if let Some((name, description)) = crate::personal_commands::native_transformation(id) {
+        return Some((tr(name), tr(description)));
+    }
     match id {
         "lowercase" => Some((tr("Lowercase"), tr("Lowercases everything"))),
         "no-trailing-punctuation" => Some((tr("No final period"), tr("Drops the last . ! or ?"))),

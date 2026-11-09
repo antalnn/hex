@@ -24,10 +24,13 @@ use crate::app_settings::ModelSource;
 /// the point the model runs: after the rules decided from the raw words
 /// (bullets, orphans) and before the rules applied to the model's output
 /// (paragraphs, colon cues, snippets).
+///
+/// Serialised into `settings.json`, so renaming it silently drops the step
+/// from every saved mode. Change the label ([`NAME`]) instead.
 pub const TRANSFORMATION_ID: &str = "ai-rewrite";
 
-/// What the app calls this step in the Modes pane.
-pub const NAME: &str = "AI rewrite";
+/// What the app calls this step.
+pub const NAME: &str = "AI cleanup";
 
 /// What the Modes pane says it does.
 pub const DESCRIPTION: &str =

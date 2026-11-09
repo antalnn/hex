@@ -385,7 +385,7 @@ fn update_mode(ui: &mut Ui, change: impl FnOnce(&mut DictationMode)) -> bool {
     ui.update(|settings| change(mode_mut(settings, selection)))
 }
 
-/// Adds or removes the native AI rewrite step in a mode's transformation list.
+/// Adds or removes the native AI cleanup step in a mode's transformation list.
 /// Adding appends, as the Transformations + menu does; the row can be dragged
 /// to the position the mode needs.
 fn set_ai_rewrite(mode: &mut DictationMode, on: bool) {
@@ -1120,7 +1120,7 @@ fn processing(
         .then(|| models::unavailable_reason(ui, OpenCodeFeature::Transformation))
         .flatten();
     let mut rows = Vec::new();
-    // The native AI rewrite is a transformation, not the OpenCode rewrite: it
+    // The native AI cleanup is a transformation, not the OpenCode rewrite: it
     // gets its own switch so turning one on never turns the other off.
     if !crate::policy::Policy::current().locks(crate::policy::Lock::Transforms) {
         let ai_rewrite = current
