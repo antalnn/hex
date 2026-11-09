@@ -24,6 +24,7 @@ const SKIPPED_DIRS: &[&str] = &[
     "fixtures",
     "Pods",
     "DerivedData",
+    "ui-sandbox",
 ];
 
 const TEST_DIRS: &[&str] = &["test", "tests", "benches", "e2e", "__tests__"];
