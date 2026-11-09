@@ -474,7 +474,7 @@ const TRANSLATIONS: &[(&str, &str)] = &[
     ("llama.cpp was not found, so the local model stays off until it is", "llama.cpp не найден, поэтому локальная модель остаётся выключенной, пока его нет"),
     ("Local model server off", "Сервер локальной модели выключен"),
     ("Local model server running", "Сервер локальной модели работает"),
-    ("Hex starts it for Dictation cleanup when Dictation is set to Local", "Hex запускает его для очистки диктовки, когда диктовка работает локально."),
+    ("AI rewrite runs on this server when Dictation is set to Local. Hex starts it with the app; add AI rewrite to a mode's transformations in Modes to use it.", "ИИ-переписывание работает на этом сервере, когда диктовка установлена на локальную. Hex запускает его вместе с приложением; чтобы использовать его, добавьте ИИ-переписывание в преобразования режима в Режимах."),
     ("Local model server starting", "Сервер локальной модели запускается"),
     ("Only terms marked with the switch in their row", "Только термины с включённым переключателем в своей строке"),
     ("Return to the window you were in when you pressed the shortcut", "Вернуться в окно, в котором вы были при нажатии сочетания"),

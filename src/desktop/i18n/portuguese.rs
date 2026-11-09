@@ -481,7 +481,7 @@ const TRANSLATIONS: &[(&str, &str)] = &[
     ("llama.cpp was not found, so the local model stays off until it is", "O llama.cpp não foi encontrado, então o modelo local fica desligado até ele existir"),
     ("Local model server off", "Servidor do modelo local desligado"),
     ("Local model server running", "Servidor do modelo local em execução"),
-    ("Hex starts it for Dictation cleanup when Dictation is set to Local", "O Hex o inicia para a limpeza do ditado quando o ditado usa o modo local."),
+    ("AI rewrite runs on this server when Dictation is set to Local. Hex starts it with the app; add AI rewrite to a mode's transformations in Modes to use it.", "A reescrita com IA roda neste servidor quando o ditado está definido como Local. O Hex o inicia com o aplicativo; para usá-lo, adicione a reescrita com IA às transformações de um modo em Modos."),
     ("Local model server starting", "Servidor do modelo local iniciando"),
     ("Only terms marked with the switch in their row", "Apenas termos com o interruptor da própria linha ligado"),
     ("Return to the window you were in when you pressed the shortcut", "Voltar à janela em que você estava ao pressionar o atalho"),

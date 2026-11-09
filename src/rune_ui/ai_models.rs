@@ -2,10 +2,11 @@
 //!
 //! Three cards and nothing else, so the pane stays a switchboard rather than a
 //! second General. The features come first: Dictation picks `Local` or
-//! `Remote`, and Rewrite selection always calls a remote endpoint, so its card
-//! shows the address, model and key with no Local choice. The server that
-//! serves one of them, Local model, comes last: it is the llama.cpp server Hex
-//! owns, shown here instead of in the sidebar and Output. Remote is any
+//! `Remote`, and the native AI rewrite step runs on whichever it names;
+//! Rewrite selection always calls a remote endpoint, so its card shows the
+//! address, model and key with no Local choice. The server that serves the
+//! Local choice, Local model, comes last: it is the llama.cpp server Hex owns,
+//! shown here instead of in the sidebar and Output. Remote is any
 //! OpenAI-compatible endpoint, a hosted provider or a server on the network,
 //! with its own model name and an optional bearer token.
 //!
@@ -30,9 +31,9 @@ const FIELD_WIDTH: f32 = 280.0;
 const ROW_HEIGHT: f32 = 36.0;
 const PADDING: f32 = 18.0;
 const MODAL_WIDTH: f32 = 640.0;
-/// The local model's one remaining job, said on its card.
-const LOCAL_MODEL_PURPOSE: &str =
-    "Hex starts it for Dictation cleanup when Dictation is set to Local";
+/// What the local server serves and the two switches that turn it on, said on
+/// its card.
+const LOCAL_MODEL_PURPOSE: &str = "AI rewrite runs on this server when Dictation is set to Local. Hex starts it with the app; add AI rewrite to a mode's transformations in Modes to use it.";
 
 /// The endpoint, model and key of one feature's remote call.
 #[derive(Default)]
@@ -680,9 +681,11 @@ mod tests {
     }
 
     #[test]
-    fn the_local_card_says_it_serves_the_dictation_cleanup() {
-        assert!(LOCAL_MODEL_PURPOSE.contains("Dictation cleanup"));
-        assert!(LOCAL_MODEL_PURPOSE.contains("Local"));
+    fn the_local_card_says_it_serves_the_ai_rewrite() {
+        assert!(LOCAL_MODEL_PURPOSE.contains("AI rewrite"));
+        assert!(LOCAL_MODEL_PURPOSE.contains("Dictation is set to Local"));
+        assert!(LOCAL_MODEL_PURPOSE.contains("starts it with the app"));
+        assert!(LOCAL_MODEL_PURPOSE.contains("transformations"));
     }
 
     #[test]
