@@ -2,7 +2,7 @@
 //!
 //! Three cards and nothing else, so the pane stays a switchboard rather than a
 //! second General. The features come first: Dictation picks `Local` or
-//! `Remote`, and the native AI rewrite step runs on whichever it names;
+//! `Remote`, and the native AI cleanup step runs on whichever it names;
 //! Rewrite selection always calls a remote endpoint, so its card shows the
 //! address, model and key with no Local choice. The server that serves the
 //! Local choice, Local model, comes last: it is the llama.cpp server Hex owns,
@@ -33,7 +33,8 @@ const PADDING: f32 = 18.0;
 const MODAL_WIDTH: f32 = 640.0;
 /// What the local server serves and the two switches that turn it on, said on
 /// its card.
-const LOCAL_MODEL_PURPOSE: &str = "AI rewrite runs on this server when Dictation is set to Local. Hex starts it with the app; add AI rewrite to a mode's transformations in Modes to use it.";
+const LOCAL_MODEL_PURPOSE: &str =
+    "AI cleanup runs on this server when Dictation is set to Local. Hex starts it with the app.";
 
 /// The endpoint, model and key of one feature's remote call.
 #[derive(Default)]
@@ -681,11 +682,13 @@ mod tests {
     }
 
     #[test]
-    fn the_local_card_says_it_serves_the_ai_rewrite() {
-        assert!(LOCAL_MODEL_PURPOSE.contains("AI rewrite"));
+    fn the_local_card_says_it_serves_the_ai_cleanup() {
+        assert!(LOCAL_MODEL_PURPOSE.contains("AI cleanup"));
         assert!(LOCAL_MODEL_PURPOSE.contains("Dictation is set to Local"));
         assert!(LOCAL_MODEL_PURPOSE.contains("starts it with the app"));
-        assert!(LOCAL_MODEL_PURPOSE.contains("transformations"));
+        // The Modes pane is hidden (`Pane::Modes` is never shown), so naming
+        // it sent people to a surface that is not in the app.
+        assert!(!LOCAL_MODEL_PURPOSE.contains("Modes"));
     }
 
     #[test]
