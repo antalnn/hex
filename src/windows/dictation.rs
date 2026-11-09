@@ -1271,6 +1271,7 @@ fn process_rewrite_job(
                 &rewrite.default_prompt,
             )
             .map_err(|error| format!("{error:#}"))?;
+            let instruction = rewrite.layer_two(instruction);
             let rewritten =
                 crate::dictation::rewrite::rewrite(&rewrite.model, &instruction, &selection)
                     .map_err(|error| format!("{error:#}"))?;

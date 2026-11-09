@@ -1260,6 +1260,8 @@ const TRANSLATIONS: &[(&str, &str)] = &[
     ("Each app is listed once, so a repeated name is not saved", "Cada aplicativo aparece uma vez, então um nome repetido não é salvo"),
     ("Terminal paste shortcut", "Atalho de colar no terminal"),
     ("Another dictation shortcut that always pastes with Ctrl+Shift+V", "Outro atalho de ditado que sempre cola com Ctrl+Shift+V"),
+    ("Rewrite snippet match", "Correspondência de trecho na reescrita"),
+    ("Let the model match a spoken rewrite instruction to one of your saved snippets", "Deixe o modelo associar uma instrução de reescrita falada a um dos seus trechos salvos"),
 ];
 
 #[cfg(test)]

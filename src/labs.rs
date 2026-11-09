@@ -123,10 +123,11 @@ pub enum Feature {
     QuitClosesWindow,
     ExpireMeetingAudio,
     CapsLockDictation,
+    RewriteSnippetMatch,
 }
 
 impl Feature {
-    pub const ALL: [Self; 59] = [
+    pub const ALL: [Self; 60] = [
         Self::Meetings,
         Self::VoiceFilter,
         Self::Playground,
@@ -186,6 +187,7 @@ impl Feature {
         Self::QuitClosesWindow,
         Self::ExpireMeetingAudio,
         Self::CapsLockDictation,
+        Self::RewriteSnippetMatch,
     ];
 
     /// The features this OS and build have.
@@ -269,7 +271,8 @@ impl Feature {
             | Self::NotchIndicator
             | Self::QuitClosesWindow
             | Self::GnomeAnnotate
-            | Self::CapsLockDictation => Audience::Everyone,
+            | Self::CapsLockDictation
+            | Self::RewriteSnippetMatch => Audience::Everyone,
         }
     }
 
@@ -332,6 +335,7 @@ impl Feature {
             | Self::FailureNotices
             | Self::TypedText => 20261107,
             Self::GnomeAnnotate | Self::TerminalPasteShortcut => 20261108,
+            Self::RewriteSnippetMatch => 20261109,
         }
     }
 
@@ -373,7 +377,9 @@ impl Feature {
             | Self::MovableMeetingCapsules
             | Self::MeetingImport => cfg!(target_os = "macos"),
             Self::VoiceFilter => cfg!(any(target_os = "macos", target_os = "linux")),
-            Self::TerminalPaste | Self::ShareShortcut => cfg!(target_os = "windows"),
+            Self::TerminalPaste | Self::ShareShortcut | Self::RewriteSnippetMatch => {
+                cfg!(target_os = "windows")
+            }
             Self::SectionKeyAlone
             | Self::GnomeClipboardRestore
             | Self::TypedText
@@ -499,6 +505,7 @@ impl Feature {
             Self::QuitClosesWindow => "quit-closes-window",
             Self::ExpireMeetingAudio => "expire-meeting-audio",
             Self::CapsLockDictation => "caps-lock-dictation",
+            Self::RewriteSnippetMatch => "rewrite-snippet-match",
         }
     }
 
@@ -564,6 +571,7 @@ impl Feature {
             Self::QuitClosesWindow => "labs.quit_closes_window",
             Self::ExpireMeetingAudio => "labs.expire_meeting_audio",
             Self::CapsLockDictation => "labs.caps_lock_dictation",
+            Self::RewriteSnippetMatch => "labs.rewrite_snippet_match",
         }
     }
 
@@ -633,6 +641,7 @@ impl Feature {
             Self::QuitClosesWindow => settings.labs.quit_closes_window,
             Self::ExpireMeetingAudio => settings.labs.expire_meeting_audio,
             Self::CapsLockDictation => settings.labs.caps_lock_dictation,
+            Self::RewriteSnippetMatch => settings.labs.rewrite_snippet_match,
         }
     }
 
@@ -700,6 +709,7 @@ impl Feature {
             &mut labs.quit_closes_window,
             &mut labs.expire_meeting_audio,
             &mut labs.caps_lock_dictation,
+            &mut labs.rewrite_snippet_match,
         ]
     }
 
@@ -767,6 +777,7 @@ impl Feature {
             Self::QuitClosesWindow => settings.labs.quit_closes_window = on,
             Self::ExpireMeetingAudio => settings.labs.expire_meeting_audio = on,
             Self::CapsLockDictation => settings.labs.caps_lock_dictation = on,
+            Self::RewriteSnippetMatch => settings.labs.rewrite_snippet_match = on,
             // Off, no shortcut keeps a key only the feature allows.
             Self::StandaloneSpecialKeys => {
                 settings.labs.standalone_special_keys = on;
@@ -839,6 +850,8 @@ const TYPED_TEXT: u64 = GNOME_ANNOTATE << 1;
 /// The next bit above Typed text's switch: Caps Lock dictation's recording
 /// light blinks slowly instead of staying solid.
 const CAPS_LOCK_SLOW_BLINK: u64 = TYPED_TEXT << 1;
+/// The next bit above Caps Lock dictation's slow blink.
+const REWRITE_SNIPPET_MATCH: u64 = CAPS_LOCK_SLOW_BLINK << 1;
 
 /// This process's `labs` switches: unknown until settings load or one is
 /// first read.
@@ -1055,6 +1068,14 @@ pub fn gnome_clipboard_restore() -> bool {
 #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 pub fn typed_text() -> bool {
     on(TYPED_TEXT) && Feature::TypedText.on_this_os()
+}
+
+/// Rewrite selection asks the remote model to match a spoken instruction to a
+/// saved snippet before the rewrite call (Windows; read as each rewrite job
+/// starts).
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+pub fn rewrite_snippet_match() -> bool {
+    on(REWRITE_SNIPPET_MATCH) && Feature::RewriteSnippetMatch.on_this_os()
 }
 
 /// On a Wayland desktop without layer-shell (GNOME), the meeting capsules
@@ -1308,6 +1329,11 @@ fn encode_where(settings: &LabsSettings, reaches: impl Fn(Feature) -> bool) -> u
             GNOME_ANNOTATE,
         ),
         (Feature::Screenshots, settings.screenshots, SCREENSHOTS),
+        (
+            Feature::RewriteSnippetMatch,
+            settings.rewrite_snippet_match,
+            REWRITE_SNIPPET_MATCH,
+        ),
     ]
     .into_iter()
     .filter(|(feature, on, _)| *on && reaches(*feature))

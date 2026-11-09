@@ -33,6 +33,58 @@ const SENTINEL: &str = "-----";
 /// thinking and returns nothing when that is the whole budget (measured
 /// 2026-11-08, 1,498 of 1,500 on reasoning with an empty reply).
 const REMOTE_MAX_TOKENS: u32 = 4_096;
+/// The snippet match answers with one name, but a reasoning model still spends
+/// tokens thinking first, as it does for a rewrite.
+const MATCH_MAX_TOKENS: u32 = 1_024;
+/// The match runs ahead of the rewrite, so it gets a shorter deadline than the
+/// rewrite itself: a slow match is worth less than the instruction as spoken.
+const MATCH_TIMEOUT: Duration = Duration::from_secs(12);
+/// A recording shorter than this is a fragment, not an instruction the model
+/// can classify.
+const MATCH_MIN_WORDS: usize = 3;
+/// A recording longer than this carries detail a saved snippet would discard.
+/// The history probe measured 5 false picks over 10 rows, every one of them on
+/// a passage longer than this; the gate leaves those to the instruction as
+/// spoken.
+const MATCH_MAX_WORDS: usize = 24;
+/// The verbs a rewrite instruction opens with. The probe measured the model
+/// picking a snippet for a statement ("I tested the rewrite selection…") that
+/// asks for nothing; a recording that does not open with one of these stays the
+/// instruction it is.
+const REWRITE_OPENERS: &[&str] = &[
+    "make",
+    "turn",
+    "polish",
+    "tighten",
+    "clean",
+    "rewrite",
+    "reword",
+    "shorten",
+    "summarize",
+    "summarise",
+    "fix",
+    "improve",
+    "change",
+    "convert",
+    "reformat",
+    "restructure",
+    "format",
+    "add",
+    "cut",
+    "trim",
+    "reduce",
+    "clarify",
+    "simplify",
+    "proofread",
+    "edit",
+    "expand",
+    "elaborate",
+];
+/// The system prompt for the snippet match: a classification, not an edit.
+const MATCH_PROMPT: &str = "You match a spoken instruction to one saved snippet. \
+The snippets you may choose are listed by name. Reply with exactly one name from \
+the list, copied as written, or the word NONE when no snippet fits. Reply with \
+nothing else: no punctuation, no explanation, and no quotes.";
 
 /// What the model is told, and nothing about its own voice: it edits the
 /// person's text, it does not write its own.
@@ -152,25 +204,53 @@ impl RewriteRuntime {
         self.snippets = settings.rewrite.pairs();
         self.default_prompt = settings.rewrite.default_prompt.clone();
     }
+
+    /// The snippet match for one instruction, gated by the Labs switch and
+    /// the runtime's own snippets and endpoint.
+    pub(crate) fn layer_two(&self, instruction: String) -> String {
+        layer_two(
+            instruction,
+            &self.snippets,
+            &self.model,
+            crate::labs::rewrite_snippet_match(),
+        )
+    }
 }
 
 /// Rewrites `selection` according to `instruction`, through the remote
 /// endpoint `remote` names.
 pub(crate) fn rewrite(remote: &RemoteModel, instruction: &str, selection: &str) -> Result<String> {
+    let output = chat(
+        remote,
+        messages(instruction, selection),
+        REMOTE_MAX_TOKENS,
+        TIMEOUT,
+    )?;
+    checked(&output, instruction)
+}
+
+/// One POST to the remote endpoint, returning the reply's text. The caller
+/// decides what a reply means.
+fn chat(
+    remote: &RemoteModel,
+    messages: Vec<Message>,
+    max_tokens: u32,
+    timeout: Duration,
+) -> Result<String> {
     if let Some(missing) = remote.missing() {
         return Err(eyre!("{missing}"));
     }
     let url = remote.chat_url();
     let body = Request {
         model: remote.model.trim().to_string(),
-        messages: messages(instruction, selection),
+        messages,
         temperature: 0.0,
-        max_tokens: REMOTE_MAX_TOKENS,
+        max_tokens,
         stream: false,
     };
-    let agent = crate::net::agent(&url, |settings| settings.timeout_global(Some(TIMEOUT)));
+    let agent = crate::net::agent(&url, |settings| settings.timeout_global(Some(timeout)));
     let json = serde_json::to_string(&body)
-        .map_err(|error| eyre!("the rewrite request could not be built: {error}"))?;
+        .map_err(|error| eyre!("the model request could not be built: {error}"))?;
 
     let mut last: Option<ureq::Error> = None;
     for attempt in 0..=RETRIES {
@@ -186,12 +266,11 @@ pub(crate) fn rewrite(remote: &RemoteModel, instruction: &str, selection: &str) 
                     .map_err(|error| eyre!("the model's reply could not be read: {error}"))?;
                 let parsed: Response = serde_json::from_str(&text)
                     .map_err(|error| eyre!("the model's reply was not JSON: {error}"))?;
-                let output = parsed
+                return Ok(parsed
                     .choices
                     .first()
                     .map(|choice| choice.message.content.clone())
-                    .unwrap_or_default();
-                return checked(&output, instruction);
+                    .unwrap_or_default());
             }
             Err(error) => {
                 last = Some(error);
@@ -407,6 +486,113 @@ pub(crate) fn resolve(
     Err(eyre!(
         "there was no instruction and no default prompt, so there is nothing to do"
     ))
+}
+
+/// Runs the snippet match when it can do anything: the lab is on, snippets
+/// exist, the remote is configured, and `resolve` has not already picked one.
+/// The instruction comes back unchanged on every skip, a NONE, or a failed
+/// call, so a model that cannot classify costs only its latency.
+pub(crate) fn layer_two(
+    instruction: String,
+    snippets: &[(String, String)],
+    remote: &RemoteModel,
+    enabled: bool,
+) -> String {
+    if !needs_mapping(&instruction, snippets, remote, enabled) {
+        return instruction;
+    }
+    match match_snippet(&instruction, snippets, remote) {
+        Ok(Some(prompt)) => {
+            tracing::info!(instruction = %instruction, "layer two matched a saved snippet");
+            prompt
+        }
+        Ok(None) => instruction,
+        Err(error) => {
+            tracing::warn!(%error, "the snippet match failed; keeping the instruction");
+            instruction
+        }
+    }
+}
+
+/// Whether the match call has anything to decide.
+fn needs_mapping(
+    instruction: &str,
+    snippets: &[(String, String)],
+    remote: &RemoteModel,
+    enabled: bool,
+) -> bool {
+    enabled
+        && (MATCH_MIN_WORDS..=MATCH_MAX_WORDS).contains(&instruction.split_whitespace().count())
+        && asks_for_a_rewrite(instruction)
+        && !snippets.is_empty()
+        && remote.missing().is_none()
+        && !already_resolved(instruction, snippets)
+}
+
+/// Whether the instruction opens with a rewrite request, after the same
+/// courtesy words [`cue`] drops. "I want you to…" counts; a statement about
+/// the text does not.
+fn asks_for_a_rewrite(instruction: &str) -> bool {
+    let spoken = cue(instruction);
+    let spoken = spoken
+        .strip_prefix("i want you to ")
+        .or_else(|| spoken.strip_prefix("i would like you to "))
+        .or_else(|| spoken.strip_prefix("id like you to "))
+        .unwrap_or(&spoken);
+    spoken
+        .split(' ')
+        .next()
+        .is_some_and(|first| REWRITE_OPENERS.contains(&first))
+}
+
+/// `resolve` already picked a snippet: its saved prompt is the instruction, or
+/// the instruction still names a snippet that the deterministic layer handles.
+fn already_resolved(instruction: &str, snippets: &[(String, String)]) -> bool {
+    let instruction = instruction.trim();
+    snippets
+        .iter()
+        .any(|(_, prompt)| prompt.trim() == instruction)
+        || snippet_prompt(instruction, snippets).is_some()
+}
+
+/// One classification call to the remote endpoint; the reply is accepted only
+/// when it names a saved snippet after [`cue`] normalization.
+fn match_snippet(
+    instruction: &str,
+    snippets: &[(String, String)],
+    remote: &RemoteModel,
+) -> Result<Option<String>> {
+    let names = snippets
+        .iter()
+        .map(|(name, _)| format!("- {name}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let messages = vec![
+        Message {
+            role: "system",
+            content: MATCH_PROMPT.to_string(),
+        },
+        Message {
+            role: "user",
+            content: format!("Instruction: {}\n\nSnippets:\n{names}", instruction.trim()),
+        },
+    ];
+    let reply = chat(remote, messages, MATCH_MAX_TOKENS, MATCH_TIMEOUT)?;
+    Ok(match_reply(&reply, snippets))
+}
+
+/// The prompt a match reply names, or nothing. Only a reply that is a saved
+/// name after case, quotes and punctuation are ignored counts; NONE, an
+/// unknown name and anything wordier leave the instruction as spoken.
+fn match_reply(reply: &str, snippets: &[(String, String)]) -> Option<String> {
+    let spoken = cue(reply);
+    if spoken.is_empty() || spoken == "none" {
+        return None;
+    }
+    snippets
+        .iter()
+        .find(|(name, _)| cue(name) == spoken)
+        .map(|(_, prompt)| prompt.clone())
 }
 
 #[cfg(test)]
@@ -756,5 +942,132 @@ mod tests {
             resolve("polish and tighten", &spoken_snippets(), "").unwrap(),
             "Polish the wording."
         );
+    }
+
+    #[test]
+    fn a_match_reply_naming_a_saved_snippet_yields_its_prompt() {
+        for reply in [
+            "structured prompt",
+            "Structured Prompt.",
+            "\"structured prompt\"",
+        ] {
+            assert_eq!(
+                match_reply(reply, &snippets()).as_deref(),
+                Some("Turn it into a prompt."),
+                "{reply}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_match_reply_naming_no_saved_snippet_is_ignored() {
+        for reply in [
+            "an unknown name",
+            "the structured prompt",
+            "Sure: structured prompt",
+            "NONE",
+            " none. ",
+            "",
+        ] {
+            assert_eq!(match_reply(reply, &snippets()), None, "{reply}");
+        }
+    }
+
+    #[test]
+    fn the_match_call_is_skipped_while_the_lab_is_off() {
+        assert!(!needs_mapping(
+            "make this shorter",
+            &snippets(),
+            &remote("https://api.example.com/v1", "m"),
+            false,
+        ));
+    }
+
+    #[test]
+    fn the_match_call_is_skipped_without_saved_snippets() {
+        assert!(!needs_mapping(
+            "make this shorter",
+            &[],
+            &remote("https://api.example.com/v1", "m"),
+            true,
+        ));
+    }
+
+    #[test]
+    fn the_match_call_is_skipped_when_resolve_already_picked_a_snippet() {
+        assert!(!needs_mapping(
+            "Turn it into a prompt.",
+            &snippets(),
+            &remote("https://api.example.com/v1", "m"),
+            true,
+        ));
+        assert!(!needs_mapping(
+            "use the structured prompt",
+            &snippets(),
+            &remote("https://api.example.com/v1", "m"),
+            true,
+        ));
+    }
+
+    #[test]
+    fn the_match_call_is_skipped_while_the_remote_is_unconfigured() {
+        assert!(!needs_mapping(
+            "make this shorter",
+            &snippets(),
+            &RemoteModel::default(),
+            true,
+        ));
+    }
+
+    #[test]
+    fn a_vague_instruction_is_worth_matching() {
+        assert!(needs_mapping(
+            "make this shorter and clearer",
+            &snippets(),
+            &remote("https://api.example.com/v1", "m"),
+            true,
+        ));
+    }
+
+    #[test]
+    fn the_match_call_is_skipped_for_a_fragment_or_a_passage() {
+        assert!(!needs_mapping(
+            "There is.",
+            &snippets(),
+            &remote("https://api.example.com/v1", "m"),
+            true,
+        ));
+        let passage = "word ".repeat(MATCH_MAX_WORDS + 1);
+        assert!(!needs_mapping(
+            passage.trim(),
+            &snippets(),
+            &remote("https://api.example.com/v1", "m"),
+            true,
+        ));
+    }
+
+    #[test]
+    fn the_match_call_reads_only_an_instruction_that_opens_with_a_request() {
+        assert!(!needs_mapping(
+            "Alright, I tested the rewrite selection, and it seems that something went wrong in it.",
+            &snippets(),
+            &remote("https://api.example.com/v1", "m"),
+            true,
+        ));
+        for instruction in [
+            "turn this into a prompt for an agent",
+            "I want you to make this shorter",
+            "can you polish the wording here",
+        ] {
+            assert!(
+                needs_mapping(
+                    instruction,
+                    &snippets(),
+                    &remote("https://api.example.com/v1", "m"),
+                    true
+                ),
+                "{instruction}"
+            );
+        }
     }
 }

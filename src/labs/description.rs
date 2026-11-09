@@ -162,6 +162,9 @@ impl Feature {
             Self::CapsLockDictation => {
                 "Press Caps Lock to start and stop dictation; its light shows when Hex records and transcribes"
             }
+            Self::RewriteSnippetMatch => {
+                "Let the model match a spoken rewrite instruction to one of your saved snippets"
+            }
         }
     }
 }

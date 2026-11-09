@@ -378,6 +378,12 @@ fn rows(ui: &Ui) -> Vec<Row> {
         tr("Settings search"),
         tr("Find any setting in General with a search field"),
     ));
+    rows.push(row(
+        Feature::RewriteSnippetMatch,
+        Some(&KEYBOARD),
+        tr("Rewrite snippet match"),
+        tr("Let the model match a spoken rewrite instruction to one of your saved snippets"),
+    ));
     if caps.meetings {
         rows.push(row(
             Feature::LiveChapters,
@@ -841,6 +847,7 @@ fn row_key(lab: Lab) -> &'static str {
         Feature::MeetingImport => "lab-meeting-import",
         Feature::MeetingDescriptiveFilenames => "lab-meeting-descriptive-filenames",
         Feature::ExpireMeetingAudio => "lab-expire-meeting-audio",
+        Feature::RewriteSnippetMatch => "lab-rewrite-snippet-match",
     }
 }
 

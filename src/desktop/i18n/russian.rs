@@ -1263,6 +1263,8 @@ const TRANSLATIONS: &[(&str, &str)] = &[
     ("Each app is listed once, so a repeated name is not saved", "Каждое приложение указано один раз, повтор названия не сохраняется"),
     ("Terminal paste shortcut", "Сочетание для вставки в терминал"),
     ("Another dictation shortcut that always pastes with Ctrl+Shift+V", "Ещё одно сочетание для диктовки, которое всегда вставляет через Ctrl+Shift+V"),
+    ("Rewrite snippet match", "Сопоставление фрагмента при переписывании"),
+    ("Let the model match a spoken rewrite instruction to one of your saved snippets", "Позвольте модели сопоставить произнесённую инструкцию переписывания с сохранённым фрагментом"),
 ];
 
 #[cfg(test)]

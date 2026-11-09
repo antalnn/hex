@@ -591,6 +591,11 @@ const KEYS: &[Key] = &[
         "Labs: Output shows a Typed text section whose shortcut runs the focused app's Output steps on the text already typed in the focused field and replaces it (Linux)",
     ),
     key(
+        "labs.rewrite_snippet_match",
+        Kind::Bool,
+        "Labs: rewrite selection asks the remote model to match a spoken instruction to one of the saved snippets (Windows)",
+    ),
+    key(
         "labs.gnome_meeting_capsules",
         Kind::Bool,
         "Labs: on Wayland desktops without layer-shell, such as GNOME, the meeting capsules float over the call through XWayland while it is already running (Linux)",

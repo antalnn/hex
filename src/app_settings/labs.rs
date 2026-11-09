@@ -115,6 +115,9 @@ pub struct LabsSettings {
     /// A shortcut runs the focused app's Output steps on the text already
     /// typed there and replaces it (`typed_text_hotkey`, unbound by default).
     pub typed_text: bool,
+    /// Rewrite selection asks the remote model to match a spoken instruction
+    /// to one of the saved snippets before the rewrite call (Windows).
+    pub rewrite_snippet_match: bool,
     /// Meeting titles and summaries read the vocabulary (issue 1154).
     pub meeting_notes_vocabulary: bool,
     /// At either visible indicator position, the HUD grows out of the notch on a screen with one (macOS).
@@ -196,6 +199,7 @@ impl Default for LabsSettings {
             movable_meeting_capsules: false,
             gnome_clipboard_restore: false,
             typed_text: false,
+            rewrite_snippet_match: false,
             meeting_notes_vocabulary: false,
             notch_indicator: false,
             meeting_finished_event: false,

@@ -16,5 +16,5 @@ src/meeting/transcript.rs 2195
 src/recognition.rs 2022
 src/rune_ui/onboarding_kit/game.rs 2192
 src/rune_ui/settings.rs 1513
-src/windows/dictation.rs 1644
+src/windows/dictation.rs 1645
 src/windows/input.rs 1597
