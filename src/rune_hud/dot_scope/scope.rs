@@ -908,12 +908,18 @@ impl Scope {
             let bars = (self.tuning.bars.round() as usize).clamp(1, super::MAX_COLUMNS);
             let level = self.voices[0].level.clamp(0.0, 1.0);
             let glow = self.traces[0].glow.clamp(0.0, 1.0);
+            // The bars calm only once the voice is near its own peak: a loud
+            // syllable flattens the wave instead of shaking it, while normal
+            // speech keeps the motion that makes the pill feel alive.
+            let calm = smoothstep(0.6, 0.95, level);
             for (index, dot) in self.dots.iter_mut().take(bars).enumerate() {
-                let phase = self.time * 9.0 - index as f32 * 0.9;
-                let shape = 0.62 + 0.38 * (0.5 + 0.5 * phase.sin()).powf(0.7);
+                let phase = self.time * 5.5 - index as f32 * 0.65;
+                let wave = (0.5 + 0.5 * phase.sin()).powf(0.7);
+                let shape = 0.66 + 0.34 * wave;
+                let shape = shape + (1.0 - shape) * 0.8 * calm;
                 *dot = [
                     (level * shape).clamp(0.0, 1.0),
-                    (glow * (0.6 + 0.4 * shape)).clamp(0.0, 1.0),
+                    (glow * (0.72 + 0.28 * shape)).clamp(0.0, 1.0),
                 ];
             }
         } else if self.stage == Stage::Processing && self.tuning.processing == Processing::Jump {
@@ -1338,6 +1344,38 @@ mod tests {
         let mut quiet = Scope::new(Tuning::default());
         run(&mut quiet, 1.5, recording(0.0));
         assert!(lit(&quiet) < lit(&scope), "a lower voice lights less bar");
+    }
+
+    #[test]
+    fn a_full_voice_flattens_the_bars_instead_of_shaking_them() {
+        let bars_tuning = |auto_level| Tuning {
+            auto_level,
+            look: Look::Bars,
+            ..Tuning::default()
+        };
+        let spread_of = |scope: &Scope| {
+            let bars = scope.tuning().bars as usize;
+            let powers = &scope.dots()[..bars];
+            let high = powers.iter().map(|dot| dot[0]).fold(0.0, f32::max);
+            let low = powers.iter().map(|dot| dot[0]).fold(1.0, f32::min);
+            high - low
+        };
+        let mut loud = Scope::new(bars_tuning(false));
+        run(&mut loud, 1.0, recording(1.0));
+        let mut widest = 0.0_f32;
+        for _ in 0..180 {
+            loud.advance(1.0 / 60.0, recording(1.0));
+            widest = widest.max(spread_of(&loud));
+        }
+        assert!(widest < 0.08, "full voice bar spread {widest}");
+        // A mid voice keeps its wave.
+        let mut mid = Scope::new(bars_tuning(false));
+        let mut alive = 0.0_f32;
+        for _ in 0..90 {
+            mid.advance(1.0 / 60.0, recording(0.55));
+            alive = alive.max(spread_of(&mid));
+        }
+        assert!(alive > 0.06, "mid voice bar spread {alive}");
     }
 
     #[test]

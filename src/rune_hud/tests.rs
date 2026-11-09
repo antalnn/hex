@@ -63,6 +63,29 @@ fn a_recording_frame_asks_the_shader_for_bars() {
     let uniforms = DotUniforms::new(&frame, Layout::default(), target);
     assert_eq!(uniforms.field[1], 3.0, "mode 3 is the jumping dots");
     assert!(uniforms.field[3] > 0.0, "the jump reads the clock");
+
+    let stage_only = |stage| DotFrame {
+        pose: dot_scope::Pose {
+            stage,
+            ..scope.pose()
+        },
+        tuning: scope.tuning(),
+        columns: scope.columns(),
+        rows: scope.rows(),
+        dots: Vec::new(),
+    };
+    let done = stage_only(dot_scope::Stage::Done);
+    assert_eq!(
+        DotUniforms::new(&done, Layout::default(), target).field[1],
+        4.0,
+        "mode 4 is the done checkmark"
+    );
+    let failed = stage_only(dot_scope::Stage::Failed);
+    assert_eq!(
+        DotUniforms::new(&failed, Layout::default(), target).field[1],
+        5.0,
+        "mode 5 is the failure mark"
+    );
 }
 
 #[test]

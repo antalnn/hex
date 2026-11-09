@@ -144,6 +144,12 @@ const PATHS: &[(&str, &str)] = &[
     ("sound-sets-playing", "Window/Sounds/Playing"),
     ("sound-sets-hud-recording", "Window/Sounds/HUD recording"),
     ("sound-sets-hud-processing", "Window/Sounds/HUD processing"),
+    (
+        "sound-sets-hud-processing-start",
+        "Window/Sounds/HUD processing start",
+    ),
+    ("sound-sets-hud-done", "Window/Sounds/HUD done"),
+    ("sound-sets-hud-error", "Window/Sounds/HUD error"),
     ("output", "Window/Output/Steps"),
     ("output-open", "Window/Output/App rule open"),
     ("output-trust", "Window/Output/Trust prompt"),

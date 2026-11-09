@@ -429,8 +429,10 @@ mod tests {
             .expect("HUD wiping Done right after completion");
         assert!(wiping.pose.opacity > 0.05);
 
+        // The plate holds its checkmark for half a second before folding
+        // back, then fades; a second and a bit after release it is gone.
         assert!(
-            frame_at(&ANSWER_JAY, ANSWER_JAY.release + 1.0, false).is_none(),
+            frame_at(&ANSWER_JAY, ANSWER_JAY.release + 1.3, false).is_none(),
             "HUD collapses away cleanly after Done"
         );
 

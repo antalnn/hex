@@ -392,6 +392,41 @@ pub(super) const SCENES: &[Scene] = &[
             )),
         );
     }),
+    // The pill at the first frame of the processing look (dots in a line),
+    // mid-jump, during done, and during a failure.
+    ("sound-sets-hud-processing-start", |ui| {
+        *ui = mac_fixture();
+        sound_sets::fixture(
+            ui,
+            Some((
+                crate::feedback::SoundSet::Wood,
+                crate::feedback::Audition::Cue(crate::feedback::Cue::Stop),
+                150.0,
+            )),
+        );
+    }),
+    ("sound-sets-hud-done", |ui| {
+        *ui = mac_fixture();
+        sound_sets::fixture(
+            ui,
+            Some((
+                crate::feedback::SoundSet::Wood,
+                crate::feedback::Audition::Dictation,
+                2350.0,
+            )),
+        );
+    }),
+    ("sound-sets-hud-error", |ui| {
+        *ui = mac_fixture();
+        sound_sets::fixture(
+            ui,
+            Some((
+                crate::feedback::SoundSet::Wood,
+                crate::feedback::Audition::Cue(crate::feedback::Cue::Error),
+                300.0,
+            )),
+        );
+    }),
     ("mac-microphone-missing", |ui| {
         *ui = mac_fixture();
         ui.settings.microphone = Some("Shure MV7".into());

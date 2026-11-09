@@ -649,6 +649,10 @@ impl DotUniforms {
             (2.0, frame.tuning.bars.round(), pose.clock)
         } else if jump_mode {
             (3.0, 0.0, pose.clock)
+        } else if pose.stage == dot_scope::Stage::Done {
+            (4.0, 0.0, pose.clock)
+        } else if pose.stage == dot_scope::Stage::Failed {
+            (5.0, 0.0, pose.clock)
         } else {
             (0.0, 0.0, 0.0)
         };

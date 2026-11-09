@@ -281,7 +281,7 @@ fn dot_scope_fragment(in: Varyings) -> @location(0) vec4f {
     composite(&result, u.plate.rgb, u.plate.a * shape);
     composite(&result, u.rim.rgb, u.rim.a * coverage(abs(distance) - 0.3, aa));
 
-    if (u.glow > 0.01) {
+    if (u.glow > 0.01 && u.field.y < 3.5) {
         let reach = 34.0 + 20.0 * u.glow;
         let t = clamp(length(point) / reach, 0.0, 1.0);
         let strength = select(0.19, 0.3, dark) * 0.55 * min(1.0, u.glow);
@@ -312,12 +312,12 @@ fn dot_scope_fragment(in: Varyings) -> @location(0) vec4f {
             let track_sd = rounded_box(point - center, vec2f(radius, track), radius);
             composite(&result, u.base.rgb, unlit * coverage(track_sd, aa) * shape);
             let bar_sd = rounded_box(point - center, vec2f(radius, half), radius);
-            let core = clamp(value.x * value.x * 1.1, 0.0, 0.9) * mix(0.3, 1.0, value.y);
+            let core = clamp(value.x * value.x, 0.0, 0.85) * mix(0.3, 1.0, value.y);
             let color = mix(u.base.rgb, u.core.rgb, core);
             composite(
                 &result,
                 color,
-                0.132 * value.x * value.x * value.y * coverage(bar_sd - 2.0, aa) * shape,
+                0.11 * value.x * value.x * value.y * coverage(bar_sd - 2.0, aa) * shape,
             );
             composite(&result, color, full * coverage(bar_sd, aa) * shape);
         }
@@ -328,12 +328,16 @@ fn dot_scope_fragment(in: Varyings) -> @location(0) vec4f {
         return for_target(dithered(result, position));
     }
 
-    // Jump: three dots in a row, each rising and falling in turn.
-    if (u.field.y > 2.5) {
-        let cycle = u.field.w % 1.35;
+    // Jump: three dots in a row. They rest in a line for the first quarter
+    // second the pill shows them, then each rises and falls in turn. The
+    // jump eases in, so the change from the line never reads as a jump.
+    if (u.field.y > 2.5 && u.field.y < 3.5) {
+        let clock = max(u.field.w, 0.0);
+        let ramp = sstep(0.25, 0.6, clock);
+        let cycle = max(clock - 0.25, 0.0) % 1.35;
         let current = floor(cycle / 0.45);
         let t = fract(cycle / 0.45);
-        let lift = sin(3.14159265 * t) * 6.0;
+        let lift = sin(3.14159265 * t) * 6.0 * ramp;
         for (var i = 0; i < 3; i++) {
             var y = 0.0;
             if (f32(i) == current) {
@@ -345,6 +349,25 @@ fn dot_scope_fragment(in: Varyings) -> @location(0) vec4f {
             composite(&result, color, 0.16 * coverage(sd - 2.5, aa) * shape);
             composite(&result, color, full * coverage(sd, aa) * shape);
         }
+        result *= u.opacity;
+        if (in_island) {
+            result.a += island_shape * (1.0 - result.a);
+        }
+        return for_target(dithered(result, position));
+    }
+
+    // Done and failed: one calm mark centred in the plate, the same
+    // checkmark and exclamation the notch shows, on the plate alone: no dot
+    // field, no halo, nothing that moves after it settles in.
+    if (u.field.y > 3.5) {
+        let failed = u.field.y > 4.5;
+        let t = clamp(u.field.w / 0.18, 0.0, 1.0);
+        let grow = mix(0.93, 1.0, sstep(0.0, 1.0, t));
+        let size = 1.55 * grow;
+        let glyph = select(checkmark(point / size), exclamation(point / size), failed);
+        let color = select(SYSTEM_GREEN, SYSTEM_RED, failed);
+        composite(&result, color, 0.16 * coverage(length(point) - 10.0, aa * 2.0) * shape);
+        composite(&result, color, full * coverage(glyph, aa) * shape);
         result *= u.opacity;
         if (in_island) {
             result.a += island_shape * (1.0 - result.a);

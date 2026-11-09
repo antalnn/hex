@@ -17,9 +17,10 @@ const SILENT: f32 = -120.0;
 /// The shortest processing look: a fast transcription still shows the field
 /// turning blue before done clears it.
 const PROCESSING_MIN_DURATION: Duration = Duration::from_millis(200);
-/// How long done shows before the HUD collapses: a third into done's
-/// 0.3 s wipe, so the collapse and the wipe end together.
-const COMPLETED_VISIBLE_DURATION: Duration = Duration::from_millis(100);
+/// How long the plate holds its done mark before the HUD collapses: long
+/// enough for the checkmark to read, as long as a system confirmation stays
+/// up.
+const COMPLETED_VISIBLE_DURATION: Duration = Duration::from_millis(500);
 /// How long the notch indicator holds its checkmark before folding back,
 /// as long as a system confirmation stays up.
 const EARS_COMPLETED_VISIBLE_DURATION: Duration = Duration::from_millis(700);
@@ -695,9 +696,10 @@ mod tests {
             "then the ears fold back"
         );
         assert!(
-            shown_after(None, 0.6) < 0.05,
-            "Dot scope still collapses at once"
+            shown_after(None, 0.3) > 0.9,
+            "the plate holds its checkmark too"
         );
+        assert!(shown_after(None, 1.3) < 0.05, "then the plate folds back");
     }
 
     #[test]
