@@ -120,7 +120,11 @@ pub(crate) fn run_app(
         app = app.float_on_open();
     }
     crate::linux::rune_hud::install(&mut app);
-    live_text::install(&mut app, crate::rune_hud::live_text_place);
+    live_text::install(
+        &mut app,
+        crate::rune_hud::live_text_place,
+        Some(crate::rune_hud::failure_pill_place),
+    );
     // The capture capsule, picker, and ink.
     let _capture_overlays =
         crate::rune_ui::capture_capsule::feed::CaptureOverlays::install(&mut app);

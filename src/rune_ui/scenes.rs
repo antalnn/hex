@@ -392,6 +392,23 @@ pub(super) const SCENES: &[Scene] = &[
             )),
         );
     }),
+    // A fixed, mid voice, so the render keeps the height variety that the
+    // auto level flattens at full voice.
+    ("sound-sets-hud-voice", |ui| {
+        *ui = mac_fixture();
+        let mut tuning = ui.platform.hud.tuning;
+        tuning.auto_level = false;
+        tuning.gain = 1.0;
+        sound_sets::fixture_tuning(
+            ui,
+            Some((
+                crate::feedback::SoundSet::Wood,
+                crate::feedback::Audition::Dictation,
+                1000.0,
+            )),
+            tuning,
+        );
+    }),
     // The pill at the first frame of the processing look (dots in a line),
     // mid-jump, during done, and during a failure.
     ("sound-sets-hud-processing-start", |ui| {

@@ -227,6 +227,9 @@ pub struct IndicatorModel {
     completion_pending: bool,
     scope: Scope,
     stage: Stage,
+    /// When `stage` last changed, for the shader's stage clock. It is wall
+    /// time, so a late frame cannot slow or compress the indicator's motion.
+    stage_started: Instant,
     /// The tuning as set, before [`fill_island`].
     tuning: Tuning,
     /// The notch island the HUD sits in, if any.
@@ -250,6 +253,7 @@ impl IndicatorModel {
             completion_pending: false,
             scope: Scope::new(tuning),
             stage: Stage::Recording,
+            stage_started: now,
             tuning,
             island: None,
             loudness: SILENT,
@@ -318,6 +322,7 @@ impl IndicatorModel {
                 self.completion_pending = false;
                 self.loudness = SILENT;
                 self.stage = Stage::Recording;
+                self.stage_started = now;
                 self.scope.restart(reduce);
             }
             DictationIndicatorEvent::Meter { average, .. } => {
@@ -353,6 +358,32 @@ impl IndicatorModel {
                 self.finish_capture(now, Phase::Failed);
             }
         }
+    }
+
+    /// A failure whose message the unified failure pill shows instead: the
+    /// HUD leaves without painting its failed mark. The job leaves the set;
+    /// while another job is still pending the processing look stays.
+    pub fn fail_quietly(&mut self, event: &DictationIndicatorEvent, now: Instant) {
+        self.active = true;
+        self.completion_pending = false;
+        match event {
+            DictationIndicatorEvent::Failed { .. } => {
+                self.capturing = false;
+                if !self.jobs.is_empty() {
+                    self.show_pipeline(now);
+                    return;
+                }
+            }
+            DictationIndicatorEvent::JobFailed { job_id, .. } => {
+                self.jobs.remove(job_id);
+                if active_phase(self.capturing, self.jobs.len()).is_some() {
+                    return;
+                }
+            }
+            _ => return,
+        }
+        self.phase = Phase::Hidden;
+        self.phase_started = now;
     }
 
     fn finish_capture(&mut self, now: Instant, empty_phase: Phase) {
@@ -421,8 +452,11 @@ impl IndicatorModel {
             .visible_duration(self.island.is_some_and(|island| island.ears))
             .is_some_and(|duration| elapsed >= duration);
         let visible = self.phase != Phase::Hidden && !terminal_finished;
-        if let Some(stage) = self.phase.stage() {
+        if let Some(stage) = self.phase.stage()
+            && stage != self.stage
+        {
             self.stage = stage;
+            self.stage_started = now;
         }
         let loudness = match &mut self.demo_voice {
             Some(time) => {
@@ -441,8 +475,16 @@ impl IndicatorModel {
             },
         );
         self.active = visible || !self.scope.settled();
+        let mut pose = self.scope.pose();
+        // The shader's stage clock is wall time: a late frame can neither
+        // slow the tempo nor make it jump when the machine catches up.
+        if !reduce {
+            pose.clock = now
+                .saturating_duration_since(self.stage_started)
+                .as_secs_f32();
+        }
         DotFrame {
-            pose: self.scope.pose(),
+            pose,
             tuning: self.scope.tuning(),
             columns: self.scope.columns(),
             rows: self.scope.rows(),
@@ -618,7 +660,10 @@ mod tests {
         let frames = run(&mut model, start, 0.0, 1.0);
         let frame = frames.last().unwrap();
         assert_eq!(frame.dots.len(), frame.columns * frame.rows);
-        assert!(frame.dots.iter().any(|[power, _]| *power > 30_000));
+        // The bars carry the voice into the plate; quiet syllables sit a
+        // little lower, so this checks the loud ones light it, not a bound
+        // on the shaping.
+        assert!(frame.dots.iter().any(|[power, _]| *power > 20_000));
         assert!(frame.pose.opacity > 0.98 && frame.pose.cool < 0.01);
 
         // A fast transcription: the job finishes as soon as it is submitted.
@@ -638,6 +683,60 @@ mod tests {
         assert_eq!(model.stage, Stage::Done);
         run(&mut model, start, 1.25, 2.0);
         assert!(!model.active(), "settled out of sight");
+    }
+
+    #[test]
+    fn the_stage_clock_is_wall_time_across_a_late_frame() {
+        let start = Instant::now();
+        let mut model = IndicatorModel::new(Tuning::default(), start);
+        model.handle(DictationIndicatorEvent::Started, start, false);
+        model.handle(
+            DictationIndicatorEvent::Submitted { job_id: 1 },
+            at(start, 0.0),
+            false,
+        );
+        // A frame observes the stage change; the next ones are late.
+        let _ = model.step(at(start, 0.01), 1.0 / 60.0, false);
+        // A frame a second later: the shader's clock follows the wall, not
+        // the clamped dt the simulation takes.
+        let frame = model.step(at(start, 1.0), 1.0 / 20.0, false);
+        assert!(
+            (frame.pose.clock - 0.99).abs() < 0.02,
+            "clock {}",
+            frame.pose.clock
+        );
+        let frame = model.step(at(start, 1.7), 1.0 / 20.0, false);
+        assert!(
+            (frame.pose.clock - 1.69).abs() < 0.02,
+            "clock {}",
+            frame.pose.clock
+        );
+    }
+
+    #[test]
+    fn a_quiet_failure_leaves_without_the_failed_mark() {
+        let start = Instant::now();
+        let mut model = IndicatorModel::new(Tuning::default(), start);
+        model.handle(DictationIndicatorEvent::Started, start, false);
+        model.handle(
+            DictationIndicatorEvent::Submitted { job_id: 1 },
+            at(start, 0.2),
+            false,
+        );
+        // A frame shows the processing look before the failure arrives.
+        let _ = model.step(at(start, 0.21), 1.0 / 60.0, false);
+        model.fail_quietly(
+            &DictationIndicatorEvent::JobFailed {
+                job_id: 1,
+                message: Some("the rewrite was cancelled".into()),
+            },
+            at(start, 0.4),
+        );
+        assert_eq!(model.status(), None, "the pill carries the status");
+        let frame = model.step(at(start, 0.4), 1.0 / 60.0, false);
+        assert_ne!(frame.pose.stage, Stage::Failed, "no failed mark");
+        run(&mut model, start, 0.4, 1.5);
+        assert!(!model.active(), "the plate leaves by its usual fade");
     }
 
     #[test]

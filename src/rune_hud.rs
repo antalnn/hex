@@ -35,6 +35,8 @@ use crate::rune_hud::dot_scope::MAX_DOTS;
 #[cfg(not(target_os = "macos"))]
 use crate::rune_hud::dot_scope::PLATE_HEIGHT;
 use crate::rune_hud::hud_placement::{ISLAND_INSET, ISLAND_PAD, Island, Layout};
+#[cfg(not(target_os = "macos"))]
+use crate::rune_ui::live_text::PLATE_CENTER;
 use crate::rune_ui::live_text::Spot;
 
 #[cfg(target_os = "macos")]
@@ -64,6 +66,11 @@ const LIVE_TEXT_GAP: f32 = 6.0;
 /// Where the live text starts, as of the HUD's last show.
 static LIVE_TEXT: Mutex<Option<Spot>> = Mutex::new(None);
 
+/// Where the unified failure pill starts: on the HUD's plate, so the pill
+/// replaces it in place. As of the HUD's last show.
+#[cfg(not(target_os = "macos"))]
+static FAILURE_PILL: Mutex<Option<Spot>> = Mutex::new(None);
+
 /// Where the live text plate starts: just past the HUD's plate, on its
 /// screen; with the HUD hidden, where its plate would be.
 pub(crate) fn live_text_place() -> Spot {
@@ -71,8 +78,27 @@ pub(crate) fn live_text_place() -> Spot {
     spot.unwrap_or(Spot::Edge(ScreenEdge::Top, 40.0))
 }
 
+/// Where the unified failure pill starts: the HUD plate's middle.
+#[cfg(not(target_os = "macos"))]
+pub(crate) fn failure_pill_place() -> Spot {
+    let spot = *FAILURE_PILL
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
+    spot.unwrap_or(Spot::Edge(
+        ScreenEdge::Top,
+        TOP_OFFSET + WINDOW.1 / 2.0 - PLATE_CENTER,
+    ))
+}
+
 fn set_live_text(spot: Spot) {
     *LIVE_TEXT.lock().unwrap_or_else(|error| error.into_inner()) = Some(spot);
+}
+
+#[cfg(not(target_os = "macos"))]
+fn set_failure_pill(spot: Spot) {
+    *FAILURE_PILL
+        .lock()
+        .unwrap_or_else(|error| error.into_inner()) = Some(spot);
 }
 
 /// How a listener reports to the HUD; sending never waits.
@@ -127,6 +153,17 @@ impl HudSender {
         ) {
             self.recording.store(false, Ordering::Release);
         }
+        // A failure with a reason goes to the unified failure pill alone:
+        // the HUD leaves without painting its failed mark. The pill is a
+        // Labs feature, so with it off the HUD keeps its own mark.
+        let quiet = crate::labs::failure_notices()
+            && match &event {
+                HudEvent::Failed { message } => message.is_some(),
+                HudEvent::JobFailed { message, .. } => {
+                    message.is_some() && !self.recording.load(Ordering::Acquire)
+                }
+                _ => false,
+            };
         match &event {
             HudEvent::Started => {
                 crate::rune_ui::live_text::capture_started();
@@ -150,7 +187,13 @@ impl HudSender {
                 watch.pending = Some((Instant::now(), presents));
             }
         }
-        self.overlay.update(move |hud, _| hud.handle(event));
+        self.overlay.update(move |hud, _| {
+            if quiet {
+                hud.quiet_failure(&event);
+            } else {
+                hud.handle(event);
+            }
+        });
     }
 
     #[cfg(not(target_os = "macos"))]
@@ -302,6 +345,16 @@ impl Hud {
         }
     }
 
+    /// A failure the unified pill explains: the HUD leaves by its usual
+    /// fade, with no failed mark of its own.
+    fn quiet_failure(&mut self, event: &HudEvent) {
+        self.model.fail_quietly(event, Instant::now());
+        self.animating.store(true, Ordering::Release);
+        if self.shown.load(Ordering::Acquire) {
+            self.show();
+        }
+    }
+
     #[cfg(not(target_os = "macos"))]
     fn set_position(&mut self, position: IndicatorPosition) {
         self.position = position;
@@ -326,6 +379,10 @@ impl Hud {
             {
                 let plate_start = TOP_OFFSET + (WINDOW.1 - PLATE_HEIGHT) / 2.0;
                 set_live_text(Spot::Edge(ScreenEdge::Top, plate_start));
+                set_failure_pill(Spot::Edge(
+                    ScreenEdge::Top,
+                    TOP_OFFSET + WINDOW.1 / 2.0 - PLATE_CENTER,
+                ));
             }
             self.hide();
             return;
@@ -348,6 +405,7 @@ impl Hud {
             // The plate sits in the middle of the window.
             let past_plate = margin + (WINDOW.1 + PLATE_HEIGHT) / 2.0 + LIVE_TEXT_GAP;
             set_live_text(Spot::Edge(edge, past_plate));
+            set_failure_pill(Spot::Edge(edge, margin + WINDOW.1 / 2.0 - PLATE_CENTER));
         }
         if !self.shown.load(Ordering::Acquire) {
             overlay.show();
@@ -640,15 +698,25 @@ impl DotUniforms {
         }
         let rgba = |c: [f32; 3]| [c[0], c[1], c[2], 1.0];
         // Voice bars take the first dots buffer entries; the shader reads the
-        // bar width and gap from the otherwise unused grid terms.
-        let bars_mode =
-            frame.tuning.look == dot_scope::Look::Bars && pose.stage == dot_scope::Stage::Recording;
+        // bar width and gap from the otherwise unused grid terms. The bars
+        // also ride into the processing stage for a moment, fading out.
+        let bars_look = frame.tuning.look == dot_scope::Look::Bars;
+        let bars_mode = bars_look && pose.stage == dot_scope::Stage::Recording;
         let jump_mode = pose.stage == dot_scope::Stage::Processing
             && frame.tuning.processing == dot_scope::Processing::Jump;
+        let bars_terms = bars_mode || (jump_mode && bars_look);
         let (field_mode, field_count, field_clock) = if bars_mode {
             (2.0, frame.tuning.bars.round(), pose.clock)
         } else if jump_mode {
-            (3.0, 0.0, pose.clock)
+            (
+                3.0,
+                if bars_look {
+                    frame.tuning.bars.round()
+                } else {
+                    0.0
+                },
+                pose.clock,
+            )
         } else if pose.stage == dot_scope::Stage::Done {
             (4.0, 0.0, pose.clock)
         } else if pose.stage == dot_scope::Stage::Failed {
@@ -665,12 +733,12 @@ impl DotUniforms {
             scale: pose.scale,
             softness: pose.softness,
             pitch: frame.tuning.spacing,
-            columns: if bars_mode {
+            columns: if bars_terms {
                 frame.tuning.bar_width
             } else {
                 frame.columns as f32
             },
-            rows: if bars_mode {
+            rows: if bars_terms {
                 frame.tuning.bar_gap
             } else {
                 frame.rows as f32

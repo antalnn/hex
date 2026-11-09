@@ -199,7 +199,7 @@ impl Default for Tuning {
             noise_floor: -60.0,
             processing: Processing::default(),
             look: Look::default(),
-            bars: 7.0,
+            bars: 9.0,
             bar_width: 4.0,
             bar_gap: 2.0,
             placement: Placement::default(),
@@ -520,7 +520,7 @@ mod tests {
         assert_eq!((t.transition, t.bounce), (0.3, 0.15));
         assert_eq!(
             (t.look, t.bars, t.bar_width, t.bar_gap),
-            (Look::Bars, 7.0, 4.0, 2.0)
+            (Look::Bars, 9.0, 4.0, 2.0)
         );
         assert_eq!(t.clamped(), t, "every default sits inside its knob");
     }

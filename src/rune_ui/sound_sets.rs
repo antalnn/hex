@@ -113,9 +113,20 @@ pub(super) fn close(ui: &mut Ui) {
 
 /// Opens the sheet, held `ms` into `set`'s `what` when given.
 pub(super) fn fixture(ui: &mut Ui, playing: Option<(SoundSet, Audition, f64)>) {
+    let tuning = ui.platform.hud.tuning;
+    fixture_tuning(ui, playing, tuning);
+}
+
+/// [`fixture`] with the HUD drawn on `tuning`, for a look HUD Lab can't
+/// reach with its own state.
+pub(super) fn fixture_tuning(
+    ui: &mut Ui,
+    playing: Option<(SoundSet, Audition, f64)>,
+    tuning: crate::rune_hud::dot_scope::Tuning,
+) {
     open(ui);
     if let Some((set, what, ms)) = playing {
-        let mut hud = Hud::new(ui.platform.hud.tuning, what);
+        let mut hud = Hud::new(tuning, what);
         hud.advance_to((ms / 1000.0) as f32);
         ui.sound_sets.playing = Some(Playing { set, what });
         ui.sound_sets.hud = Some(hud);

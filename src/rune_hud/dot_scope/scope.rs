@@ -396,6 +396,10 @@ pub struct Scope {
     reduce_motion: bool,
     columns: usize,
     rows: usize,
+    /// Each voice bar's smoothed height, 0–1, top to bottom.
+    bar_levels: Vec<f32>,
+    /// How long the voice bars have shown since the recording began, s.
+    bar_age: f32,
     head: [Vec<f32>; 2],
     tail: [Vec<f32>; 2],
     dots: Vec<[f32; 2]>,
@@ -435,6 +439,8 @@ impl Scope {
             reduce_motion: false,
             columns: 0,
             rows: 0,
+            bar_levels: Vec::new(),
+            bar_age: 0.0,
             head: [Vec::new(), Vec::new()],
             tail: [Vec::new(), Vec::new()],
             dots: Vec::new(),
@@ -906,25 +912,59 @@ impl Scope {
         if self.tuning.look == Look::Bars && self.stage == Stage::Recording {
             self.dots.fill([0.0, 0.0]);
             let bars = (self.tuning.bars.round() as usize).clamp(1, super::MAX_COLUMNS);
+            if self.bar_levels.len() != bars {
+                self.bar_levels.resize(bars, 0.0);
+            }
+            self.bar_age += hb;
             let level = self.voices[0].level.clamp(0.0, 1.0);
+            // Ordinary speech reaches most of the plate, so the bars read at
+            // a normal voice as well as a loud one.
+            let heard = level.powf(0.7);
             let glow = self.traces[0].glow.clamp(0.0, 1.0);
             // The bars calm only once the voice is near its own peak: a loud
             // syllable flattens the wave instead of shaking it, while normal
             // speech keeps the motion that makes the pill feel alive.
             let calm = smoothstep(0.6, 0.95, level);
+            // The bars rise into the recording instead of appearing at the
+            // voice's first level.
+            let birth = smoothstep(0.0, 0.16, self.bar_age);
+            let count = bars as f32;
             for (index, dot) in self.dots.iter_mut().take(bars).enumerate() {
                 let phase = self.time * 5.5 - index as f32 * 0.65;
                 let wave = (0.5 + 0.5 * phase.sin()).powf(0.7);
                 let shape = 0.66 + 0.34 * wave;
                 let shape = shape + (1.0 - shape) * 0.8 * calm;
-                *dot = [
-                    (level * shape).clamp(0.0, 1.0),
-                    (glow * (0.72 + 0.28 * shape)).clamp(0.0, 1.0),
-                ];
+                // A gentle arch gives the row a profile; it flattens at full
+                // level with the wave, so the pill stays calm at its top.
+                let arch = (PI * (index as f32 + 0.5) / count).sin();
+                let profile = 0.9 + 0.14 * arch;
+                let profile = 1.0 + (profile - 1.0) * (1.0 - calm);
+                let target = (heard * shape * profile * birth).clamp(0.0, 1.0);
+                // Each bar follows on its own time constant, so a syllable
+                // glides instead of flickering up and down at frame rate.
+                let follow = if target > self.bar_levels[index] {
+                    0.075
+                } else {
+                    0.16
+                };
+                let value = &mut self.bar_levels[index];
+                *value += (target - *value) * (1.0 - (-hb / follow).exp());
+                let power = value.clamp(0.0, 1.0);
+                *dot = [power, (glow * (0.72 + 0.28 * shape)).clamp(0.0, 1.0)];
             }
         } else if self.stage == Stage::Processing && self.tuning.processing == Processing::Jump {
-            // The shader draws three dots from the clock; the grid is blank.
-            self.dots.fill([0.0, 0.0]);
+            // The shader draws three dots from the clock. The last bars stay
+            // in the buffer so the shader can fade them out under the dots;
+            // the braid's light must not reach those entries.
+            if self.tuning.look == Look::Bars {
+                let bars = (self.tuning.bars.round() as usize).clamp(1, super::MAX_COLUMNS);
+                if self.bar_levels.len() != bars {
+                    self.bar_levels.resize(bars, 0.0);
+                }
+                for (index, dot) in self.dots.iter_mut().take(bars).enumerate() {
+                    *dot = [self.bar_levels[index].clamp(0.0, 1.0), 0.9];
+                }
+            }
         }
     }
 }

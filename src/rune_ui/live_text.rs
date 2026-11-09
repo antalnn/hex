@@ -16,8 +16,8 @@ use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 use rune::{
-    Anim, Cx, El, OverlayHandle, OverlayOptions, OverlayPlacement, OverlaySpec, ScreenEdge, row,
-    text,
+    Anim, Cx, El, OverlayHandle, OverlayOptions, OverlayPlacement, OverlaySpec, ScreenEdge, Spring,
+    row, text,
 };
 
 use super::controls::Paint;
@@ -29,16 +29,44 @@ pub(crate) const SIZE: (f32, f32) = (560.0, 44.0);
 const PLATE_H: f32 = 32.0;
 /// The overlay's room around the plate, across its height.
 const PAD: f32 = (SIZE.1 - PLATE_H) / 2.0;
-/// How long a failure notice stays beside the HUD.
-const FAILURE_VISIBLE: Duration = Duration::from_secs(6);
+/// How far a [`Spot::Edge`] margin sits from the plate's middle.
+pub(crate) const PLATE_CENTER: f32 = SIZE.1 / 2.0 - PAD;
+/// How long the unified failure pill shows its exclamation alone before it
+/// expands to the message: 0.75 to 1 second, per the indicator's goal.
+pub(crate) const FAILURE_MARK_VISIBLE: Duration = Duration::from_millis(875);
+/// How long the expanded pill holds the error text before it fades: 2.5 to
+/// 3 seconds, and never longer.
+pub(crate) const FAILURE_TEXT_VISIBLE: Duration = Duration::from_millis(2750);
+/// The unified failure pill's height.
+const FAILURE_PLATE_H: f32 = 36.0;
+/// The pill's width while it shows the exclamation alone: the HUD's own
+/// processing plate, so the pill appears where the plate was.
+const FAILURE_MARK_W: f32 = 76.0;
+
+/// The two looks of the unified failure pill.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub(crate) enum FailurePhase {
+    /// The exclamation alone, before the pill expands.
+    #[default]
+    Mark,
+    /// The expanded pill, holding the message.
+    Text,
+}
+
+/// One failure, as the unified pill draws it.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct Failure {
+    message: String,
+    phase: FailurePhase,
+}
 
 #[derive(Default)]
 pub(crate) struct Plate {
     stable: String,
     tentative: String,
-    /// Labs › Failure notices: why the last dictation failed, shown instead
-    /// of the live words while it lasts.
-    failure: Option<String>,
+    /// Labs › Failure notices: why the last dictation failed, drawn as one
+    /// pill that starts as its exclamation and expands to the message.
+    failure: Option<Failure>,
     /// Whether live words are being published (a recording is showing text).
     live: bool,
     /// Whether the overlay is on screen. Every change happens in an overlay
@@ -60,7 +88,17 @@ impl Plate {
     }
 
     fn show_failure(&mut self, message: String) {
-        self.failure = Some(message);
+        self.failure = Some(Failure {
+            message,
+            phase: FailurePhase::Mark,
+        });
+    }
+
+    /// Expands the pill to the message it already carries.
+    fn expand_failure(&mut self) {
+        if let Some(failure) = &mut self.failure {
+            failure.phase = FailurePhase::Text;
+        }
     }
 
     fn take_failure(&mut self) -> bool {
@@ -77,35 +115,61 @@ impl Plate {
     }
 }
 
-/// A failure notice's message and deadline, kept apart from the drawn plate
-/// so a timer thread can dismiss it without the live text's state.
+/// A failure notice's message and deadlines, kept apart from the drawn pill
+/// so a timer thread can advance it without the live text's state.
 #[derive(Default)]
 struct FailureNotice {
     message: Option<String>,
+    phase: FailurePhase,
+    /// Distinguishes this notice from a later one, so a stale timer cannot
+    /// expand or dismiss it.
+    serial: u64,
+    expands_at: Option<Instant>,
     expires_at: Option<Instant>,
 }
 
 impl FailureNotice {
-    /// Replaces any notice with `message` until [`FAILURE_VISIBLE`] from
-    /// `now`; returns the new deadline.
-    fn show(&mut self, message: String, now: Instant) -> Instant {
+    /// Replaces any notice with `message`: its mark shows at once, its text
+    /// after [`FAILURE_MARK_VISIBLE`], and it leaves [`FAILURE_TEXT_VISIBLE`]
+    /// later. Returns the serial and both deadlines.
+    fn show(&mut self, message: String, now: Instant) -> (u64, Instant, Instant) {
+        self.serial = self.serial.wrapping_add(1);
         self.message = Some(message);
-        let deadline = now + FAILURE_VISIBLE;
-        self.expires_at = Some(deadline);
-        deadline
+        self.phase = FailurePhase::Mark;
+        let expands = now + FAILURE_MARK_VISIBLE;
+        let expires = expands + FAILURE_TEXT_VISIBLE;
+        self.expands_at = Some(expands);
+        self.expires_at = Some(expires);
+        (self.serial, expands, expires)
+    }
+
+    /// Expands the pill once its own mark has had its time.
+    fn expand(&mut self, serial: u64, now: Instant) -> bool {
+        if self.serial != serial || self.phase != FailurePhase::Mark {
+            return false;
+        }
+        if self.expands_at.is_none_or(|at| now < at) {
+            return false;
+        }
+        self.phase = FailurePhase::Text;
+        true
     }
 
     /// A new capture dismisses the notice at once; whether one was showing.
     fn capture_started(&mut self) -> bool {
+        self.expands_at = None;
         self.expires_at = None;
+        self.serial = self.serial.wrapping_add(1);
+        self.phase = FailurePhase::Mark;
         self.message.take().is_some()
     }
 
     /// Dismisses a notice whose own deadline is due; whether it was showing.
-    fn expire(&mut self, deadline: Instant, now: Instant) -> bool {
-        if self.expires_at != Some(deadline) || now < deadline {
+    fn expire(&mut self, serial: u64, now: Instant) -> bool {
+        if self.serial != serial || self.expires_at.is_none_or(|at| now < at) {
             return false;
         }
+        self.expands_at = None;
         self.expires_at = None;
         self.message.take().is_some()
     }
@@ -170,15 +234,21 @@ static WORDS: AtomicBool = AtomicBool::new(false);
 /// installation.
 static PLACE: OnceLock<Place> = OnceLock::new();
 
-/// The current failure notice, which a timer thread dismisses.
+/// Where the unified failure pill goes: on the HUD's plate, so it takes the
+/// plate's place instead of sitting beside it.
+static FAILURE_PLACE: OnceLock<Place> = OnceLock::new();
+
+/// The current failure notice, which a timer thread advances and dismisses.
 static NOTICE: Mutex<FailureNotice> = Mutex::new(FailureNotice {
     message: None,
+    phase: FailurePhase::Mark,
+    serial: 0,
+    expands_at: None,
     expires_at: None,
 });
 
-/// The timer thread's queue: each newer notice's deadline supersedes the
-/// one before it.
-static TIMER: OnceLock<Sender<Instant>> = OnceLock::new();
+/// The timer thread's queue: each notice's own deadlines arrive in order.
+static TIMER: OnceLock<Sender<TimerWake>> = OnceLock::new();
 
 fn notice() -> std::sync::MutexGuard<'static, FailureNotice> {
     NOTICE.lock().unwrap_or_else(|error| error.into_inner())
@@ -203,7 +273,11 @@ pub(crate) type Place = fn() -> Spot;
 /// since either lab may be turned on after launch and an unprewarmed plate
 /// reappears for a frame with the last dictation's words (#1075); elsewhere
 /// when either is on at launch.
-pub(crate) fn install<S: 'static>(app: &mut rune::App<S>, place: Place) {
+pub(crate) fn install<S: 'static>(
+    app: &mut rune::App<S>,
+    place: Place,
+    failure_place: Option<Place>,
+) {
     let spec = OverlaySpec {
         name: "Hex live text",
         size: SIZE,
@@ -229,6 +303,7 @@ pub(crate) fn install<S: 'static>(app: &mut rune::App<S>, place: Place) {
     let overlay = app.overlay(spec, Plate::default());
     let _ = LIVE.set(overlay.clone());
     let _ = PLACE.set(place);
+    let _ = FAILURE_PLACE.set(failure_place.unwrap_or(place));
     crate::dictation::live_text::watch(move |partial| {
         let partial = partial.filter(|partial| !is_blank(partial));
         let Some(Partial { stable, tentative }) = partial.cloned() else {
@@ -270,25 +345,29 @@ pub(crate) fn install<S: 'static>(app: &mut rune::App<S>, place: Place) {
     });
 }
 
-/// Shows `message` as a one-line notice beside the HUD for
-/// [`FAILURE_VISIBLE`] (Labs › Failure notices), replacing any live words
-/// until it leaves or a new capture starts.
+/// Shows `message` as the unified failure pill (Labs › Failure notices): the
+/// exclamation alone for [`FAILURE_MARK_VISIBLE`], the message for
+/// [`FAILURE_TEXT_VISIBLE`] after it, then the usual fade. It replaces any
+/// live words and takes the HUD plate's place.
 pub(crate) fn show_failure(message: &str) {
     if !crate::labs::failure_notices() {
         return;
     }
-    let (Some(overlay), Some(place)) = (LIVE.get(), PLACE.get().copied()) else {
+    let (Some(overlay), Some(place)) = (LIVE.get(), FAILURE_PLACE.get().copied()) else {
         return;
     };
     let message = crate::desktop::activity::failure_explanation(message);
-    let deadline = notice().show(message.clone(), Instant::now());
-    schedule(deadline);
+    let (serial, expands, expires) = notice().show(message.clone(), Instant::now());
+    schedule(TimerWake::Expand(serial, expands));
+    schedule(TimerWake::Expire(serial, expires));
     let handle = overlay.clone();
     overlay.update(move |plate, tx| {
         plate.show_failure(message);
         tx.instant();
+        // The pill takes the HUD plate's place, even when the live words
+        // were showing beside it.
+        place().apply(&handle);
         if !plate.shown {
-            place().apply(&handle);
             handle.show();
             plate.mark_shown(true);
         }
@@ -330,9 +409,26 @@ fn dismiss_notice() {
     });
 }
 
-/// Queues `deadline` to the timer thread, starting it on the first notice so
-/// a Hex with the lab off runs no notice thread.
-fn schedule(deadline: Instant) {
+/// One scheduled step of the unified failure pill.
+#[derive(Clone, Copy, Debug)]
+enum TimerWake {
+    /// Show the message in the pill.
+    Expand(u64, Instant),
+    /// Fade the pill away.
+    Expire(u64, Instant),
+}
+
+impl TimerWake {
+    fn at(self) -> Instant {
+        match self {
+            Self::Expand(_, at) | Self::Expire(_, at) => at,
+        }
+    }
+}
+
+/// Queues `wake` to the timer thread, starting it on the first notice so a
+/// Hex with the lab off runs no notice thread.
+fn schedule(wake: TimerWake) {
     let sender = TIMER.get_or_init(|| {
         let (sender, receiver) = mpsc::channel();
         let _ = std::thread::Builder::new()
@@ -340,31 +436,50 @@ fn schedule(deadline: Instant) {
             .spawn(move || run_timer(receiver));
         sender
     });
-    let _ = sender.send(deadline);
+    let _ = sender.send(wake);
 }
 
-fn run_timer(receiver: Receiver<Instant>) {
-    while let Ok(mut deadline) = receiver.recv() {
-        loop {
-            let now = Instant::now();
-            if now >= deadline {
-                hide_expired(deadline);
-                break;
+fn run_timer(receiver: Receiver<TimerWake>) {
+    let mut pending: Vec<TimerWake> = Vec::new();
+    loop {
+        if pending.is_empty() {
+            let Ok(wake) = receiver.recv() else {
+                return;
+            };
+            pending.push(wake);
+        }
+        pending.sort_by_key(|wake| wake.at());
+        let at = pending[0].at();
+        let now = Instant::now();
+        if now >= at {
+            match pending.remove(0) {
+                TimerWake::Expand(serial, _) => expand_notice(serial),
+                TimerWake::Expire(serial, _) => hide_expired(serial),
             }
-            match receiver.recv_timeout(deadline - now) {
-                Ok(newer) => deadline = newer,
-                Err(RecvTimeoutError::Timeout) => {
-                    hide_expired(deadline);
-                    break;
-                }
-                Err(RecvTimeoutError::Disconnected) => return,
-            }
+            continue;
+        }
+        match receiver.recv_timeout(at - now) {
+            Ok(wake) => pending.push(wake),
+            Err(RecvTimeoutError::Timeout) => {}
+            Err(RecvTimeoutError::Disconnected) => return,
         }
     }
 }
 
-fn hide_expired(deadline: Instant) {
-    let expired = { notice().expire(deadline, Instant::now()) };
+/// Expands the pill to its message at the notice's own mark deadline.
+fn expand_notice(serial: u64) {
+    let expanded = { notice().expand(serial, Instant::now()) };
+    if !expanded {
+        return;
+    }
+    let Some(overlay) = LIVE.get() else {
+        return;
+    };
+    overlay.update(move |plate, _| plate.expand_failure());
+}
+
+fn hide_expired(serial: u64) {
+    let expired = { notice().expire(serial, Instant::now()) };
     if !expired {
         return;
     }
@@ -430,6 +545,47 @@ fn plate(p: &Paint, line: El) -> El {
         .child(line)
 }
 
+/// The spring the unified failure pill expands on.
+const EXPAND: Spring = Spring::new(0.28, 0.0);
+
+/// The unified failure pill: the exclamation alone, then the message beside
+/// it as the pill widens. The exclamation is the HUD's failed mark, drawn in
+/// the plate's own colours.
+fn failure_pill(p: &Paint, failure: &Failure) -> El {
+    let c = &p.k.c;
+    let mut mark_style = p.k.ty.ui_medium;
+    mark_style.size = 16.0;
+    mark_style.line_height = 18.0;
+    let mark = || {
+        text("!")
+            .key("failure-mark")
+            .font(mark_style)
+            .color(p.danger())
+    };
+    let pill = row()
+        .key("failure-pill")
+        .h(FAILURE_PLATE_H)
+        .px(14.0)
+        .center_y()
+        .radius(FAILURE_PLATE_H / 2.0)
+        .fill(c.bg_base)
+        .border(p.hair, c.border_base)
+        .motion(EXPAND);
+    match failure.phase {
+        FailurePhase::Mark => pill.w(FAILURE_MARK_W).center().child(mark()),
+        FailurePhase::Text => {
+            let message = text(failure.message.clone())
+                .key("failure")
+                .truncate()
+                .font(p.k.ty.ui)
+                .color(p.danger());
+            pill.max_w(SIZE.0 - 8.0)
+                .child(mark().mr(8.0))
+                .child(message)
+        }
+    }
+}
+
 fn view(plate_state: &Plate, cx: &mut Cx<Plate>) -> El {
     let p = Paint::new(cx.system_dark(), cx.env().scale);
     let root = row()
@@ -440,12 +596,7 @@ fn view(plate_state: &Plate, cx: &mut Cx<Plate>) -> El {
         .px(4.0)
         .hover_motion_within(Anim::INSTANT, Anim::INSTANT);
     if let Some(failure) = &plate_state.failure {
-        let line = text(failure.clone())
-            .key("failure")
-            .truncate()
-            .font(p.k.ty.ui)
-            .color(p.danger());
-        return root.child(plate(&p, line));
+        return root.child(failure_pill(&p, failure));
     }
     if plate_state.stable.trim().is_empty() && plate_state.tentative.trim().is_empty() {
         return root;
@@ -498,19 +649,26 @@ mod tests {
     const HEBREW: &str = "אז התוכנית להיום";
 
     #[test]
-    fn a_failure_notice_lasts_six_seconds() {
+    fn a_failure_pill_shows_its_mark_then_holds_the_text() {
+        assert!(FAILURE_MARK_VISIBLE >= Duration::from_millis(750));
+        assert!(FAILURE_MARK_VISIBLE <= Duration::from_secs(1));
+        assert!(FAILURE_TEXT_VISIBLE >= Duration::from_millis(2500));
+        assert!(FAILURE_TEXT_VISIBLE <= Duration::from_millis(3000));
+
         let start = Instant::now();
         let mut notice = FailureNotice::default();
-        let deadline = notice.show(
+        let (serial, expands, expires) = notice.show(
             "No microphone is available. Connect a microphone.".into(),
             start,
         );
-        assert_eq!(
-            notice.message.as_deref(),
-            Some("No microphone is available. Connect a microphone.")
-        );
-        assert!(!notice.expire(deadline, start + FAILURE_VISIBLE - Duration::from_millis(1)));
-        assert!(notice.expire(deadline, start + FAILURE_VISIBLE));
+        assert_eq!(notice.phase, FailurePhase::Mark);
+        assert_eq!(expires - expands, FAILURE_TEXT_VISIBLE);
+        assert!(!notice.expand(serial, expands - Duration::from_millis(1)));
+        assert_eq!(notice.phase, FailurePhase::Mark);
+        assert!(notice.expand(serial, expands));
+        assert_eq!(notice.phase, FailurePhase::Text);
+        assert!(!notice.expire(serial, expires - Duration::from_millis(1)));
+        assert!(notice.expire(serial, expires));
         assert_eq!(notice.message, None);
     }
 
@@ -518,25 +676,34 @@ mod tests {
     fn a_new_capture_dismisses_a_failure_notice_at_once() {
         let start = Instant::now();
         let mut notice = FailureNotice::default();
-        let deadline = notice.show("Could not open microphone".into(), start);
+        let (serial, expands, expires) = notice.show("Could not open microphone".into(), start);
         assert!(notice.capture_started());
         assert_eq!(notice.message, None);
         assert!(!notice.capture_started());
         assert!(
-            !notice.expire(deadline, start + FAILURE_VISIBLE),
+            !notice.expand(serial, expands),
+            "the old mark deadline cannot expand a later notice"
+        );
+        assert!(
+            !notice.expire(serial, expires),
             "the old deadline cannot dismiss a later notice"
         );
     }
 
     #[test]
-    fn only_a_notices_own_deadline_dismisses_it() {
+    fn only_a_notices_own_deadlines_advance_it() {
         let start = Instant::now();
         let mut notice = FailureNotice::default();
-        let older = notice.show("first".into(), start);
-        let newer = notice.show("second".into(), start + Duration::from_secs(1));
-        assert!(!notice.expire(older, start + FAILURE_VISIBLE));
+        let (older, older_expands, older_expires) = notice.show("first".into(), start);
+        let (newer, newer_expands, newer_expires) =
+            notice.show("second".into(), start + Duration::from_secs(1));
+        assert_ne!(older, newer);
+        assert!(!notice.expand(older, older_expands));
+        assert_eq!(notice.phase, FailurePhase::Mark);
+        assert!(notice.expand(newer, newer_expands));
+        assert!(!notice.expire(newer, older_expires));
         assert_eq!(notice.message.as_deref(), Some("second"));
-        assert!(notice.expire(newer, start + Duration::from_secs(1) + FAILURE_VISIBLE));
+        assert!(notice.expire(newer, newer_expires));
         assert_eq!(notice.message, None);
     }
 
@@ -678,15 +845,65 @@ mod tests {
             Plate {
                 stable: SHORT.into(),
                 tentative: " and then".into(),
-                failure: Some("No microphone is available. Connect a microphone.".into()),
+                failure: Some(Failure {
+                    message: "No microphone is available. Connect a microphone.".into(),
+                    phase: FailurePhase::Text,
+                }),
                 ..Plate::default()
             },
             false,
         );
-        assert!(rect(&rt, "plate").is_some());
+        assert!(rect(&rt, "failure-pill").is_some());
         assert!(rect(&rt, "failure").is_some());
         assert!(rect(&rt, "stable").is_none());
         assert!(rect(&rt, "tentative").is_none());
+    }
+
+    #[test]
+    fn the_unified_pill_starts_as_its_mark_and_grows_to_the_message() {
+        let mark = runtime_plate(
+            Plate {
+                failure: Some(Failure {
+                    message: "the rewrite was cancelled".into(),
+                    phase: FailurePhase::Mark,
+                }),
+                ..Plate::default()
+            },
+            true,
+        );
+        assert!(rect(&mark, "failure-pill").is_some());
+        assert!(rect(&mark, "failure-mark").is_some());
+        assert!(
+            rect(&mark, "failure").is_none(),
+            "the message waits for the expansion"
+        );
+        let [_, _, width, height] = rect(&mark, "failure-pill").unwrap();
+        assert_eq!(height, FAILURE_PLATE_H);
+        assert!(
+            (width - FAILURE_MARK_W).abs() < 1.0,
+            "the mark pill keeps the HUD's plate width: {width}"
+        );
+
+        // The expansion springs rather than snapping: a frame after the
+        // phase changes sits between the mark and the message's width.
+        let mut growing = mark;
+        growing.settle_all();
+        growing.frame(0.0);
+        growing.update(|plate, _| plate.expand_failure());
+        growing.frame(0.02);
+        let between = rect(&growing, "failure-pill").unwrap()[2];
+        growing.settle_all();
+        growing.frame(0.02);
+        let [_, _, width, _] = rect(&growing, "failure-pill").unwrap();
+        assert!(
+            between > FAILURE_MARK_W + 0.5 && between < width - 0.5,
+            "the pill expands between {FAILURE_MARK_W} and {width}: {between}"
+        );
+        assert!(rect(&growing, "failure").is_some());
+        assert!(
+            width > FAILURE_MARK_W + 20.0,
+            "the expanded pill fits the message: {width}"
+        );
     }
 
     #[test]
@@ -712,6 +929,32 @@ mod tests {
     fn snapshots() {
         let folder = std::path::PathBuf::from(std::env::var("HEX_LIVE_TEXT_SNAPS").unwrap());
         let gpu = rune::render::Gpu::try_new(rune::render::Gpu::instance(), None).unwrap();
+        let save = |mut rt: Runtime<Plate>, name: &str, dark: bool| {
+            let (w, h) = ((SIZE.0 * 2.0) as u32, (SIZE.1 * 2.0) as u32);
+            let mut renderer = crate::rune_ui::offscreen::renderer(&gpu.device);
+            let target = crate::rune_ui::offscreen::target(&gpu.device, w, h);
+            renderer.upload_images(&gpu.device, &gpu.queue, &mut rt.images);
+            renderer.prepare(
+                &gpu.device,
+                &gpu.queue,
+                &mut rt.text.atlas,
+                &rt.instances,
+                (w, h),
+            );
+            let mut encoder = gpu.device.create_command_encoder(&Default::default());
+            // A desktop grey behind the clear overlay.
+            let backdrop = if dark { 0.08 } else { 0.62 };
+            renderer.draw(
+                &mut encoder,
+                &target.view,
+                [backdrop, backdrop, backdrop, 1.0],
+            );
+            target.copy(&mut encoder);
+            gpu.queue.submit([encoder.finish()]);
+            let theme = if dark { "dark" } else { "light" };
+            let path = folder.join(format!("live-text-{name}-{theme}.png"));
+            rune::render::write_png(&path, w, h, &target.read(&gpu.device)).unwrap();
+        };
         for (name, stable, tentative) in [
             ("short", SHORT, ""),
             ("long", LONG, ""),
@@ -719,31 +962,23 @@ mod tests {
             ("rtl", HEBREW, " והיום"),
         ] {
             for dark in [false, true] {
-                let mut rt = runtime(stable, tentative, dark);
-                let (w, h) = ((SIZE.0 * 2.0) as u32, (SIZE.1 * 2.0) as u32);
-                let mut renderer = crate::rune_ui::offscreen::renderer(&gpu.device);
-                let target = crate::rune_ui::offscreen::target(&gpu.device, w, h);
-                renderer.upload_images(&gpu.device, &gpu.queue, &mut rt.images);
-                renderer.prepare(
-                    &gpu.device,
-                    &gpu.queue,
-                    &mut rt.text.atlas,
-                    &rt.instances,
-                    (w, h),
-                );
-                let mut encoder = gpu.device.create_command_encoder(&Default::default());
-                // A desktop grey behind the clear overlay.
-                let backdrop = if dark { 0.08 } else { 0.62 };
-                renderer.draw(
-                    &mut encoder,
-                    &target.view,
-                    [backdrop, backdrop, backdrop, 1.0],
-                );
-                target.copy(&mut encoder);
-                gpu.queue.submit([encoder.finish()]);
-                let theme = if dark { "dark" } else { "light" };
-                let path = folder.join(format!("live-text-{name}-{theme}.png"));
-                rune::render::write_png(&path, w, h, &target.read(&gpu.device)).unwrap();
+                save(runtime(stable, tentative, dark), name, dark);
+            }
+        }
+        // The unified failure pill: the exclamation alone, then the message.
+        for (name, phase) in [
+            ("failure-mark", FailurePhase::Mark),
+            ("failure-text", FailurePhase::Text),
+        ] {
+            for dark in [false, true] {
+                let plate = Plate {
+                    failure: Some(Failure {
+                        message: "the rewrite was cancelled".into(),
+                        phase,
+                    }),
+                    ..Plate::default()
+                };
+                save(runtime_plate(plate, dark), name, dark);
             }
         }
     }

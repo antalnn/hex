@@ -248,6 +248,42 @@ fn dot_value(index: i32) -> vec2f {
     return vec2f(f32(word & 0xffffu), f32(word >> 16u)) / 65535.0;
 }
 
+// Voice bars: rounded capsules centred in the plate, `count` of them, each
+// as tall as its level. `fade` carries them out under the transcribing dots.
+fn voice_bars(
+    point: vec2f,
+    count: i32,
+    bar_width: f32,
+    gap: f32,
+    shape: f32,
+    fade: f32,
+    aa: f32,
+    result: ptr<function, vec4f>,
+) {
+    let step = bar_width + gap;
+    let radius = bar_width * 0.5;
+    let track = max(radius, 1.0);
+    let reach = max(u.height * 0.5 - 3.5, track);
+    let unlit = select(0.085, 0.07, u.dark > 0.5);
+    let full = select(1.0, 0.96, u.dark > 0.5);
+    for (var i = 0; i < count; i++) {
+        let value = dot_value(i);
+        let center = vec2f((f32(i) - (f32(count) - 1.0) * 0.5) * step, 0.0);
+        let half = max(reach * value.x, track);
+        let track_sd = rounded_box(point - center, vec2f(radius, track), radius);
+        composite(result, u.base.rgb, unlit * coverage(track_sd, aa) * shape * fade);
+        let bar_sd = rounded_box(point - center, vec2f(radius, half), radius);
+        let core = clamp(value.x * value.x, 0.0, 0.85) * mix(0.3, 1.0, value.y);
+        let color = mix(u.base.rgb, u.core.rgb, core);
+        composite(
+            result,
+            color,
+            0.11 * value.x * value.x * value.y * coverage(bar_sd - 2.0, aa) * shape * fade,
+        );
+        composite(result, color, full * coverage(bar_sd, aa) * shape * fade);
+    }
+}
+
 @fragment
 fn dot_scope_fragment(in: Varyings) -> @location(0) vec4f {
     let uv = in.uv;
@@ -296,31 +332,10 @@ fn dot_scope_fragment(in: Varyings) -> @location(0) vec4f {
     let full = select(1.0, 0.96, dark);
 
     // Voice bars: rounded capsules centred in the plate. The bar width and
-    // gap arrive in the grid terms, which this mode does not use.
+    // gap arrive in the grid terms, which this mode does not use. `fade`
+    // lets the transcribing pills carry the bars out under their dots.
     if (u.field.y > 1.5 && u.field.y < 2.5) {
-        let bar_width = u.columns;
-        let gap = u.rows;
-        let count = max(i32(u.field.z + 0.5), 1);
-        let step = bar_width + gap;
-        let radius = bar_width * 0.5;
-        let track = max(radius, 1.0);
-        let reach = max(u.height * 0.5 - 5.0, track);
-        for (var i = 0; i < count; i++) {
-            let value = dot_value(i);
-            let center = vec2f((f32(i) - (f32(count) - 1.0) * 0.5) * step, 0.0);
-            let half = max(reach * value.x, track);
-            let track_sd = rounded_box(point - center, vec2f(radius, track), radius);
-            composite(&result, u.base.rgb, unlit * coverage(track_sd, aa) * shape);
-            let bar_sd = rounded_box(point - center, vec2f(radius, half), radius);
-            let core = clamp(value.x * value.x, 0.0, 0.85) * mix(0.3, 1.0, value.y);
-            let color = mix(u.base.rgb, u.core.rgb, core);
-            composite(
-                &result,
-                color,
-                0.11 * value.x * value.x * value.y * coverage(bar_sd - 2.0, aa) * shape,
-            );
-            composite(&result, color, full * coverage(bar_sd, aa) * shape);
-        }
+        voice_bars(point, max(i32(u.field.z + 0.5), 1), u.columns, u.rows, shape, 1.0, aa, &result);
         result *= u.opacity;
         if (in_island) {
             result.a += island_shape * (1.0 - result.a);
@@ -330,14 +345,22 @@ fn dot_scope_fragment(in: Varyings) -> @location(0) vec4f {
 
     // Jump: three dots in a row. They rest in a line for the first quarter
     // second the pill shows them, then each rises and falls in turn. The
-    // jump eases in, so the change from the line never reads as a jump.
+    // jump eases in, so the change from the line never reads as a jump, and
+    // the recording's bars fade out under the dots.
     if (u.field.y > 2.5 && u.field.y < 3.5) {
         let clock = max(u.field.w, 0.0);
-        let ramp = sstep(0.25, 0.6, clock);
-        let cycle = max(clock - 0.25, 0.0) % 1.35;
-        let current = floor(cycle / 0.45);
-        let t = fract(cycle / 0.45);
-        let lift = sin(3.14159265 * t) * 6.0 * ramp;
+        let bars = i32(u.field.z + 0.5);
+        let handoff = 1.0 - sstep(0.0, 0.16, clock);
+        if (bars > 0 && handoff > 0.0) {
+            voice_bars(point, bars, u.columns, u.rows, shape, handoff, aa, &result);
+        }
+        let ramp = sstep(0.25, 0.62, clock);
+        let cycle = max(clock - 0.25, 0.0) % 1.86;
+        let current = floor(cycle / 0.62);
+        let t = fract(cycle / 0.62);
+        let rise = min(t / 0.82, 1.0);
+        let lift = sin(3.14159265 * rise) * 5.5 * ramp;
+        let appear = sstep(0.0, 0.12, clock);
         for (var i = 0; i < 3; i++) {
             var y = 0.0;
             if (f32(i) == current) {
@@ -346,8 +369,8 @@ fn dot_scope_fragment(in: Varyings) -> @location(0) vec4f {
             let center = vec2f((f32(i) - 1.0) * 14.0, y);
             let sd = length(point - center) - 3.2;
             let color = mix(u.base.rgb, u.core.rgb, 0.55);
-            composite(&result, color, 0.16 * coverage(sd - 2.5, aa) * shape);
-            composite(&result, color, full * coverage(sd, aa) * shape);
+            composite(&result, color, 0.16 * coverage(sd - 2.5, aa) * shape * appear);
+            composite(&result, color, full * coverage(sd, aa) * shape * appear);
         }
         result *= u.opacity;
         if (in_island) {

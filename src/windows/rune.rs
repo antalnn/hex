@@ -200,7 +200,11 @@ pub fn open(event_path: PathBuf, shutdown: &'static AtomicBool, start_hidden: bo
             .spawn(move || create_tray(window))
     };
     let hud = crate::rune_hud::install(&mut app);
-    crate::rune_ui::live_text::install(&mut app, crate::rune_hud::live_text_place);
+    crate::rune_ui::live_text::install(
+        &mut app,
+        crate::rune_hud::live_text_place,
+        Some(crate::rune_hud::failure_pill_place),
+    );
     // The capture capsule, picker, and ink.
     let _capture_overlays =
         crate::rune_ui::capture_capsule::feed::CaptureOverlays::install(&mut app);
