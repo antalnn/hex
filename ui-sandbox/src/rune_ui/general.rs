@@ -1,8 +1,7 @@
-//! The General pane: one card of the basics (shortcut, speech model,
-//! language, microphone, launch at login), each row led by an icon, and
-//! every other setting behind the pane's Advanced fold. Also the pieces the
-//! other panes' rows share: the fold, the quiet select, and the shortcut's
-//! keys.
+//! The General pane: one card per section (Microphone, Keys, Shortcut mode,
+//! Vocabulary, Launch at login), each row led by an icon, and every other
+//! setting behind the pane's Advanced fold. Also the pieces the other panes'
+//! rows share: the fold, the quiet select, and the shortcut's keys.
 
 use std::path::Path;
 use std::time::Duration;
