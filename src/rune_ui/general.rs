@@ -36,6 +36,10 @@ pub(super) use self::shortcuts::shortcut_rows;
 // ---------------------------------------------------------------------------
 // The basics
 
+/// Air between the General card's groups of rows: the microphone, the keys,
+/// the shortcut mode, Vocabulary, and Launch at login.
+const GROUP_GAP: f32 = 10.0;
+
 pub(super) fn basics(ui: &Ui, p: Paint, layer: &mut Vec<El>, query: &str) -> Option<El> {
     let mut rows = search::Rows::new(query);
     // The hardware block sits directly under the status card: the input in
@@ -48,6 +52,7 @@ pub(super) fn basics(ui: &Ui, p: Paint, layer: &mut Vec<El>, query: &str) -> Opt
         row,
     );
     if ui.records_shortcuts() {
+        rows.space("general-space-keys", GROUP_GAP);
         // The keys block: the dictation key, the rewrite key (Windows), the
         // platform's optional keys, then the mode they share and its cancel
         // key.
@@ -120,6 +125,7 @@ pub(super) fn basics(ui: &Ui, p: Paint, layer: &mut Vec<El>, query: &str) -> Opt
                 ),
             );
         }
+        rows.space("general-space-shortcut-mode", GROUP_GAP);
         rows.push(tr("Shortcut mode"), super::shortcut::mode::row(ui, p));
         // Toggle has a cancel shortcut; Hold has none.
         if ui.settings.shortcut_mode == crate::dictation::ShortcutMode::Toggle {
@@ -133,6 +139,7 @@ pub(super) fn basics(ui: &Ui, p: Paint, layer: &mut Vec<El>, query: &str) -> Opt
                 row,
             );
         }
+        rows.space("general-space-vocabulary", GROUP_GAP);
     }
     let vocabulary_note = super::vocabulary::unused_note(ui);
     rows.push_described(
@@ -154,7 +161,11 @@ pub(super) fn basics(ui: &Ui, p: Paint, layer: &mut Vec<El>, query: &str) -> Opt
             ),
         ),
     );
-    rows.extend(tr("Launch at login"), launch_at_login_rows(ui, p));
+    let launch_at_login = launch_at_login_rows(ui, p);
+    if !launch_at_login.is_empty() {
+        rows.space("general-space-launch", GROUP_GAP);
+        rows.extend(tr("Launch at login"), launch_at_login);
+    }
     (!rows.is_empty()).then(|| card(p, "basics", rows.into_rows()))
 }
 

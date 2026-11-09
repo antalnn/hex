@@ -285,6 +285,41 @@ fn general_reads_the_hardware_then_the_keys_then_the_rest() {
         indices.windows(2).all(|pair| pair[0] < pair[1]),
         "General reads out of order: {order:?} at {indices:?}"
     );
+    // The one card groups its rows by air: each spacer sits below the group
+    // it follows and above the group it introduces.
+    let rect = |key: &str| {
+        rt.presented(key)
+            .unwrap_or_else(|| panic!("{key} is not laid out"))
+            .0
+    };
+    let boundary = |above: &str, space: &str, below: &str| {
+        let [_, above_top, _, above_height] = rect(above);
+        let [_, space_top, _, space_height] = rect(space);
+        let [_, below_top, _, _] = rect(below);
+        assert!(
+            space_top >= above_top + above_height,
+            "{space} starts after {above}: {space_top} vs {}",
+            above_top + above_height
+        );
+        assert!(space_height >= 8.0, "{space} carries air: {space_height}");
+        assert!(
+            below_top >= space_top + space_height,
+            "{below} starts after {space}: {below_top} vs {}",
+            space_top + space_height
+        );
+    };
+    boundary(
+        "microphone-mode",
+        "general-space-keys",
+        "dictation-shortcut",
+    );
+    boundary(
+        "rewrite-shortcut",
+        "general-space-shortcut-mode",
+        "shortcut-mode",
+    );
+    boundary("cancel-shortcut", "general-space-vocabulary", "vocabulary");
+    boundary("vocabulary", "general-space-launch", "launch-at-login");
 }
 
 /// The Models pane puts the features before the server that serves one.

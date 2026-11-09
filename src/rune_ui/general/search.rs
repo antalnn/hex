@@ -259,6 +259,18 @@ impl<'a> Rows<'a> {
         }
     }
 
+    /// A gap between groups of rows. It shows only without a query: a search
+    /// lists the matching rows alone, and air between them would say nothing.
+    pub(super) fn space(&mut self, key: &'static str, height: f32) {
+        if !self.query.is_empty() || self.rows.is_empty() {
+            return;
+        }
+        if matches!(self.rows.last(), Some(CardRow::Space { .. })) {
+            return;
+        }
+        self.rows.push(CardRow::Space { key, height });
+    }
+
     pub(super) fn is_empty(&self) -> bool {
         self.rows.is_empty()
     }
