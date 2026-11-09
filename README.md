@@ -17,10 +17,10 @@ reset, never merged into.
 | Quality-of-life change | What it gives you |
 |---|---|
 | Local model server owned by the app | Hex starts one llama.cpp server when the local model is enabled and stops it with the process; on Windows the child runs in a job object, so a crash cannot leave it holding GPU memory. A server that already answers health checks is adopted instead of replaced. A missing program leaves the local model off while Remote keeps working. |
-| AI rewrite with its own switch | The native AI rewrite step, which repairs grammar, false starts and punctuation, is one entry in a mode's transformation list. The Modes pane's Processing section has a dedicated switch for it beside the older OpenCode rewrite, so turning one on never turns the other off. |
+| AI cleanup, its own step | The native AI cleanup step repairs grammar, false starts and punctuation. It is its own entry in a mode's transformation list, separate from the older OpenCode rewrite, so turning one on never turns the other off. Output lists the steps that run. |
 | Remote-only rewrite selection | Select text, press a shortcut, speak an instruction, and the selection is replaced with the model's result. The selection is read through UI Automation, with a clipboard round trip when the app has no text pattern. It calls a remote endpoint only; the bundled small model did not execute a measured rewrite instruction. |
 | Rewrite snippet match | An optional lab switch lets the remote model map a vague rewrite request of 3 to 24 words to one saved prompt snippet. An unknown reply keeps the instruction as spoken. |
-| Vocabulary corrections and code-term wrap | The shared vocabulary turns `sounds_like` spellings into terms, and a mode's own vocabulary adds its corrections. Terms marked as code can be wrapped in backticks after the rewrite; the wrap is off by default. |
+| Vocabulary corrections and code-term wrap | The shared vocabulary turns `sounds_like` spellings into terms, and a mode's own vocabulary adds its corrections. Terms marked as code can be wrapped in backticks after the cleanup; the wrap is off by default. |
 | Paste where the dictation started | On Windows the transcript returns to the window that was in front when the recording started, even after alt-tabbing during dictation. A closed or elevated window falls back to the current focus. |
 | Shortcut guard | Named executables keep every Hex shortcut, and a separate switch suppresses the shortcuts in fullscreen apps. |
 | Escape cancels | Escape discards a recording in both Hold and Toggle modes, and also cancels a rewrite recording, leaving no transcript and no paste. |
@@ -33,9 +33,10 @@ shortcut, the shortcut mode, Vocabulary, and launch at login. Models holds the
 speech model, the dictation cleanup source, the rewrite selection endpoint, and
 the local model server.
 
-Add the AI rewrite step on the Modes pane: its switch adds the step to a mode's
-transformations, and the list can be reordered so rules that read the raw words
-run before the model and rules that shape its output run after.
+The AI cleanup step is one entry in a mode's transformation list, and the list
+can be reordered so rules that read the raw words run before the model and
+rules that shape its output run after. Output lists the steps that run; Edit
+with agent changes them.
 
 ## Local model
 
@@ -128,8 +129,8 @@ place to change it:
    symbols, and filler words.
 2. Vocabulary corrections replace `sounds_like` spellings with the saved term,
    from General › Vocabulary. A mode's own vocabulary and swaps apply next.
-3. The mode's transformations run in the order listed on the Modes pane. The
-   native AI rewrite step runs where its id sits in that list; the personal
+3. The mode's transformations run in their saved order, listed in Output. The
+   native AI cleanup step runs where its id sits in that list; the personal
    rules in `~/.config/hex` follow their own order around it.
 4. Paragraph and colon rules run after the model, and a saved snippet replaces a
    whole-utterance cue last, so its text is never reformatted by an earlier
