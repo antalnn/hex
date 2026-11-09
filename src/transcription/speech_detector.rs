@@ -6,7 +6,6 @@
 
 use std::path::Path;
 use std::sync::atomic::AtomicBool;
-#[cfg(not(test))]
 use std::sync::atomic::Ordering;
 use std::sync::{Mutex, MutexGuard};
 
@@ -156,6 +155,114 @@ fn detect(session: &mut VadSession, samples: &[f32]) -> Result<bool> {
     Ok(!session.run(samples, &options)?.segments.is_empty())
 }
 
+/// Silence kept on each side of a speech span when a whole clip is trimmed.
+/// Wide enough to keep a soft onset the detector scored late, narrow enough
+/// that a thinking pause still goes.
+const TRIM_PAD_MS: i32 = 200;
+
+/// A trim that saves less than this is not worth a shorter clip: the model
+/// gains nothing and the only risk left is a clipped word.
+const MIN_TRIMMED_SAMPLES: usize = 4_000;
+
+/// `samples` with everything outside its speech removed, or `None` when the
+/// detector is unavailable, hears no speech at all, or would save less than a
+/// quarter second.
+pub(crate) fn without_silence(samples: &[f32]) -> Option<Vec<f32>> {
+    trim_with(samples, speech_ranges(samples, TRIM_PAD_MS))
+}
+
+/// Speech ranges of 16 kHz mono `samples`, padded by `pad_ms` and merged
+/// where the padding meets. `None` when the detector is not available.
+pub(crate) fn speech_ranges(samples: &[f32], pad_ms: i32) -> Option<Vec<(usize, usize)>> {
+    #[cfg(test)]
+    {
+        let _ = (samples, pad_ms);
+        None
+    }
+    #[cfg(not(test))]
+    {
+        let mut state = lock_state();
+        let session = loaded_session(&mut state)?;
+        ranges_from(session, samples, pad_ms)
+    }
+}
+
+/// One detector run over `samples`, padded and merged.
+#[cfg_attr(test, allow(dead_code))]
+fn ranges_from(
+    session: &mut VadSession,
+    samples: &[f32],
+    pad_ms: i32,
+) -> Option<Vec<(usize, usize)>> {
+    let options = VadOptions {
+        threshold: THRESHOLD,
+        min_speech_ms: MIN_SPEECH_MS,
+        speech_pad_ms: pad_ms,
+        ..VadOptions::default()
+    };
+    match session.run(samples, &options) {
+        Ok(result) => {
+            let spans: Vec<(i64, i64)> = result
+                .segments
+                .iter()
+                .map(|segment| (segment.start_sample, segment.end_sample))
+                .collect();
+            Some(merged_ranges(&spans, samples.len()))
+        }
+        Err(error) => {
+            if !RUN_FAILURE_LOGGED.swap(true, Ordering::Relaxed) {
+                tracing::warn!(%error, "speech detection failed");
+            }
+            None
+        }
+    }
+}
+
+/// The detector's answer applied to the clip: the speech spans joined, or
+/// `None` when there is nothing to trim or too little to gain.
+fn trim_with(samples: &[f32], ranges: Option<Vec<(usize, usize)>>) -> Option<Vec<f32>> {
+    let ranges = ranges?;
+    if ranges.is_empty() {
+        return None;
+    }
+    let kept = keep_ranges(samples, &ranges);
+    (samples.len().saturating_sub(kept.len()) >= MIN_TRIMMED_SAMPLES).then_some(kept)
+}
+
+/// `ranges` clamped to `0..len`, empty ones dropped, sorted, and the ones
+/// that touch merged.
+#[cfg_attr(test, allow(dead_code))]
+fn merged_ranges(ranges: &[(i64, i64)], len: usize) -> Vec<(usize, usize)> {
+    let limit = len as i64;
+    let mut clamped: Vec<(usize, usize)> = ranges
+        .iter()
+        .filter_map(|&(start, end)| {
+            let start = start.clamp(0, limit) as usize;
+            let end = end.clamp(0, limit) as usize;
+            (end > start).then_some((start, end))
+        })
+        .collect();
+    clamped.sort_unstable();
+    let mut merged: Vec<(usize, usize)> = Vec::with_capacity(clamped.len());
+    for (start, end) in clamped {
+        match merged.last_mut() {
+            Some(last) if start <= last.1 => last.1 = last.1.max(end),
+            _ => merged.push((start, end)),
+        }
+    }
+    merged
+}
+
+/// The concatenation of `samples[ranges]`.
+#[cfg_attr(test, allow(dead_code))]
+fn keep_ranges(samples: &[f32], ranges: &[(usize, usize)]) -> Vec<f32> {
+    let mut kept = Vec::with_capacity(samples.len());
+    for &(start, end) in ranges {
+        kept.extend_from_slice(&samples[start..end]);
+    }
+    kept
+}
+
 #[cfg(test)]
 thread_local! {
     static OVERRIDE: std::cell::Cell<Option<bool>> = const { std::cell::Cell::new(None) };
@@ -199,6 +306,23 @@ mod tests {
     }
 
     #[test]
+    fn merged_ranges_clamps_sorts_and_joins_touching_spans() {
+        let merged = merged_ranges(&[(30, 40), (0, 10), (10, 20), (-5, 3), (60, 90)], 50);
+        assert_eq!(merged, vec![(0, 20), (30, 40)]);
+    }
+
+    #[test]
+    fn trim_with_joins_the_speech_and_declines_a_trivial_saving() {
+        let samples = vec![0.1_f32; 32_000];
+        let kept = trim_with(&samples, Some(vec![(8_000, 12_000), (20_000, 24_000)])).unwrap();
+        assert_eq!(kept.len(), 8_000);
+        // No speech found: the clip stays whole.
+        assert!(trim_with(&samples, Some(Vec::new())).is_none());
+        // A saving under a quarter second is not worth the risk.
+        assert!(trim_with(&samples, Some(vec![(0, 31_900)])).is_none());
+    }
+
+    #[test]
     fn a_corrupt_detector_file_is_not_loaded() {
         let path = std::env::temp_dir().join(format!(
             "hex-corrupt-speech-detector-{}.gguf",
@@ -224,6 +348,23 @@ mod tests {
             })
             .collect();
         assert!(!detect(&mut session, &noise).unwrap());
+    }
+
+    #[test]
+    #[ignore = "requires HEX_VAD_MODEL and HEX_VAD_SPEECH_WAV (16 kHz mono float speech)"]
+    fn real_detector_trims_a_long_gap_between_two_speech_spans() {
+        let mut session = load(Path::new(&std::env::var("HEX_VAD_MODEL").unwrap())).unwrap();
+        let speech = clip("HEX_VAD_SPEECH_WAV");
+        let mut samples = speech.clone();
+        samples.resize(samples.len() + 32_000, 0.0);
+        samples.extend_from_slice(&speech);
+        let ranges = ranges_from(&mut session, &samples, TRIM_PAD_MS).unwrap();
+        let kept = trim_with(&samples, Some(ranges)).unwrap();
+        assert!(
+            kept.len() < samples.len(),
+            "the two-second gap should be gone"
+        );
+        assert!(kept.len() > speech.len(), "both speech spans should stay");
     }
 
     fn clip(variable: &str) -> Vec<f32> {

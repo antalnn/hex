@@ -1771,6 +1771,16 @@ mod tests {
         assert!(whole_clip(clip.clone(), true).len() < clip.len());
     }
 
+    #[test]
+    fn a_detected_trim_is_what_the_model_hears() {
+        let clip = vec![0.25_f32; 32_000];
+        let kept = vec![0.25_f32; 8_000];
+        assert_eq!(whole_clip_from(clip.clone(), Some(kept.clone())), kept);
+        // No detector: the energy path decides, and a clip with no pause in
+        // it stays whole.
+        assert_eq!(whole_clip_from(clip.clone(), None).len(), clip.len());
+    }
+
     fn assert_quiet_speech_is_kept(speech_db: f32, noise_db: f32, dc_offset: f32) {
         use crate::transcription::pause_segmenter::{FRAME_SAMPLES, SpeechFrames, tests::noise};
         // 17 s of syllables over steady noise.

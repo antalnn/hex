@@ -381,6 +381,25 @@ pub(super) fn whole_clip(clip: Vec<f32>, skip_pauses: bool) -> Vec<f32> {
     if !skip_pauses {
         return clip;
     }
+    // The detector hears speech where a level gate only hears volume, so it
+    // survives room tone and a fan. Without it the energy path below still
+    // cuts long pauses.
+    let detected = crate::transcription::speech_detector::without_silence(&clip);
+    whole_clip_from(clip, detected)
+}
+
+/// The whole-clip run's audio once the detector has answered: `detected` when
+/// it found speech to keep, otherwise the energy path's cut.
+#[cfg_attr(target_os = "macos", allow(dead_code))]
+pub(super) fn whole_clip_from(clip: Vec<f32>, detected: Option<Vec<f32>>) -> Vec<f32> {
+    if let Some(kept) = detected {
+        tracing::info!(
+            audio_ms = clip.len() / 16,
+            kept_ms = kept.len() / 16,
+            "trimmed silence before whole-clip transcription"
+        );
+        return kept;
+    }
     match skip_long_pauses(&clip) {
         Some((kept, dropped)) => {
             tracing::info!(
