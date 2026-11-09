@@ -1572,6 +1572,7 @@ const TRANSLATIONS: &[(&str, [&str; 6])] = &[
     ("Also pause in any window that covers the whole screen", ["Wstrzymuj też w każdym oknie na cały ekran", "任何占满屏幕的窗口也暂停", "画面全体を覆うウィンドウでも止める", "Auch in jedem Fenster pausieren, das den ganzen Bildschirm füllt", "Pausar también en cualquier ventana que cubra toda la pantalla", "Також призупиняти в будь-якому вікні на весь екран"]),
     ("Each app is listed once, so a repeated name is not saved", ["Każda aplikacja jest na liście raz, więc powtórzona nazwa nie jest zapisywana", "每个应用只列一次，因此重复的名称不会被保存", "各アプリは一度だけ記載されるため、重複した名前は保存されません", "Jede App steht einmal in der Liste, ein wiederholter Name wird nicht gespeichert", "Cada aplicación aparece una vez, así que un nombre repetido no se guarda", "Кожна програма в списку один раз, тож повторена назва не зберігається"]),
     ("Dictate shortcut", ["Skrót dyktowania", "听写快捷键", "音声入力のショートカット", "Diktierkürzel", "Atajo de dictado", "Комбінація диктування"]),
+    ("Keys", ["Klawisze", "按键", "キー", "Tasten", "Teclas", "Клавіші"]),
     ("Rewrite shortcut", ["Skrót przepisywania", "改写快捷键", "書き換えショートカット", "Umschreibungs-Kürzel", "Atajo de reescritura", "Комбінація переписування"]),
 ];
 

@@ -118,18 +118,10 @@ impl Paint {
 /// A row of a [`card`]: always there, or a slot of rows that folds away.
 pub(super) enum CardRow {
     Shown(Box<El>),
-    /// The slot stays in the card and clips its rows, so they close under
-    /// the rows below as those slide up, rather than fading over them, and
-    /// the separator above folds with them.
+    /// A fold that opens under its row.
     Folding {
         key: &'static str,
         rows: Vec<CardRow>,
-    },
-    /// Air between groups of rows. No separator is drawn on either side, so
-    /// the groups read apart while the card stays one surface.
-    Space {
-        key: &'static str,
-        height: f32,
     },
 }
 
@@ -202,28 +194,18 @@ pub(super) fn raised(p: Paint, key: &str) -> El {
     surface
 }
 
-/// `rows` as a card's children, a separator between each pair. A space row
-/// takes no separator above or below it: the air is the group boundary.
+/// `rows` as a card's children, a separator between each pair.
 fn stack(p: Paint, rows: Vec<CardRow>) -> Vec<El> {
     let mut children = Vec::new();
-    let mut after_space = false;
     for (index, row) in rows.into_iter().enumerate() {
         match row {
             CardRow::Shown(row) => {
-                children.extend(
-                    (index > 0 && !after_space).then(|| separator(p, format!("sep{}", index - 1))),
-                );
+                children.extend((index > 0).then(|| separator(p, format!("sep{}", index - 1))));
                 children.push(*row);
-                after_space = false;
-            }
-            CardRow::Space { key, height } => {
-                children.push(el().key(key).h(height).a11y_hidden());
-                after_space = true;
             }
             CardRow::Folding { key, rows } => {
-                let lead = (index > 0 && !rows.is_empty() && !after_space)
-                    .then(|| separator(p, "sep-above".into()));
-                after_space = false;
+                let lead =
+                    (index > 0 && !rows.is_empty()).then(|| separator(p, "sep-above".into()));
                 let rows = lead.into_iter().chain(stack(p, rows));
                 children.push(
                     col()

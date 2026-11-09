@@ -48,7 +48,7 @@ fn nodes(tree: &Value) -> Vec<(String, &Value)> {
 }
 
 /// General reads the hardware first, then the keys with their mode and cancel,
-/// then Vocabulary and Launch at login.
+/// then Vocabulary and Launch at login, one card per section.
 #[test]
 #[cfg(target_os = "windows")]
 fn general_reads_the_hardware_then_the_keys_then_the_rest() {
@@ -78,39 +78,47 @@ fn general_reads_the_hardware_then_the_keys_then_the_rest() {
         indices.windows(2).all(|pair| pair[0] < pair[1]),
         "General reads out of order: {order:?} at {indices:?}"
     );
-    // The one card groups its rows by air: each spacer sits below the group
-    // it follows and above the group it introduces.
-    let rect = |key: &str| {
-        rt.presented(key)
-            .unwrap_or_else(|| panic!("{key} is not laid out"))
-            .0
+    // Every section opens with its heading, and its rows follow before the
+    // next section's heading.
+    let headings = [
+        "Microphone",
+        "Keys",
+        "Shortcut mode",
+        "Vocabulary",
+        "Launch at login",
+    ];
+    let heading = |title: &str| {
+        all.iter()
+            .position(|(_, node)| {
+                node["role"].as_str() == Some("heading")
+                    && node["name"].as_str().map(str::trim) == Some(title)
+            })
+            .unwrap_or_else(|| panic!("the {title} heading is missing"))
     };
-    let boundary = |above: &str, space: &str, below: &str| {
-        let [_, above_top, _, above_height] = rect(above);
-        let [_, space_top, _, space_height] = rect(space);
-        let [_, below_top, _, _] = rect(below);
-        assert!(
-            space_top >= above_top + above_height,
-            "{space} starts after {above}: {space_top} vs {}",
-            above_top + above_height
-        );
-        assert!(space_height >= 8.0, "{space} carries air: {space_height}");
-        assert!(
-            below_top >= space_top + space_height,
-            "{below} starts after {space}: {below_top} vs {}",
-            space_top + space_height
-        );
-    };
-    boundary(
-        "microphone-mode",
-        "general-space-keys",
-        "dictation-shortcut",
+    let heading_indices: Vec<usize> = headings.iter().map(|title| heading(title)).collect();
+    assert!(
+        heading_indices.windows(2).all(|pair| pair[0] < pair[1]),
+        "General's sections read out of order: {headings:?} at {heading_indices:?}"
     );
-    boundary(
-        "rewrite-shortcut",
-        "general-space-shortcut-mode",
-        "shortcut-mode",
-    );
-    boundary("cancel-shortcut", "general-space-vocabulary", "vocabulary");
-    boundary("vocabulary", "general-space-launch", "launch-at-login");
+    let sections: [(&str, &[&str]); 5] = [
+        ("Microphone", &["microphone", "microphone-mode"]),
+        ("Keys", &["dictation-shortcut", "rewrite-shortcut"]),
+        ("Shortcut mode", &["shortcut-mode", "cancel-shortcut"]),
+        ("Vocabulary", &["vocabulary"]),
+        ("Launch at login", &["launch-at-login"]),
+    ];
+    for (position, (title, rows)) in sections.iter().enumerate() {
+        let start = heading_indices[position];
+        let end = heading_indices
+            .get(position + 1)
+            .copied()
+            .unwrap_or(all.len());
+        for row in *rows {
+            let row = index(row);
+            assert!(
+                row > start && row < end,
+                "{row}({row}) does not sit under the {title} heading at {start}"
+            );
+        }
+    }
 }
