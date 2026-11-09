@@ -16,8 +16,8 @@ use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 use rune::{
-    Anim, Cx, El, Icon, OverlayHandle, OverlayOptions, OverlayPlacement, OverlaySpec, ScreenEdge,
-    Spring, row, text,
+    Anim, Cx, Edge, El, Icon, OverlayHandle, OverlayOptions, OverlayPlacement, OverlaySpec,
+    ScreenEdge, Spring, SpringPair, Transition, row, text,
 };
 
 use super::controls::Paint;
@@ -565,6 +565,9 @@ fn failure_pill(p: &Paint, failure: &Failure) -> El {
         rune::icon(&FAILURE_MARK_ICON, 24.0)
             .key("failure-mark")
             .color(p.danger())
+            // The mark is gone at the phase change: it must never paint over
+            // the words as the pill widens under it.
+            .transition(Transition::none())
     };
     let pill = row()
         .key("failure-pill")
@@ -582,8 +585,21 @@ fn failure_pill(p: &Paint, failure: &Failure) -> El {
                 .key("failure")
                 .truncate()
                 .font(p.k.ty.ui)
-                .color(p.danger());
-            pill.max_w(SIZE.0 - 8.0).child(message)
+                .color(p.danger())
+                // The words wipe in from the left on the pill's own spring,
+                // slower than the plate widens, so their right edge keeps the
+                // 14 pt padding the pill's `px` gives them at rest.
+                .transition(
+                    Transition::reveal(Edge::Leading).springs(SpringPair::new(EXPAND, EXPAND)),
+                );
+            // The pill's width springs while the message lays out at its
+            // final width, so the words would paint past the small pill.
+            // Clip children to the pill, fading the last 14 points, which is
+            // the message's own right padding: the reveal ends where the
+            // text would end at rest, so the padding reads equal throughout.
+            pill.max_w(SIZE.0 - 8.0)
+                .clip_fade(0.0, 0.0, 14.0, 0.0)
+                .child(message)
         }
     }
 }
@@ -741,6 +757,14 @@ mod tests {
             .into_iter()
             .find(|e| !e.exiting && e.key.as_deref() == Some(key))
             .map(|e| e.rect)
+    }
+
+    /// The part of the element's rect its ancestors' clips leave visible.
+    fn visible(rt: &Runtime<Plate>, key: &str) -> Option<[f32; 4]> {
+        rt.elements()
+            .into_iter()
+            .find(|e| !e.exiting && e.key.as_deref() == Some(key))
+            .map(|e| e.visible)
     }
 
     #[test]
@@ -912,9 +936,38 @@ mod tests {
         growing.update(|plate, _| plate.expand_failure());
         growing.frame(0.02);
         let between = rect(&growing, "failure-pill").unwrap()[2];
+        // Mid-flight, the message lays out at its final width and the pill
+        // clips it: the words never paint past the plate, and the visible
+        // part keeps the 14 pt left padding while the right edge trails the
+        // clip by the fade.
+        let mid_pill = rect(&growing, "failure-pill").unwrap();
+        let laid_out = rect(&growing, "failure").unwrap();
+        let shown = visible(&growing, "failure").unwrap();
+        assert!(
+            laid_out[0] + laid_out[2] > mid_pill[0] + mid_pill[2] + 1.0,
+            "the laid-out message still reaches past the growing pill"
+        );
+        assert!(
+            (shown[0] - (mid_pill[0] + 14.0)).abs() < 0.5,
+            "the visible text keeps the left padding: {} vs {}",
+            shown[0],
+            mid_pill[0] + 14.0
+        );
+        let visible_right = mid_pill[0] + mid_pill[2] - (shown[0] + shown[2]);
+        assert!(
+            (-0.5..=0.5).contains(&visible_right),
+            "the clip holds the text at the pill's moving edge: {visible_right}"
+        );
         growing.settle_all();
         growing.frame(0.02);
         let [_, _, width, _] = rect(&growing, "failure-pill").unwrap();
+        let pill = rect(&growing, "failure-pill").unwrap();
+        let settled_msg = rect(&growing, "failure").unwrap();
+        let right_pad = (pill[0] + pill[2]) - (settled_msg[0] + settled_msg[2]);
+        assert!(
+            (right_pad - 14.0).abs() < 1.0,
+            "the settled message keeps its right padding: {right_pad}"
+        );
         assert!(
             between > FAILURE_MARK_W + 0.5 && between < width - 0.5,
             "the pill expands between {FAILURE_MARK_W} and {width}: {between}"
@@ -1004,6 +1057,25 @@ mod tests {
                 };
                 save(runtime_plate(plate, dark), name, dark);
             }
+        }
+        // The expansion's own mid-spring frame: the text reveals from the
+        // left behind the moving clip, with equal left and right padding.
+        for dark in [false, true] {
+            let mut rt = runtime_plate(
+                Plate {
+                    failure: Some(Failure {
+                        message: "the rewrite was cancelled".into(),
+                        phase: FailurePhase::Mark,
+                    }),
+                    ..Plate::default()
+                },
+                dark,
+            );
+            rt.settle_all();
+            rt.frame(0.0);
+            rt.update(|plate, _| plate.expand_failure());
+            rt.frame(0.08);
+            save(rt, "failure-expand", dark);
         }
     }
 }
