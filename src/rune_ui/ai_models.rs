@@ -2,10 +2,11 @@
 //!
 //! Three cards and nothing else, so the pane stays a switchboard rather than a
 //! second General. Local model is the llama.cpp server Hex owns, shown here
-//! instead of in the sidebar and Output. Dictation and Rewrite selection each
-//! pick `Local` or `Remote`: Remote is any OpenAI-compatible endpoint, a hosted
-//! provider or a server on the network, with its own model name and an optional
-//! bearer token.
+//! instead of in the sidebar and Output. Dictation picks `Local` or `Remote`:
+//! Remote is any OpenAI-compatible endpoint, a hosted provider or a server on
+//! the network, with its own model name and an optional bearer token. Rewrite
+//! selection always calls a remote endpoint, so its card shows the address,
+//! model and key with no Local choice.
 //!
 //! The Rewrite prompts sheet holds Rewrite selection's snippets and its default
 //! prompt, edited like the Vocabulary sheet and saved when typing pauses.
@@ -19,7 +20,7 @@ use super::controls::{
 };
 use super::lists::remove_button;
 use super::{Request, Ui};
-use crate::app_settings::{AiSource, AppSettings, ModelSource};
+use crate::app_settings::{AiSource, AppSettings, RemoteModel};
 use crate::desktop::host::DesktopAction;
 use crate::desktop::i18n::{tr, tr_fill};
 
@@ -28,6 +29,9 @@ const FIELD_WIDTH: f32 = 280.0;
 const ROW_HEIGHT: f32 = 36.0;
 const PADDING: f32 = 18.0;
 const MODAL_WIDTH: f32 = 640.0;
+/// The local model's one remaining job, said on its card.
+const LOCAL_MODEL_PURPOSE: &str =
+    "Hex starts it for Dictation cleanup when Dictation is set to Local";
 
 /// The endpoint, model and key of one feature's remote call.
 #[derive(Default)]
@@ -38,19 +42,19 @@ struct SourceFields {
 }
 
 impl SourceFields {
-    fn new(source: &ModelSource) -> Self {
+    fn new(remote: &RemoteModel) -> Self {
         Self {
-            endpoint: TextEdit::new(source.endpoint.clone()),
-            model: TextEdit::new(source.model.clone()),
-            key: TextEdit::new(source.api_key.clone()),
+            endpoint: TextEdit::new(remote.endpoint.clone()),
+            model: TextEdit::new(remote.model.clone()),
+            key: TextEdit::new(remote.api_key.clone()),
         }
     }
 
-    /// Writes the typed values into `source`, leaving its choice alone.
-    fn project(&self, source: &mut ModelSource) {
-        source.endpoint = self.endpoint.text.trim().to_string();
-        source.model = self.model.text.trim().to_string();
-        source.api_key = self.key.text.trim().to_string();
+    /// Writes the typed values into `remote`.
+    fn project(&self, remote: &mut RemoteModel) {
+        remote.endpoint = self.endpoint.text.trim().to_string();
+        remote.model = self.model.text.trim().to_string();
+        remote.api_key = self.key.text.trim().to_string();
     }
 }
 
@@ -84,8 +88,8 @@ impl ModelSources {
 
     /// Rebuilds the fields from `settings`.
     pub(super) fn reload(&mut self, settings: &AppSettings) {
-        self.dictation = SourceFields::new(&settings.dictation_rewrite);
-        self.rewrite = SourceFields::new(&settings.rewrite.model);
+        self.dictation = SourceFields::new(&settings.dictation_rewrite.remote);
+        self.rewrite = SourceFields::new(&settings.rewrite.remote);
         self.default_prompt = TextEdit::new(settings.rewrite.default_prompt.clone());
         self.snippets = settings
             .rewrite
@@ -111,8 +115,9 @@ impl ModelSources {
     /// Writes the typed fields into `settings`: the remote addresses, the
     /// default prompt, and the snippets, dropping blank ones.
     pub(super) fn project(&self, settings: &mut AppSettings) {
-        self.dictation.project(&mut settings.dictation_rewrite);
-        self.rewrite.project(&mut settings.rewrite.model);
+        self.dictation
+            .project(&mut settings.dictation_rewrite.remote);
+        self.rewrite.project(&mut settings.rewrite.remote);
         settings.rewrite.default_prompt = self.default_prompt.text.trim().to_string();
         settings.rewrite.snippets = self
             .snippets
@@ -250,6 +255,7 @@ fn local_model_card(ui: &Ui, p: Paint) -> El {
                 Some((detail, p.muted())),
                 control,
             ),
+            note("local-model-purpose", tr(LOCAL_MODEL_PURPOSE), p.muted()),
             described_row(
                 p,
                 "local-model-files",
@@ -302,13 +308,16 @@ fn dictation_card(ui: &Ui, p: Paint, layer: &mut Vec<El>) -> El {
         rows.push(row);
     }
     if source == AiSource::Remote {
-        rows.push(endpoint_row(p, &fields.endpoint, |ui: &mut Ui| {
-            &mut ui.model_sources.dictation.endpoint
-        }));
-        rows.push(model_row(p, &fields.model, |ui: &mut Ui| {
+        rows.push(endpoint_row(
+            p,
+            "dictation",
+            &fields.endpoint,
+            |ui: &mut Ui| &mut ui.model_sources.dictation.endpoint,
+        ));
+        rows.push(model_row(p, "dictation", &fields.model, |ui: &mut Ui| {
             &mut ui.model_sources.dictation.model
         }));
-        rows.push(api_key_row(p, &fields.key, |ui: &mut Ui| {
+        rows.push(api_key_row(p, "dictation", &fields.key, |ui: &mut Ui| {
             &mut ui.model_sources.dictation.key
         }));
         if ui.settings.dictation_rewrite.missing().is_some() {
@@ -323,28 +332,24 @@ fn dictation_card(ui: &Ui, p: Paint, layer: &mut Vec<El>) -> El {
 }
 
 fn rewrite_card(ui: &Ui, p: Paint) -> El {
-    let source = ui.settings.rewrite.model.source;
     let fields = &ui.model_sources.rewrite;
-    let mut rows = vec![source_row(p, "rewrite", source, |ui, source| {
-        ui.update(|settings| settings.rewrite.model.source = source);
-    })];
-    if source == AiSource::Remote {
-        rows.push(endpoint_row(p, &fields.endpoint, |ui: &mut Ui| {
+    let mut rows = vec![
+        endpoint_row(p, "rewrite", &fields.endpoint, |ui: &mut Ui| {
             &mut ui.model_sources.rewrite.endpoint
-        }));
-        rows.push(model_row(p, &fields.model, |ui: &mut Ui| {
+        }),
+        model_row(p, "rewrite", &fields.model, |ui: &mut Ui| {
             &mut ui.model_sources.rewrite.model
-        }));
-        rows.push(api_key_row(p, &fields.key, |ui: &mut Ui| {
+        }),
+        api_key_row(p, "rewrite", &fields.key, |ui: &mut Ui| {
             &mut ui.model_sources.rewrite.key
-        }));
-        if ui.settings.rewrite.model.missing().is_some() {
-            rows.push(note(
-                "rewrite-incomplete",
-                tr("Remote needs an endpoint that starts with http:// or https:// and a model name"),
-                p.warning(),
-            ));
-        }
+        }),
+    ];
+    if ui.settings.rewrite.remote.missing().is_some() {
+        rows.push(note(
+            "rewrite-incomplete",
+            tr("Remote needs an endpoint that starts with http:// or https:// and a model name"),
+            p.warning(),
+        ));
     }
     rows.push(prompts_row(ui, p));
     super::controls::section(p, "rewrite-model", tr("Rewrite selection"), rows)
@@ -379,12 +384,13 @@ fn source_row(
 
 fn endpoint_row(
     p: Paint,
+    feature: &str,
     edit: &TextEdit,
     on_edit: impl for<'a> Fn(&'a mut Ui) -> &'a mut TextEdit + 'static,
 ) -> El {
     described_row(
         p,
-        "endpoint",
+        &format!("{feature}-endpoint"),
         tr("Endpoint"),
         Some((
             tr("For example https://api.example.com/v1").to_string(),
@@ -395,19 +401,20 @@ fn endpoint_row(
             .width(Some(FIELD_WIDTH))
             .on_edit(on_edit)
             .build(p.k)
-            .key("endpoint-field")
+            .key(format!("{feature}-endpoint-field"))
             .label(tr("Endpoint")),
     )
 }
 
 fn model_row(
     p: Paint,
+    feature: &str,
     edit: &TextEdit,
     on_edit: impl for<'a> Fn(&'a mut Ui) -> &'a mut TextEdit + 'static,
 ) -> El {
     described_row(
         p,
-        "model-name",
+        &format!("{feature}-model-name"),
         tr("Model"),
         None,
         TextInput::new(edit)
@@ -415,19 +422,20 @@ fn model_row(
             .width(Some(FIELD_WIDTH))
             .on_edit(on_edit)
             .build(p.k)
-            .key("model-field")
+            .key(format!("{feature}-model-field"))
             .label(tr("Model")),
     )
 }
 
 fn api_key_row(
     p: Paint,
+    feature: &str,
     edit: &TextEdit,
     on_edit: impl for<'a> Fn(&'a mut Ui) -> &'a mut TextEdit + 'static,
 ) -> El {
     described_row(
         p,
-        "api-key",
+        &format!("{feature}-api-key"),
         tr("API key"),
         Some((
             tr("Left empty when the endpoint takes no key").to_string(),
@@ -438,7 +446,7 @@ fn api_key_row(
             .width(Some(FIELD_WIDTH))
             .on_edit(on_edit)
             .build(p.k)
-            .key("key-field")
+            .key(format!("{feature}-key-field"))
             .label(tr("API key")),
     )
 }
@@ -626,21 +634,28 @@ mod tests {
         ui.update(|settings| settings.dictation_rewrite.source = AiSource::Remote);
         ui.flush_drafts();
         assert_eq!(
-            ui.settings.dictation_rewrite.endpoint,
+            ui.settings.dictation_rewrite.remote.endpoint,
             "https://api.example.com/v1"
         );
-        assert_eq!(ui.settings.dictation_rewrite.model, "big-model");
-        assert_eq!(ui.settings.dictation_rewrite.api_key, "secret");
+        assert_eq!(ui.settings.dictation_rewrite.remote.model, "big-model");
+        assert_eq!(ui.settings.dictation_rewrite.remote.api_key, "secret");
         assert!(ui.saved > 0, "the edit reached disk");
     }
 
     #[test]
-    fn the_two_features_keep_their_own_source() {
+    fn rewrite_field_edits_save_into_the_remote_model() {
         let mut ui = ui();
-        ui.update(|settings| settings.dictation_rewrite.source = AiSource::Remote);
-        ui.update(|settings| settings.rewrite.model.source = AiSource::Local);
-        assert_eq!(ui.settings.dictation_rewrite.source, AiSource::Remote);
-        assert_eq!(ui.settings.rewrite.model.source, AiSource::Local);
+        ui.model_sources.rewrite.endpoint = TextEdit::new(" https://api.example.com/v1 ");
+        ui.model_sources.rewrite.model = TextEdit::new("big-model");
+        ui.model_sources.rewrite.key = TextEdit::new("secret");
+        ui.flush_drafts();
+        assert_eq!(
+            ui.settings.rewrite.remote.endpoint,
+            "https://api.example.com/v1"
+        );
+        assert_eq!(ui.settings.rewrite.remote.model, "big-model");
+        assert_eq!(ui.settings.rewrite.remote.api_key, "secret");
+        assert!(ui.saved > 0, "the edit reached disk");
     }
 
     #[test]
@@ -661,6 +676,12 @@ mod tests {
             ("Local model server failed", true)
         );
         assert_eq!(local_model_copy(None), ("Local model server off", true));
+    }
+
+    #[test]
+    fn the_local_card_says_it_serves_the_dictation_cleanup() {
+        assert!(LOCAL_MODEL_PURPOSE.contains("Dictation cleanup"));
+        assert!(LOCAL_MODEL_PURPOSE.contains("Local"));
     }
 
     #[test]
@@ -722,9 +743,8 @@ mod tests {
         open_prompts(&mut ui);
         assert!(prompts_modal(&ui, p).is_some());
 
-        // Both cards showing their remote fields builds too.
+        // The Dictation card showing its remote fields builds too.
         ui.settings.dictation_rewrite.source = AiSource::Remote;
-        ui.settings.rewrite.model.source = AiSource::Remote;
         let mut layer = Vec::new();
         let _ = pane(&ui, p, &mut layer);
     }

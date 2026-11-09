@@ -221,7 +221,7 @@ const KEYS: &[Key] = &[
         "rewrite_hotkey",
         Kind::Shortcut(HotkeySlot::RewriteSelection),
         "Rewrite the selected text: records an instruction and replaces the selection \
-         with the local model's result (Windows); none (the default) turns it off",
+         with the remote model's result (Windows); none (the default) turns it off",
     ),
     optional(
         "second_dictation_hotkey",
@@ -292,11 +292,6 @@ const KEYS: &[Key] = &[
         "rewrite.snippets",
         Kind::Json,
         "Names that stand for a rewrite instruction, as a JSON array of { name, prompt }",
-    ),
-    key(
-        "rewrite.source",
-        Kind::Choice(&["local", "remote"]),
-        "Where Rewrite selection's model runs: Hex's own local server, or a remote endpoint",
     ),
     key(
         "rewrite.endpoint",
@@ -804,7 +799,8 @@ const KEYS: &[Key] = &[
             min: 1024,
             max: 65535,
         },
-        "The port the local model server listens on, which the local rewrite calls",
+        "The port the local model server listens on, which the dictation cleanup calls \
+         when Dictation is set to Local",
     ),
     key(
         "llm.args",
@@ -888,6 +884,7 @@ const RETIRED: &[(&str, &str)] = &[
         "meetings.summarize_with_opencode",
         "meetings.summaries opencode",
     ),
+    ("rewrite.source", "rewrite.endpoint"),
 ];
 
 /// Settings that act only where Hex has a capability (by its

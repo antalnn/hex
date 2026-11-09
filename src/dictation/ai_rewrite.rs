@@ -134,7 +134,9 @@ pub(crate) fn clean(source: &ModelSource, port: u16, text: &str) -> Result<Strin
     };
     let url = source.chat_url(port);
     let body = Request {
-        model: source.is_remote().then(|| source.model.trim().to_string()),
+        model: source
+            .is_remote()
+            .then(|| source.remote.model.trim().to_string()),
         messages: vec![
             Message {
                 role: "system",
@@ -163,7 +165,7 @@ pub(crate) fn clean(source: &ModelSource, port: u16, text: &str) -> Result<Strin
 
     let mut request = agent.post(&url).header("content-type", "application/json");
     if source.is_remote() {
-        for (name, value) in crate::dictation::rewrite::remote_headers(source) {
+        for (name, value) in crate::dictation::rewrite::remote_headers(&source.remote) {
             request = request.header(name, &value);
         }
     }
@@ -311,9 +313,7 @@ mod tests {
     fn a_short_dictation_costs_no_call() {
         let source = ModelSource {
             source: crate::app_settings::AiSource::Remote,
-            endpoint: String::new(),
-            model: String::new(),
-            api_key: String::new(),
+            ..ModelSource::default()
         };
         // A remote source with nothing set would fail, so an Ok here proves the
         // length gate ran before the request was built.
@@ -419,11 +419,13 @@ mod tests {
     fn a_remote_request_carries_the_session_and_the_client_name() {
         let source = ModelSource {
             source: crate::app_settings::AiSource::Remote,
-            endpoint: "https://opencode.ai/inference/go/openai/v1/chat/completions".into(),
-            model: "mimo-v2.6-flash".into(),
-            ..ModelSource::default()
+            remote: crate::app_settings::RemoteModel {
+                endpoint: "https://opencode.ai/inference/go/openai/v1/chat/completions".into(),
+                model: "mimo-v2.6-flash".into(),
+                ..crate::app_settings::RemoteModel::default()
+            },
         };
-        let headers = crate::dictation::rewrite::remote_headers(&source);
+        let headers = crate::dictation::rewrite::remote_headers(&source.remote);
         let name = |want: &str| {
             headers
                 .iter()
@@ -442,11 +444,13 @@ mod tests {
     fn a_key_becomes_a_bearer_header_and_the_session_stays_the_same() {
         let source = ModelSource {
             source: crate::app_settings::AiSource::Remote,
-            endpoint: "https://api.example.com/v1".into(),
-            model: "m".into(),
-            api_key: " secret ".into(),
+            remote: crate::app_settings::RemoteModel {
+                endpoint: "https://api.example.com/v1".into(),
+                model: "m".into(),
+                api_key: " secret ".into(),
+            },
         };
-        let headers = crate::dictation::rewrite::remote_headers(&source);
+        let headers = crate::dictation::rewrite::remote_headers(&source.remote);
         assert!(
             headers
                 .iter()

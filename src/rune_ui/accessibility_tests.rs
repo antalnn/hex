@@ -243,6 +243,43 @@ fn the_local_model_controls_live_on_the_models_pane_only() {
     assert!(rt.find("local-model-state").is_none());
 }
 
+/// The local model card says what the server is for.
+#[test]
+fn the_local_model_card_says_what_it_serves() {
+    let mut rt = runtime("portal");
+    open_models(&mut rt);
+    assert!(
+        rt.find("local-model-purpose").is_some(),
+        "the Models pane states the local model's job"
+    );
+}
+
+/// Rewrite selection always calls a remote endpoint: the Models pane shows its
+/// address fields and no Local choice, while Dictation keeps its own choice.
+#[test]
+fn rewrite_selection_calls_a_remote_endpoint_only() {
+    let mut rt = runtime("portal");
+    open_models(&mut rt);
+    assert!(
+        rt.find("dictation-source").is_some(),
+        "Dictation keeps Local or Remote"
+    );
+    assert!(
+        rt.find("rewrite-source").is_none(),
+        "Rewrite selection has no Local choice"
+    );
+    assert!(
+        rt.find("rewrite-endpoint-field").is_some(),
+        "the remote endpoint is editable"
+    );
+    assert!(rt.find("rewrite-model-field").is_some());
+    assert!(rt.find("rewrite-key-field").is_some());
+    assert!(
+        rt.find("dictation-endpoint-field").is_none(),
+        "Dictation starts on Local"
+    );
+}
+
 /// The speech model follows the Local choice; the language shows either way;
 /// General keeps neither row.
 #[test]

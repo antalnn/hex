@@ -478,6 +478,7 @@ const TRANSLATIONS: &[(&str, &str)] = &[
     ("llama.cpp was not found, so the local model stays off until it is", "llama.cpp est introuvable, le modèle local reste donc désactivé jusqu'à son installation"),
     ("Local model server off", "Serveur du modèle local désactivé"),
     ("Local model server running", "Serveur du modèle local en marche"),
+    ("Hex starts it for Dictation cleanup when Dictation is set to Local", "Hex le démarre pour le nettoyage de la dictée lorsque la dictée utilise le mode local."),
     ("Local model server starting", "Serveur du modèle local en démarrage"),
     ("Only terms marked with the switch in their row", "Seulement les termes dont l'interrupteur de leur ligne est activé"),
     ("Return to the window you were in when you pressed the shortcut", "Revenir à la fenêtre où vous étiez quand vous avez appuyé sur le raccourci"),

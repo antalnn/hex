@@ -1,12 +1,11 @@
-//! The rewrite call for the rewrite hotkey: one POST to the model the
-//! `rewrite` settings name.
+//! The rewrite call for the rewrite hotkey: one POST to the remote endpoint
+//! the `rewrite` settings name.
 //!
-//! Two sources. [`crate::app_settings::AiSource::Local`] is the llama.cpp
-//! server Hex owns, normally launched by `crate::local_model`, reached through
-//! [`crate::net::loopback_agent`] so every name, redirects included, must
-//! resolve to this computer. [`crate::app_settings::AiSource::Remote`] is an
-//! OpenAI-compatible endpoint anywhere, reached through the machine's proxy and
-//! trusted roots, with the configured bearer token when the endpoint wants one.
+//! Rewrite selection always calls a remote OpenAI-compatible endpoint, through
+//! the machine's proxy and trusted roots, with the configured bearer token
+//! when the endpoint wants one. The local llama.cpp server serves the dictation
+//! cleanup instead; a small local model follows no spoken rewrite instruction
+//! (measured 2026-11-08).
 //!
 //! A failure is an error, not the original text. The caller pastes nothing in
 //! that case, which leaves the selection exactly as it was; pasting the
@@ -19,7 +18,7 @@ use std::time::Duration;
 use color_eyre::eyre::{Result, eyre};
 use serde::{Deserialize, Serialize};
 
-use crate::app_settings::ModelSource;
+use crate::app_settings::{AppSettings, RemoteModel};
 
 /// How long one attempt may take. The same 30 s the plan fixed; a rewrite of a
 /// selection is one pass, so a server this slow is not going to answer.
@@ -29,9 +28,6 @@ const TIMEOUT: Duration = Duration::from_secs(30);
 const RETRIES: usize = 1;
 /// The line that frames the selected text in the user message.
 const SENTINEL: &str = "-----";
-/// The reply budget for the local server, which runs with a 4,096-token
-/// context: a long selection plus this cap must still fit inside it.
-const MAX_TOKENS: u32 = 1_500;
 /// The reply budget for a remote endpoint. It has to cover reasoning as well as
 /// the text: a reasoning model such as Muse Spark spends its first 1,500 tokens
 /// thinking and returns nothing when that is the whole budget (measured
@@ -54,10 +50,8 @@ struct Message {
 
 #[derive(Serialize)]
 struct Request {
-    /// Only a remote endpoint wants a model name; the local server has one
-    /// loaded already.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    model: Option<String>,
+    /// The remote endpoint's model name; a rewrite always names one.
+    model: String,
     messages: Vec<Message>,
     temperature: f32,
     max_tokens: u32,
@@ -117,7 +111,7 @@ pub(crate) fn session_id() -> &'static str {
 /// The headers a remote request carries besides `content-type`: the session
 /// id OpenCode Go requires, the client's own user agent it asks for, and the
 /// bearer token when the endpoint wants one.
-pub(crate) fn remote_headers(source: &ModelSource) -> Vec<(&'static str, String)> {
+pub(crate) fn remote_headers(remote: &RemoteModel) -> Vec<(&'static str, String)> {
     let mut headers = vec![
         ("x-opencode-session", session_id().to_string()),
         (
@@ -125,74 +119,84 @@ pub(crate) fn remote_headers(source: &ModelSource) -> Vec<(&'static str, String)
             concat!("hex/", env!("CARGO_PKG_VERSION")).to_string(),
         ),
     ];
-    let key = source.api_key.trim();
+    let key = remote.api_key.trim();
     if !key.is_empty() {
         headers.push(("authorization", format!("Bearer {key}")));
     }
     headers
 }
 
-/// Rewrites `selection` according to `instruction`, through `source`: Hex's
-/// local server on `port`, or the remote endpoint the source names.
-pub(crate) fn rewrite(
-    source: &ModelSource,
-    port: u16,
-    instruction: &str,
-    selection: &str,
-) -> Result<String> {
-    if let Some(missing) = source.missing() {
+/// What a rewrite job reads: the remote endpoint, the snippets and the default
+/// prompt. The listener shares one with the output worker, which outlives a
+/// settings save, so a change is applied here rather than captured at spawn.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct RewriteRuntime {
+    pub(crate) model: RemoteModel,
+    pub(crate) snippets: Vec<(String, String)>,
+    pub(crate) default_prompt: String,
+}
+
+impl RewriteRuntime {
+    pub(crate) fn from_settings(settings: &AppSettings) -> Self {
+        Self {
+            model: settings.rewrite.remote.clone(),
+            snippets: settings.rewrite.pairs(),
+            default_prompt: settings.rewrite.default_prompt.clone(),
+        }
+    }
+
+    /// Takes the saved settings as they are now, so the next rewrite uses
+    /// them without a restart.
+    pub(crate) fn apply(&mut self, settings: &AppSettings) {
+        self.model = settings.rewrite.remote.clone();
+        self.snippets = settings.rewrite.pairs();
+        self.default_prompt = settings.rewrite.default_prompt.clone();
+    }
+}
+
+/// Rewrites `selection` according to `instruction`, through the remote
+/// endpoint `remote` names.
+pub(crate) fn rewrite(remote: &RemoteModel, instruction: &str, selection: &str) -> Result<String> {
+    if let Some(missing) = remote.missing() {
         return Err(eyre!("{missing}"));
     }
-    let who = who(source);
-    let url = source.chat_url(port);
+    let url = remote.chat_url();
     let body = Request {
-        model: source.is_remote().then(|| source.model.trim().to_string()),
+        model: remote.model.trim().to_string(),
         messages: messages(instruction, selection),
         temperature: 0.0,
-        max_tokens: if source.is_remote() {
-            REMOTE_MAX_TOKENS
-        } else {
-            MAX_TOKENS
-        },
+        max_tokens: REMOTE_MAX_TOKENS,
         stream: false,
     };
-    // A remote endpoint is reached through the machine's proxy and its own
-    // trusted roots; a local one may only touch this computer.
-    let agent = if source.is_remote() {
-        crate::net::agent(&url, |settings| settings.timeout_global(Some(TIMEOUT)))
-    } else {
-        crate::net::loopback_agent(|settings| settings.timeout_global(Some(TIMEOUT)))
-    };
+    let agent = crate::net::agent(&url, |settings| settings.timeout_global(Some(TIMEOUT)));
     let json = serde_json::to_string(&body)
         .map_err(|error| eyre!("the rewrite request could not be built: {error}"))?;
 
     let mut last: Option<ureq::Error> = None;
     for attempt in 0..=RETRIES {
         let mut request = agent.post(&url).header("content-type", "application/json");
-        if source.is_remote() {
-            for (name, value) in remote_headers(source) {
-                request = request.header(name, &value);
-            }
+        for (name, value) in remote_headers(remote) {
+            request = request.header(name, &value);
         }
         match request.send(&json) {
             Ok(mut response) => {
                 let text = response
                     .body_mut()
                     .read_to_string()
-                    .map_err(|error| eyre!("the {who}'s reply could not be read: {error}"))?;
+                    .map_err(|error| eyre!("the model's reply could not be read: {error}"))?;
                 let parsed: Response = serde_json::from_str(&text)
-                    .map_err(|error| eyre!("the {who}'s reply was not JSON: {error}"))?;
+                    .map_err(|error| eyre!("the model's reply was not JSON: {error}"))?;
                 let output = parsed
                     .choices
                     .first()
                     .map(|choice| choice.message.content.clone())
                     .unwrap_or_default();
-                return checked(&output, instruction, who);
+                return checked(&output, instruction);
             }
             Err(error) => {
                 last = Some(error);
                 if attempt < RETRIES {
-                    tracing::debug!(attempt, "the {who} did not answer; retrying once");
+                    tracing::debug!(attempt, "the model did not answer; retrying once");
                 }
             }
         }
@@ -201,37 +205,27 @@ pub(crate) fn rewrite(
         || "no reply".to_string(),
         |error| crate::net::reason(&error),
     );
-    Err(eyre!("the {who} did not answer: {reason}"))
-}
-
-/// What to call the model in a message: the local server is named as such, a
-/// remote one is just "the model".
-fn who(source: &ModelSource) -> &'static str {
-    if source.is_remote() {
-        "model"
-    } else {
-        "local model"
-    }
+    Err(eyre!("the model did not answer: {reason}"))
 }
 
 /// Keeps a reply only when it is a rewrite. An empty reply and a reply that is
 /// the instruction itself are both what a small model does when it misreads the
 /// frame, and pasting either over the selection would destroy it. A leading
-/// line that only repeats the instruction is dropped first: the 2B sometimes
+/// line that only repeats the instruction is dropped first: a model sometimes
 /// writes it before the text, and it is not part of the rewrite.
-fn accept(output: &str, instruction: &str, who: &str) -> Result<String> {
+fn accept(output: &str, instruction: &str) -> Result<String> {
     let output = strip_leading_instruction(output.trim(), instruction).trim();
     if output.is_empty() {
-        return Err(eyre!("the {who} returned nothing"));
+        return Err(eyre!("the model returned nothing"));
     }
     if output.contains(SENTINEL) {
         return Err(eyre!(
-            "the {who} echoed the message frame instead of rewriting the text"
+            "the model echoed the message frame instead of rewriting the text"
         ));
     }
     if normalized(output) == normalized(instruction) {
         return Err(eyre!(
-            "the {who} repeated the instruction instead of rewriting the text"
+            "the model repeated the instruction instead of rewriting the text"
         ));
     }
     Ok(output.to_string())
@@ -240,12 +234,12 @@ fn accept(output: &str, instruction: &str, who: &str) -> Result<String> {
 /// Checks a reply and logs the raw text when a guard rejects it. Without the
 /// raw text in the log a rejection only says which guard fired, and the prompt
 /// cannot be judged from that.
-fn checked(output: &str, instruction: &str, who: &str) -> Result<String> {
-    accept(output, instruction, who).inspect_err(|error| {
+fn checked(output: &str, instruction: &str) -> Result<String> {
+    accept(output, instruction).inspect_err(|error| {
         tracing::warn!(
             reply = %output,
             %error,
-            "the {who}'s reply was rejected"
+            "the model's reply was rejected"
         );
     })
 }
@@ -441,20 +435,20 @@ mod tests {
 
     #[test]
     fn an_empty_result_is_refused() {
-        let error = accept("   \n", "make this shorter", "local model").unwrap_err();
-        assert_eq!(error.to_string(), "the local model returned nothing");
+        let error = accept("   \n", "make this shorter").unwrap_err();
+        assert_eq!(error.to_string(), "the model returned nothing");
     }
 
     #[test]
     fn a_reply_that_is_only_the_instruction_is_refused() {
-        let error = accept("Make this shorter.", "make this shorter", "local model").unwrap_err();
-        assert_eq!(error.to_string(), "the local model returned nothing");
+        let error = accept("Make this shorter.", "make this shorter").unwrap_err();
+        assert_eq!(error.to_string(), "the model returned nothing");
     }
 
     #[test]
     fn a_reply_that_echoes_the_frame_is_refused() {
         let echoed = format!("make it shorter\n\n{SENTINEL}\noriginal\n{SENTINEL}");
-        let error = accept(&echoed, "make it shorter", "local model").unwrap_err();
+        let error = accept(&echoed, "make it shorter").unwrap_err();
         assert!(
             error.to_string().contains("echoed the message frame"),
             "{error}"
@@ -464,7 +458,7 @@ mod tests {
     #[test]
     fn a_real_rewrite_is_returned_trimmed() {
         assert_eq!(
-            accept("  Short and clear.\n", "make this shorter", "local model").unwrap(),
+            accept("  Short and clear.\n", "make this shorter").unwrap(),
             "Short and clear."
         );
     }
@@ -481,14 +475,14 @@ mod tests {
     fn a_leading_line_that_repeats_the_instruction_is_stripped() {
         let output = "Make this shorter.\n\nThe text is now shorter.";
         assert_eq!(
-            accept(output, "make this shorter", "local model").unwrap(),
+            accept(output, "make this shorter").unwrap(),
             "The text is now shorter."
         );
     }
 
     #[test]
-    fn a_stripped_reply_from_a_remote_model_is_named_as_such() {
-        let error = accept(SENTINEL, "tighten it", "model").unwrap_err();
+    fn a_reply_that_only_repeats_the_frame_is_refused() {
+        let error = accept(SENTINEL, "tighten it").unwrap_err();
         assert_eq!(
             error.to_string(),
             "the model echoed the message frame instead of rewriting the text"
@@ -498,7 +492,7 @@ mod tests {
     #[test]
     fn an_ordinary_multiline_rewrite_is_left_alone() {
         let output = "First paragraph.\n\nSecond paragraph.";
-        assert_eq!(accept(output, "tighten it", "local model").unwrap(), output);
+        assert_eq!(accept(output, "tighten it").unwrap(), output);
     }
 
     #[test]
@@ -534,38 +528,44 @@ mod tests {
             .finish();
         let echoed = format!("tighten it\n\n{SENTINEL}\nthe text\n{SENTINEL}");
         tracing::subscriber::with_default(subscriber, || {
-            assert!(checked(&echoed, "tighten it", "local model").is_err());
+            assert!(checked(&echoed, "tighten it").is_err());
         });
 
         let logged = String::from_utf8(buffer.0.lock().unwrap().clone()).unwrap();
         assert!(
-            logged.contains("the local model's reply was rejected"),
+            logged.contains("the model's reply was rejected"),
             "{logged}"
         );
         assert!(logged.contains(SENTINEL), "{logged}");
+    }
+
+    fn remote(endpoint: &str, model: &str) -> RemoteModel {
+        RemoteModel {
+            endpoint: endpoint.into(),
+            model: model.into(),
+            api_key: String::new(),
+        }
     }
 
     #[test]
     fn a_server_that_is_not_listening_is_an_error_naming_the_reason() {
         // Port 9 answers nothing, so the call fails at the transport and the
         // error carries the reason rather than a model reply.
-        let error =
-            rewrite(&ModelSource::default(), 9, "make this shorter", "some text").unwrap_err();
+        let error = rewrite(
+            &remote("http://127.0.0.1:9/v1", "m"),
+            "make this shorter",
+            "some text",
+        )
+        .unwrap_err();
         assert!(
-            error
-                .to_string()
-                .starts_with("the local model did not answer"),
+            error.to_string().starts_with("the model did not answer"),
             "{error}"
         );
     }
 
     #[test]
-    fn a_remote_source_without_an_endpoint_is_refused_before_any_call() {
-        let source = ModelSource {
-            source: crate::app_settings::AiSource::Remote,
-            ..ModelSource::default()
-        };
-        let error = rewrite(&source, 9, "make this shorter", "some text").unwrap_err();
+    fn a_call_without_an_endpoint_is_refused_before_any_call() {
+        let error = rewrite(&RemoteModel::default(), "make this shorter", "some text").unwrap_err();
         assert!(
             error.to_string().contains("endpoint address is empty"),
             "{error}"
@@ -573,55 +573,63 @@ mod tests {
     }
 
     #[test]
-    fn a_remote_source_without_a_model_name_is_refused_before_any_call() {
-        let source = ModelSource {
-            source: crate::app_settings::AiSource::Remote,
+    fn a_call_without_a_model_name_is_refused_before_any_call() {
+        let source = RemoteModel {
             endpoint: "https://api.example.com/v1".into(),
-            ..ModelSource::default()
+            ..RemoteModel::default()
         };
-        let error = rewrite(&source, 9, "make this shorter", "some text").unwrap_err();
+        let error = rewrite(&source, "make this shorter", "some text").unwrap_err();
         assert!(error.to_string().contains("model name is empty"), "{error}");
     }
 
     #[test]
-    fn a_remote_request_carries_the_model_and_no_authorization_without_a_key() {
-        let source = ModelSource {
-            source: crate::app_settings::AiSource::Remote,
-            endpoint: "https://api.example.com/v1".into(),
-            model: "big-model".into(),
-            ..ModelSource::default()
-        };
+    fn the_request_names_the_remote_model_and_keeps_the_endpoint() {
+        let source = remote("https://api.example.com/v1", "big-model");
         let body = Request {
-            model: source.is_remote().then(|| source.model.trim().to_string()),
+            model: source.model.trim().to_string(),
             messages: messages("tighten it", "the text"),
             temperature: 0.0,
-            max_tokens: MAX_TOKENS,
+            max_tokens: REMOTE_MAX_TOKENS,
             stream: false,
         };
         let json = serde_json::to_value(&body).unwrap();
         assert_eq!(json["model"], "big-model");
         assert_eq!(
-            source.chat_url(8081),
+            source.chat_url(),
             "https://api.example.com/v1/chat/completions"
         );
     }
 
     #[test]
-    fn a_local_request_omits_the_model_name() {
-        let source = ModelSource::default();
-        let body = Request {
-            model: source.is_remote().then(|| source.model.trim().to_string()),
-            messages: messages("tighten it", "the text"),
-            temperature: 0.0,
-            max_tokens: MAX_TOKENS,
-            stream: false,
+    fn a_remote_request_carries_the_session_and_the_client_name() {
+        let headers = remote_headers(&remote("https://api.example.com/v1", "m"));
+        let name = |want: &str| {
+            headers
+                .iter()
+                .find(|(name, _)| *name == want)
+                .map(|(_, value)| value.clone())
         };
-        let json = serde_json::to_value(&body).unwrap();
-        assert!(json.get("model").is_none());
-        assert_eq!(
-            source.chat_url(8081),
-            "http://127.0.0.1:8081/v1/chat/completions"
+        assert!(
+            name("x-opencode-session").is_some_and(|id| id.starts_with("hex-")),
+            "{headers:?}"
         );
+        assert!(name("user-agent").is_some_and(|agent| agent.starts_with("hex/")));
+        assert_eq!(name("authorization"), None);
+    }
+
+    #[test]
+    fn a_key_becomes_a_bearer_header() {
+        let source = RemoteModel {
+            api_key: " secret ".into(),
+            ..remote("https://api.example.com/v1", "m")
+        };
+        let headers = remote_headers(&source);
+        assert!(
+            headers
+                .iter()
+                .any(|(name, value)| *name == "authorization" && value == "Bearer secret")
+        );
+        assert_eq!(session_id(), session_id());
     }
 
     fn snippets() -> Vec<(String, String)> {
@@ -635,6 +643,35 @@ mod tests {
                 "Turn it into bullets.".to_string(),
             ),
         ]
+    }
+
+    /// The output worker outlives one settings save; the listener replaces the
+    /// shared runtime in place so the next rewrite uses the saved endpoint.
+    #[test]
+    fn a_saved_change_replaces_the_runtime_the_worker_reads() {
+        use std::sync::{Arc, RwLock};
+
+        let mut settings = AppSettings::default();
+        settings.rewrite.remote.endpoint = "https://one.example/v1".into();
+        settings.rewrite.remote.model = "small".into();
+        let rewrite = Arc::new(RwLock::new(RewriteRuntime::from_settings(&settings)));
+        let worker_rewrite = Arc::clone(&rewrite);
+
+        settings.rewrite.remote.endpoint = "https://two.example/v1".into();
+        settings.rewrite.remote.model = "big".into();
+        settings.rewrite.default_prompt = "Tighten it.".into();
+        rewrite
+            .write()
+            .unwrap_or_else(|error| error.into_inner())
+            .apply(&settings);
+
+        let seen = worker_rewrite
+            .read()
+            .unwrap_or_else(|error| error.into_inner())
+            .clone();
+        assert_eq!(seen.model.endpoint, "https://two.example/v1");
+        assert_eq!(seen.model.model, "big");
+        assert_eq!(seen.default_prompt, "Tighten it.");
     }
 
     #[test]
