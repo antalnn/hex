@@ -22,6 +22,7 @@ impl Shortcuts {
     pub(super) fn start(
         &self,
         guard: &crate::app_settings::ShortcutGuard,
+        rewrite_pending: Arc<AtomicBool>,
     ) -> Result<WindowsHotkeyMonitor> {
         // Double-tap-only depends on the double-tap window; without the lock
         // there is no second tap to wait for.
@@ -37,6 +38,7 @@ impl Shortcuts {
             self.double_tap_lock && self.double_tap_only,
             self.shortcut_mode,
             self.share_dictation_shortcut,
+            rewrite_pending,
             guard.clone(),
         )
     }

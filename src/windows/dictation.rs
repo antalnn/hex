@@ -36,6 +36,25 @@ const STREAM_WAIT: Duration = Duration::from_millis(50);
 /// event or a command ends it at once ([`wake`]); settings and Annotate's
 /// controls are taken within it.
 const IDLE_RELEASED_WAIT: Duration = Duration::from_millis(50);
+/// A rewrite recording stops itself after this long: an instruction is a
+/// sentence, and a trigger still down ten seconds later is a stuck key. The
+/// dictate shortcut has no cap.
+const REWRITE_RECORDING_LIMIT: Duration = Duration::from_secs(10);
+/// What the HUD and the event log say when the cap stops a rewrite.
+const REWRITE_RECORDING_LIMIT_MESSAGE: &str =
+    "the rewrite recording stopped after 10 seconds; press the rewrite shortcut again";
+/// How often a cancellable rewrite checks whether Escape dropped it.
+const REWRITE_CANCEL_POLL: Duration = Duration::from_millis(20);
+/// The error a rewrite reports when Escape drops it before it pastes.
+const REWRITE_CANCELLED: &str = "the rewrite was cancelled";
+
+/// Whether a recording has run past the rewrite cap. Only Rewrite is capped.
+fn rewrite_recording_past_limit(
+    flavour: crate::dictation::DictationFlavour,
+    elapsed: Duration,
+) -> bool {
+    flavour == crate::dictation::DictationFlavour::Rewrite && elapsed >= REWRITE_RECORDING_LIMIT
+}
 
 /// The running listener's thread, which [`wake`] unparks.
 static LISTENER: Mutex<Option<thread::Thread>> = Mutex::new(None);
@@ -64,6 +83,8 @@ struct Job {
     /// Rewrite the selected text: the transcript is an instruction and this is
     /// the text it applies to. Not pasted as a dictation, not kept in history.
     rewrite_selection: Option<String>,
+    /// Set by Escape after release to drop a rewrite before it pastes.
+    cancel: Option<Arc<AtomicBool>>,
     /// The shortcut that started this capture.
     flavour: crate::dictation::DictationFlavour,
     /// `hex dictation stop --print`: the text goes here, never pasted.
@@ -309,6 +330,9 @@ pub fn run(
     }
     let hotkey_label = hotkey.label();
     let mut toggle_mode = shortcut_mode == crate::dictation::ShortcutMode::Toggle;
+    // Whether a rewrite job is still transcribing or waiting on the model.
+    // The hook reads it so Escape can stop the job after the recording ended.
+    let rewrite_pending = Arc::new(AtomicBool::new(false));
     let mut shortcuts = Shortcuts {
         hotkey,
         paste_last_hotkey,
@@ -322,7 +346,7 @@ pub fn run(
         shortcut_mode,
         share_dictation_shortcut,
     };
-    let mut hotkey = shortcuts.start(&shortcut_guard)?;
+    let mut hotkey = shortcuts.start(&shortcut_guard, Arc::clone(&rewrite_pending))?;
     // A shortcut event the idle wait took, handled at the next turn.
     let mut held_event = None;
     let mut while_dictating = while_dictating;
@@ -390,6 +414,12 @@ pub fn run(
     let mut recording_rewrite: Option<String> = None;
     // The shortcut that started this recording.
     let mut recording_flavour = crate::dictation::DictationFlavour::Normal;
+    // When the current rewrite recording began, for its ten-second cap.
+    let mut rewrite_started: Option<Instant> = None;
+    // Rewrite jobs still in flight, oldest first. Escape sets the newest
+    // one's flag; the worker drops it without pasting.
+    let mut pending_rewrites: std::collections::VecDeque<Arc<AtomicBool>> =
+        std::collections::VecDeque::new();
     let mut recording_feedback_started = false;
     // Whether this capture's start tone already played on its press.
     let mut start_tone_played = false;
@@ -414,6 +444,35 @@ pub fn run(
     );
 
     while !shutdown.load(Ordering::Relaxed) {
+        // A rewrite recording held past its cap stops itself through the
+        // ordinary failure surface: nothing is transcribed and nothing pastes.
+        if recording
+            && rewrite_recording_past_limit(
+                recording_flavour,
+                rewrite_started.map_or(Duration::ZERO, |started| started.elapsed()),
+            )
+        {
+            audio_suppressor.restore();
+            crate::feedback::retract_start();
+            paste_target = None;
+            recording_rewrite = None;
+            recording = false;
+            recording_feedback_started = false;
+            rewrite_started = None;
+            capture.cancel();
+            crate::windows::input::cancel_rewrite_capture();
+            if let Some(indicator) = &indicator {
+                indicator.send(crate::rune_hud::HudEvent::Failed {
+                    message: Some(REWRITE_RECORDING_LIMIT_MESSAGE.into()),
+                });
+            }
+            fail(&events, REWRITE_RECORDING_LIMIT_MESSAGE)?;
+            emit_current_state(&mut events, recording, pending, &device_label)?;
+            if release_while_idle && !timeline.wants_audio() {
+                input.close();
+                audio_ready = false;
+            }
+        }
         if let Some(failed) = model.poll() {
             fail(&events, failed.error.clone())?;
             if let Some(swap_failures) = &swap_failures {
@@ -449,7 +508,8 @@ pub fn run(
                 drop(hotkey);
                 held_event = None;
                 shortcuts = next_shortcuts;
-                hotkey = shortcuts.start(&next_config.shortcut_guard)?;
+                hotkey =
+                    shortcuts.start(&next_config.shortcut_guard, Arc::clone(&rewrite_pending))?;
                 toggle_mode = shortcuts.shortcut_mode == crate::dictation::ShortcutMode::Toggle;
             }
             // The guard applies in place: no binding changed, only which apps
@@ -591,7 +651,7 @@ pub fn run(
             else {
                 unreachable!("checked above");
             };
-            let submitted = submit_capture(
+            let (submitted, rewrite_cancel) = submit_capture(
                 &mut capture,
                 release.ended_at(),
                 tail,
@@ -607,6 +667,10 @@ pub fn run(
             if submitted {
                 next_job_id += 1;
                 job_ids.push_back(next_job_id);
+            }
+            if let Some(cancel) = rewrite_cancel {
+                pending_rewrites.push_back(cancel);
+                rewrite_pending.store(true, Ordering::Release);
             }
             if let Some(indicator) = &indicator {
                 indicator.send(if submitted {
@@ -765,6 +829,8 @@ pub fn run(
                             crate::dictation::hotkey_pre_roll(while_dictating),
                         );
                         recording = true;
+                        rewrite_started = (flavour == crate::dictation::DictationFlavour::Rewrite)
+                            .then(Instant::now);
                         // A toggle press or a `hex` command is deliberate, so
                         // it streams at once.
                         recording_feedback_started = toggle_mode || deliberate;
@@ -848,6 +914,7 @@ pub fn run(
                     crate::feedback::retract_start();
                     paste_target = None;
                     recording_rewrite = None;
+                    rewrite_started = None;
                     if recording_feedback_started {
                         crate::feedback::play(crate::feedback::Tone::Cancel);
                     }
@@ -862,6 +929,15 @@ pub fn run(
                     if release_while_idle && !timeline.wants_audio() {
                         input.close();
                         audio_ready = false;
+                    }
+                }
+                // Escape after a rewrite's release: drop the newest job before
+                // it pastes, so the selection stays exactly as it was.
+                HotkeyAction::Cancel
+                    if !recording && !start_pending && !pending_rewrites.is_empty() =>
+                {
+                    if let Some(cancel) = pending_rewrites.back() {
+                        cancel.store(true, Ordering::Release);
                     }
                 }
                 HotkeyAction::PasteLast if !recording => {
@@ -883,6 +959,10 @@ pub fn run(
         while let Ok(result) = results.try_recv() {
             pending = pending.saturating_sub(1);
             let job_id = job_ids.pop_front();
+            if result.kind == OutputKind::Rewrite {
+                pending_rewrites.pop_front();
+                rewrite_pending.store(!pending_rewrites.is_empty(), Ordering::Release);
+            }
             if let (Some(indicator), Some(job_id)) = (&indicator, job_id) {
                 // Repaste ids were never announced, so the HUD ignores them.
                 // A failed Paste last dictation is not a failed capture, so it
@@ -986,6 +1066,9 @@ pub fn run(
                             crate::dictation::hotkey_pre_roll(while_dictating),
                         );
                         recording = true;
+                        rewrite_started = (recording_flavour
+                            == crate::dictation::DictationFlavour::Rewrite)
+                            .then(Instant::now);
                         // The released microphone is ready only now.
                         recording_feedback_started = toggle_mode;
                         start_tone_played = recording_feedback_started;
@@ -1249,6 +1332,39 @@ fn process_dictation_job(
     job_result(OutputKind::Dictation, result, latency_ms)
 }
 
+/// Runs blocking rewrite work on a helper thread so Escape can drop it.
+/// Without a flag it runs in place. A cancelled job returns before its result
+/// can paste; the helper thread's eventual result is discarded.
+fn run_cancellable<T, F>(cancel: Option<&Arc<AtomicBool>>, work: F) -> Result<T, String>
+where
+    T: Send + 'static,
+    F: FnOnce() -> Result<T, String> + Send + 'static,
+{
+    let Some(cancel) = cancel else {
+        return work();
+    };
+    if cancel.load(Ordering::Acquire) {
+        return Err(REWRITE_CANCELLED.into());
+    }
+    let (sender, receiver) = mpsc::channel();
+    thread::spawn(move || {
+        let _ = sender.send(work());
+    });
+    loop {
+        match receiver.recv_timeout(REWRITE_CANCEL_POLL) {
+            Ok(result) => return result,
+            Err(mpsc::RecvTimeoutError::Timeout) => {
+                if cancel.load(Ordering::Acquire) {
+                    return Err(REWRITE_CANCELLED.into());
+                }
+            }
+            Err(mpsc::RecvTimeoutError::Disconnected) => {
+                return Err("the rewrite worker stopped".into());
+            }
+        }
+    }
+}
+
 /// Rewrites the selection with the instruction the person just spoke. A
 /// failed or empty rewrite pastes nothing, so the selection stays exactly as it
 /// was, and a rewrite never enters History: it is an edit, not a dictation.
@@ -1259,29 +1375,30 @@ fn process_rewrite_job(
 ) -> JobResult {
     let started = Instant::now();
     let selection = job.rewrite_selection.take().unwrap_or_default();
-    let result = job
-        .transcript
-        .wait()
-        .map(|transcribed| transcribed.text)
-        .and_then(|transcript| {
-            let transcript = transcript.trim().to_string();
-            let instruction = crate::dictation::rewrite::resolve(
-                &transcript,
-                &rewrite.snippets,
-                &rewrite.default_prompt,
-            )
+    let cancel = job.cancel.take();
+    let transcript = job.transcript;
+    let rewrite = rewrite.clone();
+    let result = run_cancellable(cancel.as_ref(), move || {
+        let transcript = transcript.wait().map(|transcribed| transcribed.text)?;
+        let transcript = transcript.trim().to_string();
+        let instruction = crate::dictation::rewrite::resolve(
+            &transcript,
+            &rewrite.snippets,
+            &rewrite.default_prompt,
+        )
+        .map_err(|error| format!("{error:#}"))?;
+        let instruction = rewrite.layer_two(instruction);
+        crate::dictation::rewrite::rewrite(&rewrite.model, &instruction, &selection)
+            .map_err(|error| format!("{error:#}"))
+    });
+    let result = result.and_then(|rewritten| {
+        paster
+            .as_mut()
+            .map_err(|error| format!("{error:#}"))?
+            .paste(&rewritten, job.target.take(), false)
             .map_err(|error| format!("{error:#}"))?;
-            let instruction = rewrite.layer_two(instruction);
-            let rewritten =
-                crate::dictation::rewrite::rewrite(&rewrite.model, &instruction, &selection)
-                    .map_err(|error| format!("{error:#}"))?;
-            paster
-                .as_mut()
-                .map_err(|error| format!("{error:#}"))?
-                .paste(&rewritten, job.target.take(), false)
-                .map_err(|error| format!("{error:#}"))?;
-            Ok(rewritten)
-        });
+        Ok(rewritten)
+    });
     let latency_ms = started.elapsed().as_millis().min(u128::from(u32::MAX)) as u32;
     tracing::info!(
         audio_ms = job.audio_ms,
@@ -1503,8 +1620,9 @@ fn submit_capture(
     target: Option<crate::windows::paste_target::PasteTarget>,
     rewrite_selection: Option<String>,
     flavour: crate::dictation::DictationFlavour,
-) -> Result<bool> {
+) -> Result<(bool, Option<Arc<AtomicBool>>)> {
     let mut submitted = false;
+    let mut rewrite_cancel = None;
     let no_speech = |print: Option<PrintReply>| {
         if let Some(print) = print {
             print.send(PrintedTranscript::NoSpeech);
@@ -1528,6 +1646,9 @@ fn submit_capture(
                 .unwrap_or_else(|| crate::app_settings::transcription_selection().1)
                 .language;
             let recording = crate::history::Recording::keep(&samples);
+            let cancel = rewrite_selection
+                .is_some()
+                .then(|| Arc::new(AtomicBool::new(false)));
             let job = OutputJob::Dictation(Job {
                 transcript: engine.finish(stream, samples)?,
                 audio_ms,
@@ -1536,12 +1657,14 @@ fn submit_capture(
                 target,
                 print,
                 rewrite_selection,
+                cancel: cancel.clone(),
                 flavour,
             });
             match jobs.try_send(job) {
                 Ok(()) => {
                     *pending += 1;
                     submitted = true;
+                    rewrite_cancel = cancel;
                     events.dictation(DictationPhase::Transcribing, "")?;
                 }
                 Err(TrySendError::Full(_)) => fail(events, "dictation queue is full")?,
@@ -1551,13 +1674,15 @@ fn submit_capture(
             }
         }
     }
-    Ok(submitted)
+    Ok((submitted, rewrite_cancel))
 }
 
 /// Logs a failed dictation or paste with the sound set's error sound.
 fn fail(events: &EventLog, error: impl Into<String>) -> Result<()> {
+    let error = error.into();
     crate::feedback::play(crate::feedback::Tone::Error);
-    events.dictation(DictationPhase::Failed(error.into()), "")?;
+    tracing::warn!(%error, "Windows dictation failed");
+    events.dictation(DictationPhase::Failed(error), "")?;
     Ok(())
 }
 
@@ -1661,5 +1786,61 @@ mod tests {
         let next = WindowsDictationConfig::from_settings(&settings);
         assert!(next.shortcut_guard.pauses(Some("notepad"), true));
         assert!(!next.shortcut_guard.pauses(Some("notepad"), false));
+    }
+
+    #[test]
+    fn a_rewrite_recording_stops_after_ten_seconds_and_dictation_does_not() {
+        use crate::dictation::DictationFlavour;
+
+        assert!(!rewrite_recording_past_limit(
+            DictationFlavour::Rewrite,
+            Duration::from_millis(9_999)
+        ));
+        assert!(rewrite_recording_past_limit(
+            DictationFlavour::Rewrite,
+            REWRITE_RECORDING_LIMIT
+        ));
+        for flavour in [
+            DictationFlavour::Normal,
+            DictationFlavour::Raw,
+            DictationFlavour::TerminalPaste,
+        ] {
+            assert!(
+                !rewrite_recording_past_limit(flavour, Duration::from_secs(600)),
+                "{flavour:?} has no cap"
+            );
+        }
+        assert!(REWRITE_RECORDING_LIMIT_MESSAGE.contains("10 seconds"));
+    }
+
+    #[test]
+    fn a_cancelled_rewrite_returns_before_its_result() {
+        let cancel = Arc::new(AtomicBool::new(false));
+        let (started, started_rx) = mpsc::channel::<()>();
+        let (release, released) = mpsc::channel::<()>();
+        let worker_cancel = Arc::clone(&cancel);
+        let worker = thread::spawn(move || {
+            run_cancellable(Some(&worker_cancel), move || {
+                let _ = started.send(());
+                let _ = released.recv();
+                Ok("rewritten".to_string())
+            })
+        });
+        started_rx.recv().unwrap();
+        cancel.store(true, Ordering::Release);
+        assert_eq!(worker.join().unwrap(), Err(REWRITE_CANCELLED.to_string()));
+        let _ = release.send(());
+    }
+
+    #[test]
+    fn a_rewrite_cancelled_before_it_starts_never_runs() {
+        let cancel = Arc::new(AtomicBool::new(true));
+        let result: Result<(), String> = run_cancellable(Some(&cancel), || panic!("must not run"));
+        assert_eq!(result, Err(REWRITE_CANCELLED.to_string()));
+    }
+
+    #[test]
+    fn a_rewrite_with_no_cancel_flag_still_runs() {
+        assert_eq!(run_cancellable(None, || Ok::<_, String>(7)), Ok(7));
     }
 }

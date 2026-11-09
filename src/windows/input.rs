@@ -1,7 +1,7 @@
 use std::ptr;
-use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::mpsc::{self, Receiver, SyncSender, TrySendError};
+use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
@@ -273,6 +273,9 @@ struct CallbackState {
     drawing_escape_down: bool,
     /// Escape went down to cancel a dictation; its release is ours too.
     dictation_escape_down: bool,
+    /// A rewrite job is transcribing or waiting on the model after its
+    /// recording ended. Escape then stops it before it pastes.
+    rewrite_pending: Arc<AtomicBool>,
     /// Toggle mode's cancel shortcut, Hex's only while a recording runs.
     cancel: Option<WindowsHotkey>,
     cancel_vk: Option<u32>,
@@ -417,6 +420,42 @@ impl CaptureState {
 /// the dictation key down, so Escape arrives with Control held.
 fn takes_dictation_escape(vk: u32, is_down: bool, capture: &CaptureState, held: bool) -> bool {
     vk == u32::from(VK_ESCAPE) && (held || (is_down && (capture.active || capture.locked)))
+}
+
+/// Whether this Escape stops a rewrite job that already left the recording:
+/// after release, while the job transcribes or waits on the model, nothing
+/// is captured, so [`takes_dictation_escape`] says no.
+fn takes_rewrite_escape(
+    vk: u32,
+    is_down: bool,
+    pending: bool,
+    capture: &CaptureState,
+    held: bool,
+) -> bool {
+    vk == u32::from(VK_ESCAPE)
+        && (held || (is_down && pending && !capture.active && !capture.locked))
+}
+
+/// Whether a rewrite trigger release still finishes a recording. Escape and
+/// the listener's ten-second cap clear the capture first, so the release
+/// that follows is spent and sends no Finish.
+fn rewrite_release_finishes(capture: &CaptureState) -> bool {
+    capture.flavour == DictationFlavour::Rewrite && capture.active && capture.recording
+}
+
+/// The listener's ten-second rewrite cap drops the hook's capture without
+/// clearing the trigger: the key-up stays Hex's and sends no Finish.
+pub(crate) fn cancel_rewrite_capture() {
+    let mut guard = CALLBACK_STATE
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
+    if let Some(state) = guard.as_mut()
+        && state.capture.flavour == DictationFlavour::Rewrite
+    {
+        state.capture.active = false;
+        state.capture.locked = false;
+        state.capture.recording = false;
+    }
 }
 
 impl CallbackState {
@@ -606,6 +645,7 @@ impl WindowsHotkeyMonitor {
         double_tap_only: bool,
         shortcut_mode: ShortcutMode,
         share_trigger: bool,
+        rewrite_pending: Arc<AtomicBool>,
         guard: ShortcutGuard,
     ) -> Result<Self> {
         binding.validate()?;
@@ -646,6 +686,7 @@ impl WindowsHotkeyMonitor {
             annotate_trigger_down: false,
             drawing_escape_down: false,
             dictation_escape_down: false,
+            rewrite_pending,
             cancel,
             cancel_vk,
             cancel_down: false,
@@ -1091,13 +1132,26 @@ fn process_button(vk: u32, is_down: bool, time: u32) -> Disposition {
             }
             // Escape cancels a dictation while it records, hold or toggle:
             // nothing is transcribed, and the app in front never sees the key.
-            // Its release is Hex's too, so the app gets no stray key-up.
-            if takes_dictation_escape(vk, is_down, &state.capture, state.dictation_escape_down) {
+            // Its release is Hex's too, so the app gets no stray key-up. After
+            // a rewrite's release, the same key drops the pending job before
+            // it pastes.
+            let rewrite_pending = state.rewrite_pending.load(Ordering::Acquire);
+            if takes_dictation_escape(vk, is_down, &state.capture, state.dictation_escape_down)
+                || takes_rewrite_escape(
+                    vk,
+                    is_down,
+                    rewrite_pending,
+                    &state.capture,
+                    state.dictation_escape_down,
+                )
+            {
                 if is_down {
                     if !state.dictation_escape_down {
                         state.dictation_escape_down = true;
                         if let Some(action) = state.capture.cancel() {
                             send_event(state, action, time);
+                        } else if rewrite_pending {
+                            send_event(state, HotkeyAction::Cancel, time);
                         }
                     }
                 } else {
@@ -1144,9 +1198,13 @@ fn process_button(vk: u32, is_down: bool, time: u32) -> Disposition {
                     send_event(state, HotkeyAction::Start, time);
                 } else if is_up && state.rewrite_trigger_down {
                     state.rewrite_trigger_down = false;
-                    state.capture.active = false;
-                    state.capture.recording = false;
-                    send_event(state, HotkeyAction::Finish, time);
+                    // A cancel or the ten-second cap cleared the capture: the
+                    // release that follows is spent, so it sends no Finish.
+                    if rewrite_release_finishes(&state.capture) {
+                        state.capture.active = false;
+                        state.capture.recording = false;
+                        send_event(state, HotkeyAction::Finish, time);
+                    }
                 }
                 return Disposition::Suppress;
             }
@@ -2085,6 +2143,49 @@ mod tests {
         assert!(toggled.locked);
         assert!(takes_dictation_escape(escape, true, &toggled, false));
         assert_eq!(toggled.cancel(), Some(HotkeyAction::Cancel));
+    }
+
+    /// Escape stops a rewrite capture while its trigger is held, and the
+    /// release that follows is spent: it sends no Finish to the listener.
+    #[test]
+    fn escape_during_a_rewrite_recording_leaves_its_release_inert() {
+        let escape = u32::from(VK_ESCAPE);
+        let mut capture = CaptureState::default();
+        capture.claim(DictationFlavour::Rewrite);
+        capture.active = true;
+        capture.recording = true;
+        assert!(takes_dictation_escape(escape, true, &capture, false));
+        assert!(rewrite_release_finishes(&capture));
+        assert_eq!(capture.cancel(), Some(HotkeyAction::Cancel));
+        assert!(
+            !rewrite_release_finishes(&capture),
+            "the release sends no Finish"
+        );
+        assert!(!takes_dictation_escape(escape, true, &capture, false));
+    }
+
+    /// Escape after a rewrite's release is Hex's while a rewrite job is
+    /// pending, and its release stays Hex's too. A recording keeps the first
+    /// arm, so one press never sends two cancels.
+    #[test]
+    fn escape_after_release_stops_a_pending_rewrite() {
+        let escape = u32::from(VK_ESCAPE);
+        let idle = CaptureState::default();
+        assert!(takes_rewrite_escape(escape, true, true, &idle, false));
+        assert!(takes_rewrite_escape(escape, false, true, &idle, true));
+        assert!(!takes_rewrite_escape(escape, true, false, &idle, false));
+        assert!(
+            !takes_rewrite_escape(0x41, true, true, &idle, false),
+            "only Escape"
+        );
+        let mut recording = CaptureState::default();
+        recording.claim(DictationFlavour::Rewrite);
+        recording.active = true;
+        recording.recording = true;
+        assert!(
+            !takes_rewrite_escape(escape, true, true, &recording, false),
+            "the recording arm keeps the Escape"
+        );
     }
 
     /// Toggle's cancel key is Hex's only while a toggled capture records:
