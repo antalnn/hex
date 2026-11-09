@@ -639,6 +639,19 @@ impl DotUniforms {
             center[0] += pose.width * layout.fit / 2.0;
         }
         let rgba = |c: [f32; 3]| [c[0], c[1], c[2], 1.0];
+        // Voice bars take the first dots buffer entries; the shader reads the
+        // bar width and gap from the otherwise unused grid terms.
+        let bars_mode =
+            frame.tuning.look == dot_scope::Look::Bars && pose.stage == dot_scope::Stage::Recording;
+        let jump_mode = pose.stage == dot_scope::Stage::Processing
+            && frame.tuning.processing == dot_scope::Processing::Jump;
+        let (field_mode, field_count, field_clock) = if bars_mode {
+            (2.0, frame.tuning.bars.round(), pose.clock)
+        } else if jump_mode {
+            (3.0, 0.0, pose.clock)
+        } else {
+            (0.0, 0.0, 0.0)
+        };
         Self {
             resolution: [target.viewport[2], target.viewport[3]],
             backing_scale: target.scale,
@@ -648,8 +661,16 @@ impl DotUniforms {
             scale: pose.scale,
             softness: pose.softness,
             pitch: frame.tuning.spacing,
-            columns: frame.columns as f32,
-            rows: frame.rows as f32,
+            columns: if bars_mode {
+                frame.tuning.bar_width
+            } else {
+                frame.columns as f32
+            },
+            rows: if bars_mode {
+                frame.tuning.bar_gap
+            } else {
+                frame.rows as f32
+            },
             glow: pose.glow,
             grid: pose.grid,
             live: pose.live,
@@ -670,10 +691,16 @@ impl DotUniforms {
                 .island
                 .map_or([0.0; 4], |island| island_shape(island, pose)),
             // The ears draw glyphs, not the field: the notch's half width,
-            // the mode, the voice, and the stage's clock.
+            // the mode (1 ears, 2 bars, 3 jumping dots), the bar count, and
+            // the stage's clock.
             field: match layout.island {
                 Some(island) if island.ears => [island.notch[0] / 2.0, 1.0, pose.level, pose.clock],
-                _ => [field_radius(layout, pose), 0.0, 0.0, 0.0],
+                _ => [
+                    field_radius(layout, pose),
+                    field_mode,
+                    field_count,
+                    field_clock,
+                ],
             },
             ears: [pose.done, pose.fail, 0.0, 0.0],
         }

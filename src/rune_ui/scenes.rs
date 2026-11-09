@@ -368,6 +368,30 @@ pub(super) const SCENES: &[Scene] = &[
             )),
         );
     }),
+    // The HUD pill held mid-voice for a render of the bars, and mid-transcribe
+    // for a render of the processing look.
+    ("sound-sets-hud-recording", |ui| {
+        *ui = mac_fixture();
+        sound_sets::fixture(
+            ui,
+            Some((
+                crate::feedback::SoundSet::Wood,
+                crate::feedback::Audition::Dictation,
+                1000.0,
+            )),
+        );
+    }),
+    ("sound-sets-hud-processing", |ui| {
+        *ui = mac_fixture();
+        sound_sets::fixture(
+            ui,
+            Some((
+                crate::feedback::SoundSet::Wood,
+                crate::feedback::Audition::Cue(crate::feedback::Cue::Stop),
+                600.0,
+            )),
+        );
+    }),
     ("mac-microphone-missing", |ui| {
         *ui = mac_fixture();
         ui.settings.microphone = Some("Shure MV7".into());

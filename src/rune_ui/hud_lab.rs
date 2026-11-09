@@ -15,7 +15,7 @@ use super::controls::{
 use super::lists::{group_label, slider};
 use super::platform::{HudDemo, HudLab, PlatformRequest};
 use crate::desktop::i18n::tr;
-use crate::rune_hud::dot_scope::{self, KNOBS, Placement, Processing, Tuning};
+use crate::rune_hud::dot_scope::{self, KNOBS, Look, Placement, Processing, Tuning};
 
 const SLIDER_WIDTH: f32 = 360.0;
 
@@ -53,6 +53,9 @@ pub(super) const DOT_SCOPE_GROUPS: [(&str, &[&str]); 5] = [
             "dot-processing-width",
             "dot-height",
             "dot-island-spread",
+            "dot-bars",
+            "dot-bar-width",
+            "dot-bar-gap",
         ],
     ),
     ("Braid", &["dot-braid-speed", "dot-helix"]),
@@ -128,11 +131,28 @@ fn dot_scope_choices(p: Paint, tuning: &Tuning) -> El {
         .iter()
         .position(|look| *look == tuning.processing)
         .unwrap_or(0);
+    let look = Look::ALL
+        .iter()
+        .position(|look| *look == tuning.look)
+        .unwrap_or(0);
     let placement = Placement::ALL
         .iter()
         .position(|place| *place == tuning.placement)
         .unwrap_or(0);
     let rows = vec![
+        setting_row(
+            p,
+            "dot-look",
+            "Recording look",
+            Some("How the field is drawn while the voice records"),
+            segmented(
+                p,
+                "segments",
+                &Look::ALL.map(Look::label),
+                look,
+                |ui, index| tune(ui, |tuning| tuning.look = Look::ALL[index]),
+            ),
+        ),
         setting_row(
             p,
             "dot-processing",

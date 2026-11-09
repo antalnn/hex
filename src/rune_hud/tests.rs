@@ -14,6 +14,58 @@ fn dot_uniform_layout_matches_wgsl() {
 }
 
 #[test]
+fn a_recording_frame_asks_the_shader_for_bars() {
+    let mut scope = dot_scope::Scope::new(Tuning::default());
+    scope.advance(
+        1.0 / 60.0,
+        dot_scope::Frame {
+            stage: dot_scope::Stage::Recording,
+            visible: true,
+            loudness: -30.0,
+            reduce_motion: false,
+        },
+    );
+    let frame = DotFrame {
+        pose: scope.pose(),
+        tuning: scope.tuning(),
+        columns: scope.columns(),
+        rows: scope.rows(),
+        dots: Vec::new(),
+    };
+    let target = Target {
+        viewport: [0.0, 0.0, 100.0, 100.0],
+        clip: [0, 0, 100, 100],
+        scale: 1.0,
+        dark: true,
+    };
+    let uniforms = DotUniforms::new(&frame, Layout::default(), target);
+    assert_eq!(uniforms.field[1], 2.0, "mode 2 is the bars");
+    assert_eq!(uniforms.field[2], frame.tuning.bars);
+    assert_eq!(uniforms.columns, frame.tuning.bar_width);
+    assert_eq!(uniforms.rows, frame.tuning.bar_gap);
+
+    scope.advance(
+        1.0 / 60.0,
+        dot_scope::Frame {
+            stage: dot_scope::Stage::Processing,
+            visible: true,
+            loudness: 0.0,
+            reduce_motion: false,
+        },
+    );
+    let frame = DotFrame {
+        pose: scope.pose(),
+        tuning: scope.tuning(),
+        columns: scope.columns(),
+        rows: scope.rows(),
+        dots: Vec::new(),
+    };
+    let uniforms = DotUniforms::new(&frame, Layout::default(), target);
+    assert_eq!(uniforms.field[1], 3.0, "mode 3 is the jumping dots");
+    assert!(uniforms.field[3] > 0.0, "the jump reads the clock");
+}
+
+#[test]
 fn only_gnome_and_kde_on_wayland_keep_the_primary_display() {
     for desktops in ["GNOME", "ubuntu:GNOME", "KDE"] {
         assert!(keeps_primary_display(Some(desktops), true), "{desktops}");

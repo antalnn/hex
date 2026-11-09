@@ -4,7 +4,7 @@
 
 use std::f32::consts::{PI, TAU};
 
-use super::{AutoLevel, Processing, Tuning, fixed_level};
+use super::{AutoLevel, Look, Processing, Tuning, fixed_level};
 use crate::rune_hud::spring::{REDUCED_FADE, Spec, Spring};
 
 const STEP: f32 = 1.0 / 240.0;
@@ -96,6 +96,8 @@ pub struct Pose {
     pub clock: f32,
     /// 1 once the dictation is done, else 0.
     pub done: f32,
+    /// What the field shows this frame.
+    pub stage: Stage,
 }
 
 #[derive(Clone, Copy, Default)]
@@ -528,6 +530,7 @@ impl Scope {
                 self.elapsed
             },
             done: if self.stage == Stage::Done { 1.0 } else { 0.0 },
+            stage: self.stage,
         }
     }
 
@@ -669,7 +672,7 @@ impl Scope {
                 period: self.work_period(),
                 speed: self.pulse_speed(),
             },
-            Processing::Sweep | Processing::Flow => Working::Flow {
+            Processing::Sweep | Processing::Flow | Processing::Jump => Working::Flow {
                 offset: self.flow_offset,
                 spacing: self.flow_spacing(),
             },
@@ -897,6 +900,26 @@ impl Scope {
                 self.dots[n] = [power.clamp(0.0, 1.0), (now / total.max(1e-4)).min(1.0)];
             }
         }
+        // Voice bars take the first entries of the same buffer; the dot grid
+        // is left dark so a later look cannot read stale light. The per-bar
+        // phase gives the row a little movement without a second meter.
+        if self.tuning.look == Look::Bars && self.stage == Stage::Recording {
+            self.dots.fill([0.0, 0.0]);
+            let bars = (self.tuning.bars.round() as usize).clamp(1, super::MAX_COLUMNS);
+            let level = self.voices[0].level.clamp(0.0, 1.0);
+            let glow = self.traces[0].glow.clamp(0.0, 1.0);
+            for (index, dot) in self.dots.iter_mut().take(bars).enumerate() {
+                let phase = self.time * 9.0 - index as f32 * 0.9;
+                let shape = 0.62 + 0.38 * (0.5 + 0.5 * phase.sin()).powf(0.7);
+                *dot = [
+                    (level * shape).clamp(0.0, 1.0),
+                    (glow * (0.6 + 0.4 * shape)).clamp(0.0, 1.0),
+                ];
+            }
+        } else if self.stage == Stage::Processing && self.tuning.processing == Processing::Jump {
+            // The shader draws three dots from the clock; the grid is blank.
+            self.dots.fill([0.0, 0.0]);
+        }
     }
 }
 
@@ -991,6 +1014,7 @@ mod tests {
         Tuning {
             auto_level: false,
             processing: Processing::Sweep,
+            look: Look::Dots,
             ..Tuning::default()
         }
     }
@@ -1210,7 +1234,8 @@ mod tests {
 
     #[test]
     fn done_clears_from_the_middle_out_for_every_look() {
-        for look in Processing::ALL {
+        // Jump draws its dots from the clock, not the grid this clears.
+        for look in [Processing::Sweep, Processing::Flow, Processing::Pulse] {
             let mut scope = Scope::new(with(look));
             run(&mut scope, 0.5, recording(0.5));
             run(&mut scope, 1.0, processing());
@@ -1243,7 +1268,10 @@ mod tests {
             loudness: demo_loudness(time),
             ..recording(0.0)
         };
-        let mut auto = Scope::new(Tuning::default());
+        let mut auto = Scope::new(Tuning {
+            look: Look::Dots,
+            ..Tuning::default()
+        });
         let mut fixed_window = Scope::new(fixed());
         let (mut a, mut f) = (0.0, 0.0);
         for i in 0..240 {
@@ -1291,6 +1319,25 @@ mod tests {
         assert!(drift < 1e-3, "drift {drift}");
         assert_eq!(scope.pose().scale, 1.0);
         assert!(lit(&scope) > 20.0);
+    }
+
+    #[test]
+    fn the_bars_look_fills_one_entry_per_bar_and_leaves_the_rest_dark() {
+        let mut scope = Scope::new(Tuning::default());
+        run(&mut scope, 1.5, recording(0.8));
+        let bars = Tuning::default().bars as usize;
+        assert!(
+            scope.dots()[..bars].iter().all(|[power, _]| *power > 0.0),
+            "every bar is lit"
+        );
+        assert!(
+            scope.dots()[bars..].iter().all(|[power, _]| *power == 0.0),
+            "the dot grid stays dark"
+        );
+        assert_eq!(scope.pose().stage, Stage::Recording);
+        let mut quiet = Scope::new(Tuning::default());
+        run(&mut quiet, 1.5, recording(0.0));
+        assert!(lit(&quiet) < lit(&scope), "a lower voice lights less bar");
     }
 
     #[test]

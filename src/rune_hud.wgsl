@@ -268,7 +268,7 @@ fn dot_scope_fragment(in: Varyings) -> @location(0) vec4f {
     if (in_island) {
         let island_aa = 0.75 / u.backing_scale;
         island_shape = coverage(island_distance(window_point, u.island), island_aa);
-        if (u.field.y > 0.5) {
+        if (u.field.y > 0.5 && u.field.y < 1.5) {
             return for_target(dithered(ears(window_point, island_shape), position));
         }
     }
@@ -292,11 +292,69 @@ fn dot_scope_fragment(in: Varyings) -> @location(0) vec4f {
     let columns = i32(u.columns + 0.5);
     let rows = i32(u.rows + 0.5);
     let pitch = u.pitch;
+    let unlit = select(0.085, 0.07, dark);
+    let full = select(1.0, 0.96, dark);
+
+    // Voice bars: rounded capsules centred in the plate. The bar width and
+    // gap arrive in the grid terms, which this mode does not use.
+    if (u.field.y > 1.5 && u.field.y < 2.5) {
+        let bar_width = u.columns;
+        let gap = u.rows;
+        let count = max(i32(u.field.z + 0.5), 1);
+        let step = bar_width + gap;
+        let radius = bar_width * 0.5;
+        let track = max(radius, 1.0);
+        let reach = max(u.height * 0.5 - 5.0, track);
+        for (var i = 0; i < count; i++) {
+            let value = dot_value(i);
+            let center = vec2f((f32(i) - (f32(count) - 1.0) * 0.5) * step, 0.0);
+            let half = max(reach * value.x, track);
+            let track_sd = rounded_box(point - center, vec2f(radius, track), radius);
+            composite(&result, u.base.rgb, unlit * coverage(track_sd, aa) * shape);
+            let bar_sd = rounded_box(point - center, vec2f(radius, half), radius);
+            let core = clamp(value.x * value.x * 1.1, 0.0, 0.9) * mix(0.3, 1.0, value.y);
+            let color = mix(u.base.rgb, u.core.rgb, core);
+            composite(
+                &result,
+                color,
+                0.132 * value.x * value.x * value.y * coverage(bar_sd - 2.0, aa) * shape,
+            );
+            composite(&result, color, full * coverage(bar_sd, aa) * shape);
+        }
+        result *= u.opacity;
+        if (in_island) {
+            result.a += island_shape * (1.0 - result.a);
+        }
+        return for_target(dithered(result, position));
+    }
+
+    // Jump: three dots in a row, each rising and falling in turn.
+    if (u.field.y > 2.5) {
+        let cycle = u.field.w % 1.35;
+        let current = floor(cycle / 0.45);
+        let t = fract(cycle / 0.45);
+        let lift = sin(3.14159265 * t) * 6.0;
+        for (var i = 0; i < 3; i++) {
+            var y = 0.0;
+            if (f32(i) == current) {
+                y = lift;
+            }
+            let center = vec2f((f32(i) - 1.0) * 14.0, y);
+            let sd = length(point - center) - 3.2;
+            let color = mix(u.base.rgb, u.core.rgb, 0.55);
+            composite(&result, color, 0.16 * coverage(sd - 2.5, aa) * shape);
+            composite(&result, color, full * coverage(sd, aa) * shape);
+        }
+        result *= u.opacity;
+        if (in_island) {
+            result.a += island_shape * (1.0 - result.a);
+        }
+        return for_target(dithered(result, position));
+    }
+
     let center_offset = vec2f(f32(columns) - 1.0, f32(rows) - 1.0) * 0.5;
     let i0 = i32(round(point.x / pitch + center_offset.x));
     let j0 = i32(round(point.y / pitch + center_offset.y));
-    let unlit = select(0.085, 0.07, dark);
-    let full = select(1.0, 0.96, dark);
     let curve = select(0.75, 0.9, dark);
     let presence = 0.5 + 0.5 * max(u.live, u.cool);
     for (var dj = -1; dj <= 1; dj++) {

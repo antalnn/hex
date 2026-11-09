@@ -23,7 +23,7 @@ pub const MAX_COLUMNS: usize = 96;
 pub const MAX_ROWS: usize = 15;
 pub const MAX_DOTS: usize = 1024;
 /// The plate height the HUD window is laid out around.
-pub const PLATE_HEIGHT: f32 = 26.0;
+pub const PLATE_HEIGHT: f32 = 36.0;
 
 /// Dot scope's live parameters. Every default is the prototype's value.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
@@ -73,6 +73,14 @@ pub struct Tuning {
     pub noise_floor: f32,
     /// How transcribing and processing look.
     pub processing: Processing,
+    /// How the recording field looks: the braided dot scope or voice bars.
+    pub look: Look,
+    /// How many bars the voice is drawn as (Look::Bars).
+    pub bars: f32,
+    /// One bar's width, pt (Look::Bars).
+    pub bar_width: f32,
+    /// The gap between bars, pt (Look::Bars).
+    pub bar_gap: f32,
     /// Where the HUD sits.
     pub placement: Placement,
     /// Draws From the notch's island on a screen without a notch, from a
@@ -93,20 +101,45 @@ pub enum Processing {
     /// Round 1: the braid irons flat and a beam sweeps back and forth.
     Sweep,
     /// The braid keeps turning and light flows through it left to right.
-    #[default]
     Flow,
+    /// Three dots, one after another, jump in place.
+    #[default]
+    Jump,
     /// Pulses leave the middle the way the voice did.
     Pulse,
 }
 
 impl Processing {
-    pub const ALL: [Self; 3] = [Self::Sweep, Self::Flow, Self::Pulse];
+    pub const ALL: [Self; 4] = [Self::Sweep, Self::Flow, Self::Jump, Self::Pulse];
 
     pub fn label(self) -> &'static str {
         match self {
             Self::Sweep => "Sweep",
             Self::Flow => "Flow",
+            Self::Jump => "Jump",
             Self::Pulse => "Pulse",
+        }
+    }
+}
+
+/// How the recording field is drawn.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum Look {
+    /// The braided dot scope, ported from the prototype.
+    Dots,
+    /// Rounded voice bars: one per level sample.
+    #[default]
+    Bars,
+}
+
+impl Look {
+    pub const ALL: [Self; 2] = [Self::Dots, Self::Bars];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Dots => "Dots",
+            Self::Bars => "Bars",
         }
     }
 }
@@ -165,6 +198,10 @@ impl Default for Tuning {
             auto_release: 3.0,
             noise_floor: -60.0,
             processing: Processing::default(),
+            look: Look::default(),
+            bars: 7.0,
+            bar_width: 4.0,
+            bar_gap: 2.0,
             placement: Placement::default(),
             pretend_notch: false,
             island_spread: 28.0,
@@ -210,7 +247,7 @@ const fn whole(index: usize, key: &'static str, label: &'static str, min: f32, m
     }
 }
 
-pub const KNOBS: [Knob; 22] = [
+pub const KNOBS: [Knob; 25] = [
     whole(0, "dot-columns", "Columns", 11.0, MAX_COLUMNS as f32),
     whole(1, "dot-rows", "Rows", 3.0, MAX_ROWS as f32),
     knob(2, "dot-spacing", "Dot spacing", 1.6, 4.0, " pt"),
@@ -254,6 +291,9 @@ pub const KNOBS: [Knob; 22] = [
         60.0,
         " pt",
     ),
+    whole(22, "dot-bars", "Bars", 5.0, 9.0),
+    knob(23, "dot-bar-width", "Bar width", 2.0, 6.0, " pt"),
+    knob(24, "dot-bar-gap", "Bar gap", 1.0, 6.0, " pt"),
 ];
 
 impl Knob {
@@ -315,7 +355,10 @@ impl Tuning {
             18 => &mut self.bounce,
             19 => &mut self.auto_release,
             20 => &mut self.noise_floor,
-            _ => &mut self.island_spread,
+            21 => &mut self.island_spread,
+            22 => &mut self.bars,
+            23 => &mut self.bar_width,
+            _ => &mut self.bar_gap,
         }
     }
 
@@ -471,10 +514,14 @@ mod tests {
     fn defaults_are_the_prototypes() {
         let t = Tuning::default();
         assert_eq!((t.columns, t.rows, t.spacing), (43.0, 9.0, 2.6));
-        assert_eq!((t.width, t.processing_width, t.height), (112.0, 76.0, 26.0));
+        assert_eq!((t.width, t.processing_width, t.height), (112.0, 76.0, 36.0));
         assert_eq!((t.response, t.release, t.history_speed), (6.5, 0.15, 150.0));
         assert_eq!((t.phosphor, t.shimmer_pass), (0.6, 0.55));
         assert_eq!((t.transition, t.bounce), (0.3, 0.15));
+        assert_eq!(
+            (t.look, t.bars, t.bar_width, t.bar_gap),
+            (Look::Bars, 7.0, 4.0, 2.0)
+        );
         assert_eq!(t.clamped(), t, "every default sits inside its knob");
     }
 
@@ -595,7 +642,8 @@ mod tests {
     fn new_settings_fill_in_for_an_old_file() {
         let old: Tuning = serde_json::from_str(r#"{"gain": 2.0}"#).unwrap();
         assert!(old.auto_level);
-        assert_eq!(old.processing, Processing::Flow);
+        assert_eq!(old.processing, Processing::Jump);
+        assert_eq!(old.look, Look::Bars);
         assert_eq!(old.placement, Placement::Below);
         let notch: Tuning =
             serde_json::from_str(r#"{"placement": "notch", "processing": "pulse"}"#).unwrap();
