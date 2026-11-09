@@ -1,14 +1,12 @@
 //! The shared vocabulary: names Hex should know (people, projects,
 //! products), each with spellings a transcript may show instead ("sounds
 //! like"). Search uses it to find a term's likely mis-transcriptions,
-//! prompts can read it through [`terms`], Parakeet biases its transcripts
-//! toward it through [`transcription_bias`], and Whisper and Qwen3-ASR read
-//! it as their context prompt through [`transcription_prompt`].
+//! prompts can read it through [`terms`], and Whisper and Qwen3-ASR read it
+//! as their context prompt through [`transcription_prompt`].
 
 use std::cell::Cell;
 use std::io::Read as _;
 use std::path::Path;
-use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::{OnceLock, RwLock};
 
 use serde::{Deserialize, Serialize};
@@ -20,10 +18,6 @@ const MAX_TERM_CHARS: usize = 64;
 /// Most entries in the list, and most "sounds like" spellings per entry.
 pub const MAX_ENTRIES: usize = 500;
 const MAX_SOUNDS_LIKE: usize = 16;
-/// Most terms one transcription is biased toward, first in list order: the
-/// engine's own cap (`k_vocab_max_terms` in transcribe.cpp), which keeps the
-/// biasing a bounded cost per decode.
-const MAX_BIASED_TERMS: usize = 64;
 /// Read limit for settings.json when reading it without loading `AppSettings`.
 const SETTINGS_READ_LIMIT: u64 = 4 * 1024 * 1024;
 
@@ -94,44 +88,7 @@ pub(crate) fn serialize_saved<S: serde::Serializer>(
     }))
 }
 
-/// How readily transcription swaps heard words for a vocabulary term that
-/// sounds like them. Measured on real recordings in
-/// `docs/research/vocabulary-boost-results.md`.
-#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum VocabularyBoost {
-    /// Transcripts are left as the model heard them.
-    Off,
-    Light,
-    #[default]
-    Normal,
-    Strong,
-}
-
-impl VocabularyBoost {
-    pub const ALL: [Self; 4] = [Self::Off, Self::Light, Self::Normal, Self::Strong];
-
-    /// How much less likely than the heard words, in nats per term piece, a
-    /// term may score and still replace them.
-    fn nats(self) -> f32 {
-        match self {
-            Self::Off => 0.0,
-            Self::Light => 2.0,
-            Self::Normal => 2.5,
-            Self::Strong => 4.0,
-        }
-    }
-
-    fn from_index(index: u8) -> Self {
-        Self::ALL
-            .get(usize::from(index))
-            .copied()
-            .unwrap_or_default()
-    }
-}
-
 static SAVED: OnceLock<RwLock<Vec<VocabularyEntry>>> = OnceLock::new();
-static BOOST: AtomicU8 = AtomicU8::new(VocabularyBoost::Normal as u8);
 /// The focused app and page as last seen (macOS), whose mode's own terms a
 /// dictation hears with ahead of the shared list.
 static FOCUS: OnceLock<RwLock<Option<ContextSnapshot>>> = OnceLock::new();
@@ -163,8 +120,8 @@ pub(crate) fn for_dictation<R>(work: impl FnOnce() -> R) -> R {
     work()
 }
 
-/// The focused mode's own terms first, so the bias cap keeps them, then the
-/// shared list, each term once.
+/// The focused mode's own terms first, so they lead the context prompt, then
+/// the shared list, each term once.
 fn transcription_entries() -> Vec<VocabularyEntry> {
     let shared = entries();
     if !DICTATING.with(Cell::get) {
@@ -213,49 +170,6 @@ pub fn entries() -> Vec<VocabularyEntry> {
         .clone()
 }
 
-/// The terms and options a Parakeet run biases its transcript with, read
-/// at the start of each run and live stream so settings changes apply to the
-/// next one. `None` while the list is empty or the boost is off.
-pub(crate) fn transcription_bias()
--> Option<(Vec<String>, transcribe_cpp::ParakeetVocabularyOptions)> {
-    // Labs › Vocabulary biasing: transcription takes the list only while on.
-    if !crate::labs::vocabulary_biasing() {
-        return None;
-    }
-    let boost = VocabularyBoost::from_index(BOOST.load(Ordering::Relaxed));
-    if boost == VocabularyBoost::Off {
-        return None;
-    }
-    bias_for(&transcription_entries(), boost)
-}
-
-fn bias_for(
-    entries: &[VocabularyEntry],
-    boost: VocabularyBoost,
-) -> Option<(Vec<String>, transcribe_cpp::ParakeetVocabularyOptions)> {
-    let entries = &entries[..entries.len().min(MAX_BIASED_TERMS)];
-    if entries.is_empty() {
-        return None;
-    }
-    let sounds_like = entries
-        .iter()
-        .enumerate()
-        .flat_map(|(index, entry)| {
-            entry
-                .sounds_like
-                .iter()
-                .map(move |spelling| (index, spelling.clone()))
-        })
-        .collect();
-    Some((
-        entries.iter().map(|entry| entry.term.clone()).collect(),
-        transcribe_cpp::ParakeetVocabularyOptions {
-            boost: Some(boost.nats()),
-            sounds_like,
-        },
-    ))
-}
-
 /// How much of the vocabulary a context prompt carries, in characters, for a
 /// model of this architecture; `None` for one without a prompt. Whisper's
 /// prompt slot holds 223 tokens and its engine trims an overlong one from
@@ -271,22 +185,15 @@ pub(crate) fn prompt_chars(architecture: &str) -> Option<usize> {
 }
 
 /// How many of `entries`, first in list order, a model of this
-/// architecture reads: Parakeet's bias cap, or the terms that fit the
-/// prompt. The same budget [`transcription_bias`] and
-/// [`transcription_prompt`] apply.
+/// architecture reads. The same budget [`transcription_prompt`] applies.
 pub(crate) fn terms_read(entries: &[VocabularyEntry], architecture: &str) -> usize {
-    if architecture == "parakeet" {
-        return entries.len().min(MAX_BIASED_TERMS);
-    }
     prompt_chars(architecture).map_or(0, |max_chars| prompt_terms(entries, max_chars))
 }
 
 /// The context prompt Whisper and Qwen3-ASR runs read: the first terms in
 /// list order, comma-separated so the echo filter can recognise the list,
-/// and as many as fit `max_chars`. The bias's term cap is Parakeet's and
-/// does not apply here; the character budget is the prompt's own limit.
-/// `None` while the list is empty. Read at the start of each run, like the
-/// bias.
+/// and as many as fit `max_chars`. The character budget is the prompt's own
+/// limit. `None` while the list is empty. Read at the start of each run.
 pub(crate) fn transcription_prompt(max_chars: usize) -> Option<String> {
     prompt_for(&transcription_entries(), max_chars)
 }
@@ -327,12 +234,11 @@ pub(crate) fn fold_hints(list: &mut Vec<VocabularyEntry>, hints: &str) -> bool {
 }
 
 /// Called by `AppSettings` whenever settings load or save.
-pub(crate) fn apply(entries: &[VocabularyEntry], boost: VocabularyBoost) {
+pub(crate) fn apply(entries: &[VocabularyEntry]) {
     *SAVED
         .get_or_init(Default::default)
         .write()
         .unwrap_or_else(|error| error.into_inner()) = entries.to_vec();
-    BOOST.store(boost as u8, Ordering::Relaxed);
 }
 
 /// The entries saved in `root/settings.json`, read without loading
@@ -651,7 +557,7 @@ mod tests {
 
     #[test]
     fn only_dictation_hears_with_the_focused_modes_terms() {
-        apply(&[entry("OpenCode", &[])], VocabularyBoost::Normal);
+        apply(&[entry("OpenCode", &[])]);
         assert_eq!(transcription_entries(), [entry("OpenCode", &[])]);
         let inside = for_dictation(|| {
             assert!(DICTATING.with(Cell::get));
@@ -716,31 +622,6 @@ mod tests {
     }
 
     #[test]
-    fn transcription_bias_keeps_the_first_terms_and_their_spellings() {
-        assert!(bias_for(&[], VocabularyBoost::Normal).is_none());
-        let mut list = vec![
-            entry("Cappuccino", &["capuchin", "cap a chino"]),
-            entry("Rune", &[]),
-        ];
-        list.extend((0..70).map(|index| entry(&format!("term {index}"), &["x"])));
-        let (terms, options) = bias_for(&list, VocabularyBoost::Strong).unwrap();
-        assert_eq!(terms.len(), MAX_BIASED_TERMS);
-        assert_eq!(terms[..2], ["Cappuccino", "Rune"]);
-        assert_eq!(options.boost, Some(4.0));
-        assert_eq!(
-            options.sounds_like[..2],
-            [(0, "capuchin".into()), (0, "cap a chino".into())]
-        );
-        assert_eq!(options.sounds_like[2], (2, "x".into()));
-        assert!(
-            options
-                .sounds_like
-                .iter()
-                .all(|(index, _)| *index < MAX_BIASED_TERMS)
-        );
-    }
-
-    #[test]
     fn the_prompt_keeps_the_first_terms_that_fit() {
         let list = vec![
             entry("Kaffar", &["Caffer"]),
@@ -755,11 +636,10 @@ mod tests {
         assert_eq!(prompt_for(&list, 3), None);
         assert_eq!(prompt_for(&[], 100), None);
         let many: Vec<_> = (0..100).map(|n| entry(&format!("T{n}"), &[])).collect();
-        // Only the character budget limits the prompt, not the bias's term cap.
         let prompt = prompt_for(&many, 10_000).unwrap();
         assert_eq!(prompt.split(", ").count(), 100);
         let prompt = prompt_for(&many, 1_000).unwrap();
-        assert!(prompt.split(", ").count() > MAX_BIASED_TERMS);
+        assert!(prompt.split(", ").count() > 64);
         assert!(prompt.chars().count() <= 1_000);
     }
 
@@ -779,12 +659,10 @@ mod tests {
                     "{architecture} {count}"
                 );
             }
-            let biased =
-                bias_for(list, VocabularyBoost::Normal).map_or(0, |(terms, _)| terms.len());
-            assert_eq!(terms_read(list, "parakeet"), biased);
+            assert_eq!(terms_read(list, "parakeet"), 0);
             assert_eq!(terms_read(list, "sense_voice"), 0);
         }
-        assert_eq!(terms_read(&many, "parakeet"), MAX_BIASED_TERMS);
+        assert_eq!(terms_read(&many, "parakeet"), 0);
         assert!(terms_read(&many, "whisper") < terms_read(&many, "qwen3_asr"));
         assert!(terms_read(&many, "qwen3_asr") < many.len());
     }
@@ -803,18 +681,6 @@ mod tests {
         );
         assert!(!fold_hints(&mut list, "Rune, effect"));
         assert!(!fold_hints(&mut list, "  "));
-    }
-
-    #[test]
-    fn boost_reads_and_writes_as_its_name() {
-        for boost in VocabularyBoost::ALL {
-            assert_eq!(VocabularyBoost::from_index(boost as u8), boost);
-        }
-        assert_eq!(
-            serde_json::to_value(VocabularyBoost::Strong).unwrap(),
-            serde_json::json!("strong")
-        );
-        assert_eq!(VocabularyBoost::default().nats(), 2.5);
     }
 
     #[test]

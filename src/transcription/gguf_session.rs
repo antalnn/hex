@@ -129,8 +129,6 @@ impl RunKind {
 /// How a session feeds its model the vocabulary.
 #[derive(Clone, Copy)]
 enum VocabularySlot {
-    /// Parakeet's transducer heads, as a run extension (Labs).
-    Bias,
     /// The context prompt (Whisper, Qwen3-ASR), bounded to this many characters.
     Prompt(usize),
     None,
@@ -139,14 +137,6 @@ enum VocabularySlot {
 impl VocabularySlot {
     fn of(model: &transcribe_cpp::Model) -> Self {
         let architecture = model.arch();
-        if architecture == "parakeet"
-            && model.accepts_ext(
-                transcribe_cpp::ExtSlot::Run,
-                transcribe_cpp::sys::TRANSCRIBE_EXT_KIND_PARAKEET_VOCABULARY,
-            )
-        {
-            return Self::Bias;
-        }
         if !model.supports(transcribe_cpp::Feature::ContextPrompt) {
             return Self::None;
         }
@@ -191,12 +181,8 @@ impl OfflineGgufSession {
     }
 
     /// `options` with the vocabulary added, read now so a settings change
-    /// applies from the next run. Parakeet biases toward it
-    /// (`crate::dictation::vocabulary::transcription_bias`): the engine writes a term in
-    /// place of the heard words only when the audio supports it (an RNN-T
-    /// whole-clip run decodes the term alongside the greedy path; streams and
-    /// TDT heads rescore the greedy transcript). Whisper and Qwen3-ASR read it
-    /// as their context prompt (`crate::dictation::vocabulary::transcription_prompt`),
+    /// applies from the next run. Whisper and Qwen3-ASR read it as their
+    /// context prompt (`crate::dictation::vocabulary::transcription_prompt`),
     /// in whole-clip runs only.
     fn with_vocabulary<'a>(
         &self,
@@ -204,16 +190,6 @@ impl OfflineGgufSession {
         stream: bool,
     ) -> Cow<'a, transcribe_cpp::RunOptions> {
         match self.vocabulary {
-            VocabularySlot::Bias if options.family.is_none() => {
-                match crate::dictation::vocabulary::transcription_bias() {
-                    Some((terms, bias)) => Cow::Owned(transcribe_cpp::RunOptions {
-                        vocabulary: terms,
-                        family: Some(transcribe_cpp::RunExtension::ParakeetVocabulary(bias)),
-                        ..options.clone()
-                    }),
-                    None => Cow::Borrowed(options),
-                }
-            }
             VocabularySlot::Prompt(max_chars) if !stream && options.prompt.is_none() => {
                 match crate::dictation::vocabulary::transcription_prompt(max_chars) {
                     Some(prompt) => Cow::Owned(transcribe_cpp::RunOptions {

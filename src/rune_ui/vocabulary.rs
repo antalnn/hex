@@ -1,7 +1,6 @@
 //! Vocabulary: a sheet from General's Vocabulary row with one row per term
 //! and its "sounds like" spellings, edited in place and saved when typing
-//! pauses, like a mode's corrections. The boost has no control here; it
-//! stays a setting (`hex settings set vocabulary_boost`).
+//! pauses, like a mode's corrections.
 
 use rune::tok::motion::{SETTLE, SETTLE_EXIT};
 use rune::{El, SpringPair, TextEdit, Transition, Tx, col, edit_access, el, row, text};
@@ -154,8 +153,7 @@ pub(super) fn summary(ui: &Ui) -> String {
 }
 
 /// Why the list doesn't reach transcription, when the selected model takes
-/// none (Parakeet biases toward it; Whisper and Qwen3-ASR read it as a
-/// prompt).
+/// none (Parakeet; Whisper and Qwen3-ASR read it as a prompt).
 pub(super) fn unused_note(ui: &Ui) -> Option<String> {
     let model = crate::transcription::models::definition(ui.settings.transcription.model);
     (!model.uses_vocabulary()).then(|| {
@@ -167,13 +165,13 @@ pub(super) fn unused_note(ui: &Ui) -> Option<String> {
 }
 
 /// How many terms the selected model reads, when that is fewer than the
-/// list holds: Parakeet's bias cap, or Whisper's and Qwen3-ASR's prompt
-/// budget, as transcription applies them.
+/// list holds but not none: Whisper's and Qwen3-ASR's prompt budget, as
+/// transcription applies it.
 fn budget_note(ui: &Ui) -> Option<String> {
     let entries = ui.vocabulary.project();
     let read = crate::transcription::models::definition(ui.settings.transcription.model)
         .vocabulary_terms_read(&entries);
-    (read < entries.len()).then(|| {
+    (read > 0 && read < entries.len()).then(|| {
         tr_named(
             "This model reads the first {read} of {total} terms",
             &[
@@ -387,16 +385,7 @@ pub(super) fn modal(ui: &Ui, p: Paint) -> Option<[El; 2]> {
             ui.settings.dictation_processing.wrap_code_terms,
             flip_wrap_code,
         ));
-    let biases = crate::transcription::models::definition(ui.settings.transcription.model)
-        .vocabulary_use()
-        == crate::transcription::models::VocabularyUse::Bias;
-    let unused = unused_note(ui).or_else(|| {
-        (biases && !ui.settings.labs.vocabulary_biasing).then(|| {
-            tr("Transcription uses these only with Labs › Vocabulary biasing on; rewriting and search always do")
-                .to_string()
-        })
-    });
-    let unused = unused.or_else(|| budget_note(ui));
+    let unused = unused_note(ui).or_else(|| budget_note(ui));
     if let Some(unused) = unused {
         heading = heading.child(
             text(unused)
@@ -691,16 +680,21 @@ mod tests {
         );
         ui.settings.transcription.model = TranscriptionModelId::ParakeetV3;
         assert_eq!(budget_note(&ui), None);
+        assert!(unused_note(&ui).is_some());
+        ui.settings.transcription.model = TranscriptionModelId::WhisperLargeV3Turbo;
         for n in 52..70 {
             ui.vocabulary
                 .push(TextEdit::new(format!("Extra {n}")), TextEdit::default());
         }
+        let entries = ui.vocabulary.project();
+        let read = vocabulary::terms_read(&entries, "whisper");
         assert_eq!(
             budget_note(&ui).unwrap(),
-            "This model reads the first 64 of 70 terms"
+            format!("This model reads the first {read} of 70 terms")
         );
         ui.settings.transcription.model = TranscriptionModelId::SenseVoiceSmall;
         assert!(unused_note(&ui).is_some());
+        assert_eq!(budget_note(&ui), None);
     }
 
     #[test]

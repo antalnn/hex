@@ -4,7 +4,7 @@
 //! group's collapsible header (`Feature::group`). A feature
 //! with its own pane (Meetings, Voice Filter, Playground) joins the sidebar
 //! as a normal item while on and is hidden while off; a behaviour-only
-//! feature (Live text, Live chapters, Vocabulary biasing, keyboard-language
+//! feature (Live text, Live chapters, keyboard-language
 //! model switching, mouse shortcuts, pausing the browser, restoring Paste
 //! last dictation's default shortcut, keeping the dictation on the
 //! clipboard or only copying it (macOS), a second dictation shortcut
@@ -71,7 +71,6 @@ pub enum Feature {
     FailureNotices,
     LiveTyping,
     LiveChapters,
-    VocabularyBiasing,
     TerminalPaste,
     KeyboardModelSwitching,
     MouseShortcuts,
@@ -129,7 +128,7 @@ pub enum Feature {
 }
 
 impl Feature {
-    pub const ALL: [Self; 62] = [
+    pub const ALL: [Self; 61] = [
         Self::Meetings,
         Self::VoiceFilter,
         Self::Playground,
@@ -137,7 +136,6 @@ impl Feature {
         Self::FailureNotices,
         Self::LiveTyping,
         Self::LiveChapters,
-        Self::VocabularyBiasing,
         Self::TerminalPaste,
         Self::KeyboardModelSwitching,
         Self::MouseShortcuts,
@@ -224,7 +222,6 @@ impl Feature {
             | Self::FailureNotices
             | Self::LiveTyping
             | Self::LiveChapters
-            | Self::VocabularyBiasing
             | Self::TerminalPaste
             | Self::KeyboardModelSwitching
             | Self::MouseShortcuts
@@ -290,7 +287,6 @@ impl Feature {
             | Self::Playground
             | Self::LiveText
             | Self::LiveChapters
-            | Self::VocabularyBiasing
             | Self::TerminalPaste
             | Self::KeyboardModelSwitching
             | Self::MouseShortcuts
@@ -430,7 +426,6 @@ impl Feature {
             Self::Playground
             | Self::LiveText
             | Self::FailureNotices
-            | Self::VocabularyBiasing
             | Self::UnloadIdle
             | Self::RestoreShortcutDefault
             | Self::SpokenFormatting
@@ -466,7 +461,6 @@ impl Feature {
             Self::FailureNotices => "failure-notices",
             Self::LiveTyping => "live-typing",
             Self::LiveChapters => "live-chapters",
-            Self::VocabularyBiasing => "vocabulary-biasing",
             Self::TerminalPaste => "terminal-paste",
             Self::KeyboardModelSwitching => "keyboard-model-switching",
             Self::MouseShortcuts => "mouse-shortcuts",
@@ -534,7 +528,6 @@ impl Feature {
             Self::FailureNotices => "labs.failure_notices",
             Self::LiveTyping => "labs.live_typing",
             Self::LiveChapters => "labs.live_chapters",
-            Self::VocabularyBiasing => "labs.vocabulary_biasing",
             Self::TerminalPaste => "paste_with_shift",
             Self::KeyboardModelSwitching => "keyboard_model_switching.enabled",
             Self::MouseShortcuts => "labs.mouse_shortcuts",
@@ -606,7 +599,6 @@ impl Feature {
             Self::FailureNotices => settings.labs.failure_notices,
             Self::LiveTyping => settings.labs.live_typing,
             Self::LiveChapters => settings.labs.live_chapters,
-            Self::VocabularyBiasing => settings.labs.vocabulary_biasing,
             Self::TerminalPaste => settings.paste_with_shift,
             Self::KeyboardModelSwitching => settings.keyboard_model_switching.enabled,
             Self::MouseShortcuts => settings.labs.mouse_shortcuts,
@@ -680,7 +672,6 @@ impl Feature {
             &mut labs.failure_notices,
             &mut labs.live_typing,
             &mut labs.live_chapters,
-            &mut labs.vocabulary_biasing,
             &mut labs.mouse_shortcuts,
             &mut labs.unload_idle,
             &mut labs.restore_shortcut_default,
@@ -748,7 +739,6 @@ impl Feature {
             Self::FailureNotices => settings.labs.failure_notices = on,
             Self::LiveTyping => settings.labs.live_typing = on,
             Self::LiveChapters => settings.labs.live_chapters = on,
-            Self::VocabularyBiasing => settings.labs.vocabulary_biasing = on,
             Self::TerminalPaste => settings.paste_with_shift = on,
             Self::KeyboardModelSwitching => settings.keyboard_model_switching.enabled = on,
             Self::MouseShortcuts => settings.labs.mouse_shortcuts = on,
@@ -819,7 +809,6 @@ const KNOWN: u64 = 1;
 const LIVE_TEXT: u64 = 1 << 1;
 const LIVE_CHAPTERS: u64 = 1 << 2;
 const PLAYGROUND: u64 = 1 << 3;
-const VOCABULARY_BIASING: u64 = 1 << 4;
 const MOUSE_SHORTCUTS: u64 = 1 << 5;
 const UNLOAD_IDLE: u64 = 1 << 6;
 const KEEP_ON_CLIPBOARD: u64 = 1 << 7;
@@ -925,11 +914,6 @@ pub fn live_chapters() -> bool {
 /// The playground in the window.
 pub fn playground() -> bool {
     on(PLAYGROUND)
-}
-
-/// Transcription biased toward the vocabulary (Parakeet).
-pub fn vocabulary_biasing() -> bool {
-    on(VOCABULARY_BIASING)
 }
 
 /// Mouse buttons may be recorded as shortcuts (macOS).
@@ -1220,11 +1204,6 @@ fn encode_where(settings: &LabsSettings, reaches: impl Fn(Feature) -> bool) -> u
         (Feature::LiveChapters, settings.live_chapters, LIVE_CHAPTERS),
         (Feature::Playground, settings.playground, PLAYGROUND),
         (
-            Feature::VocabularyBiasing,
-            settings.vocabulary_biasing,
-            VOCABULARY_BIASING,
-        ),
-        (
             Feature::MouseShortcuts,
             settings.mouse_shortcuts,
             MOUSE_SHORTCUTS,
@@ -1396,7 +1375,6 @@ pub fn log_launch() {
         live_chapters = live_chapters(),
         typed_text = typed_text(),
         playground = playground(),
-        vocabulary_biasing = vocabulary_biasing(),
         "labs"
     );
 }

@@ -185,14 +185,10 @@ pub(super) fn languages_label(def: &ModelDefinition) -> String {
 }
 
 /// Whether transcription reads the vocabulary: Whisper and Qwen3-ASR as
-/// their prompt, Parakeet only with Labs › Vocabulary biasing.
-pub(super) fn reads_vocabulary(ui: &Ui, def: &ModelDefinition) -> bool {
+/// their prompt.
+pub(super) fn reads_vocabulary(def: &ModelDefinition) -> bool {
     match def.vocabulary_use() {
         VocabularyUse::Prompt => true,
-        VocabularyUse::Bias => {
-            let feature = crate::labs::Feature::VocabularyBiasing;
-            feature.shipped() && feature.on(&ui.settings)
-        }
         VocabularyUse::None => false,
     }
 }
@@ -251,7 +247,6 @@ pub(super) fn list_role(entry: &Entry) -> Option<(&'static str, bool)> {
 /// What a model is best at among `others`, for its eyebrow, with the key
 /// of the compare row that measures the same thing, if one does.
 pub(super) fn role(
-    ui: &Ui,
     entry: &Entry,
     others: &[&Entry],
 ) -> Option<(&'static str, Option<&'static str>)> {
@@ -268,7 +263,7 @@ pub(super) fn role(
         {
             Some((tr("Most languages"), Some("languages")))
         }
-        None if reads_vocabulary(ui, entry.def) => {
+        None if reads_vocabulary(entry.def) => {
             Some((tr("Reads your vocabulary"), Some("vocabulary")))
         }
         None => None,

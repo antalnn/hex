@@ -465,12 +465,6 @@ fn rows(ui: &Ui) -> Vec<Row> {
             tr("Choose how long to keep meeting audio. Transcripts, notes, and summaries follow Keep meetings."),
         ));
     }
-    rows.push(row(
-        Feature::VocabularyBiasing,
-        Some(&BOOK),
-        tr("Vocabulary biasing"),
-        tr("Bias Parakeet transcription toward your vocabulary; rewriting and search use it either way"),
-    ));
     if caps.keyboard_model_switching {
         rows.push(row(
             Feature::KeyboardModelSwitching,
@@ -807,7 +801,6 @@ fn row_key(lab: Lab) -> &'static str {
         Feature::FailureNotices => "lab-failure-notices",
         Feature::LiveTyping => "lab-live-typing",
         Feature::LiveChapters => "lab-live-chapters",
-        Feature::VocabularyBiasing => "lab-vocabulary-biasing",
         Feature::TerminalPaste => "lab-terminal-paste",
         Feature::KeyboardModelSwitching => "lab-keyboard-model-switching",
         Feature::MouseShortcuts => "lab-mouse-shortcuts",

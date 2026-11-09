@@ -279,11 +279,6 @@ const KEYS: &[Key] = &[
         "Hex records these as you switch models",
     ),
     key(
-        "vocabulary_boost",
-        Kind::Choice(&["off", "light", "normal", "strong"]),
-        "How readily transcription swaps heard words for a vocabulary term",
-    ),
-    key(
         "rewrite.default_prompt",
         Kind::Text,
         "The instruction Rewrite selection uses when the recording said nothing",
@@ -398,11 +393,6 @@ const KEYS: &[Key] = &[
         "labs.playground",
         Kind::Bool,
         "Labs: the scene and story browser in the window",
-    ),
-    key(
-        "labs.vocabulary_biasing",
-        Kind::Bool,
-        "Labs: bias Parakeet transcription toward the vocabulary",
     ),
     key(
         "labs.mouse_shortcuts",

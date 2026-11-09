@@ -694,8 +694,7 @@ pub struct ModelInfo {
     pub selected: bool,
     pub streams: bool,
     /// How transcription takes the vocabulary: `prompt` (Whisper,
-    /// Qwen3-ASR), `bias` (Parakeet, with Labs › Vocabulary biasing), or
-    /// `none`.
+    /// Qwen3-ASR) or `none`.
     pub vocabulary: String,
     /// Deprecated: whether the model reads the vocabulary as its prompt,
     /// which is what recognition hints became. Use `vocabulary`.
@@ -753,7 +752,6 @@ pub fn model_infos(
             streams: model.streams,
             vocabulary: match model.vocabulary_use() {
                 VocabularyUse::Prompt => "prompt",
-                VocabularyUse::Bias => "bias",
                 VocabularyUse::None => "none",
             }
             .into(),

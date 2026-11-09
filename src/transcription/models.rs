@@ -214,9 +214,6 @@ pub struct ModelDefinition {
 /// How a model's transcription takes the vocabulary.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum VocabularyUse {
-    /// Parakeet's transducer heads bias their decode toward the terms
-    /// (Labs › Vocabulary biasing).
-    Bias,
     /// Whisper and Qwen3-ASR read the terms as their context prompt.
     Prompt,
     None,
@@ -347,9 +344,6 @@ impl ModelDefinition {
     /// and search use the vocabulary with every model.
     pub fn vocabulary_use(&self) -> VocabularyUse {
         match self.runtime {
-            ModelRuntime::Gguf(artifact) if artifact.architecture == "parakeet" => {
-                VocabularyUse::Bias
-            }
             ModelRuntime::Gguf(artifact)
                 if matches!(artifact.architecture, "whisper" | "qwen3_asr") =>
             {
@@ -2105,7 +2099,7 @@ mod tests {
     }
 
     #[test]
-    fn whisper_and_qwen3_asr_read_the_vocabulary_as_a_prompt_and_parakeet_biases() {
+    fn whisper_and_qwen3_asr_read_the_vocabulary_as_a_prompt() {
         use TranscriptionModelId::*;
         let by = |kind| {
             MODELS
@@ -2124,19 +2118,7 @@ mod tests {
                 NbWhisperMedium
             ]
         );
-        assert_eq!(
-            by(VocabularyUse::Bias),
-            [
-                ParakeetUnifiedEnglish,
-                ParakeetV2,
-                ParakeetV3,
-                Orukeet,
-                UnderdogBark3Pro,
-                UnderdogBark3Clean,
-                ParakeetUltra,
-                Nemotron35Asr,
-            ]
-        );
+        assert!(by(VocabularyUse::None).len() > 0);
     }
 
     #[test]

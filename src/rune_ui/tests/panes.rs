@@ -2057,7 +2057,6 @@ fn labs_lists_every_toggle_off_by_default() {
         ("lab-playground", settings.labs.playground),
         ("lab-live-text", settings.labs.live_text),
         ("lab-live-chapters", settings.labs.live_chapters),
-        ("lab-vocabulary-biasing", settings.labs.vocabulary_biasing),
     ] {
         assert!(rt.find(row).is_some(), "Labs lacks {row}");
         assert!(!on, "{row} is on");
@@ -2072,8 +2071,6 @@ fn labs_lists_every_toggle_off_by_default() {
     );
     tap(&mut rt, "lab-live-text");
     assert!(rt.state.settings.labs.live_text);
-    tap(&mut rt, "lab-vocabulary-biasing");
-    assert!(rt.state.settings.labs.vocabulary_biasing);
     tap(&mut rt, "lab-meetings");
     assert!(rt.find("nav-meetings").is_none(), "hidden while off");
 
@@ -2095,7 +2092,7 @@ fn a_labs_link_shows_its_labs_group_and_leaves_it_off() {
     use super::super::labs::LabsLink;
     use crate::labs::Feature;
     let mut rt = runtime("mac-settings", true, (980.0, 2000.0));
-    let feature = Feature::VocabularyBiasing;
+    let feature = Feature::LiveText;
     assert!(!feature.on(&rt.state.settings));
     let link = LabsLink {
         lab: Some(feature.name().into()),
@@ -2105,7 +2102,7 @@ fn a_labs_link_shows_its_labs_group_and_leaves_it_off() {
     settle(&mut rt);
     assert!(rt.state.labs_open);
     assert_eq!(rt.state.lab_store.group, Some(feature.group()));
-    assert!(rt.find("lab-card-vocabulary-biasing").is_some());
+    assert!(rt.find("lab-card-live-text").is_some());
     assert!(!feature.on(&rt.state.settings), "a link never flips it");
 }
 
@@ -2114,7 +2111,7 @@ fn a_labs_link_keeps_the_category_it_names() {
     use super::super::labs::LabsLink;
     let mut rt = runtime("mac-settings", true, (980.0, 2000.0));
     let link = LabsLink {
-        lab: Some(crate::labs::Feature::VocabularyBiasing.name().into()),
+        lab: Some(crate::labs::Feature::LiveText.name().into()),
         category: Some("shortcuts".into()),
         ..LabsLink::default()
     };

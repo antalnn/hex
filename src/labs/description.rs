@@ -19,9 +19,6 @@ impl Feature {
                 "Show provisional words in the focused text field while dictating on Wayland, then type the final text there"
             }
             Self::LiveChapters => "Break meeting transcripts into chapters while recording",
-            Self::VocabularyBiasing => {
-                "Bias Parakeet transcription toward your vocabulary; rewriting and search use it either way"
-            }
             Self::TerminalPaste => "Paste with Ctrl+Shift+V, for apps that ignore Ctrl+V",
             Self::KeyboardModelSwitching => {
                 "Changing the keyboard language switches the speech model and language"

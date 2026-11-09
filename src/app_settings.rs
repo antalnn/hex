@@ -362,8 +362,6 @@ pub struct AppSettings {
         serialize_with = "serialize_saved"
     )]
     pub vocabulary: Vec<VocabularyEntry>,
-    /// How readily transcription swaps heard words for a vocabulary term.
-    pub vocabulary_boost: crate::dictation::vocabulary::VocabularyBoost,
     /// One-time settings changes already applied. A file that predates a
     /// change lacks its ID, so the change runs once on the next load; new
     /// settings start with every ID because they need none.
@@ -483,7 +481,6 @@ impl Default for AppSettings {
             indicator_position: IndicatorPosition::default(),
             updates: UpdateSettings::default(),
             vocabulary: Vec::new(),
-            vocabulary_boost: crate::dictation::vocabulary::VocabularyBoost::default(),
             migrations: MIGRATIONS.iter().map(|id| id.to_string()).collect(),
             text_replacements: Vec::new(),
         }
@@ -867,7 +864,7 @@ impl AppSettings {
         set_microphone_selection(self.microphone.as_deref());
         #[cfg(target_os = "macos")]
         crate::dictation::config::update_dictation_profiles(&self.dictation_processing);
-        crate::dictation::vocabulary::apply(&self.vocabulary, self.vocabulary_boost);
+        crate::dictation::vocabulary::apply(&self.vocabulary);
     }
 
     /// Mode activations saved while Finder showed filename extensions carry a
@@ -2375,7 +2372,7 @@ mod tests {
                 "Rune",
             ])
         );
-        assert_eq!(json["vocabulary_boost"], "normal");
+        assert!(json.get("vocabulary_boost").is_none());
         let reloaded = AppSettings::load_from(&dir.path).unwrap();
         assert_eq!(reloaded.vocabulary, filled.vocabulary);
     }

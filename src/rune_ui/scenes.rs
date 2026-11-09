@@ -656,11 +656,11 @@ pub(super) const SCENES: &[Scene] = &[
         ui.pane = Pane::HudLab;
     }),
     ("mac-labs", labs_with_some_on),
-    // Where hex://labs/vocabulary-biasing lands: its group's chip.
+    // Where hex://labs/live-text lands: its group's chip.
     ("mac-labs-link", |ui| {
         *ui = mac_fixture();
         ui.labs_open = true;
-        ui.lab_store.group = Some(crate::labs::Feature::VocabularyBiasing.group());
+        ui.lab_store.group = Some(crate::labs::Feature::LiveText.group());
     }),
     ("mac-labs-on", |ui| {
         labs_with_some_on(ui);

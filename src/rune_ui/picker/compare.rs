@@ -83,7 +83,7 @@ impl Measure {
     }
 }
 
-fn measures(ui: &Ui, shown: &[&Entry], language: &str) -> Vec<Measure> {
+fn measures(shown: &[&Entry], language: &str) -> Vec<Measure> {
     let mut measures = vec![Measure {
         key: "wait",
         label: tr("Wait when you stop"),
@@ -138,7 +138,7 @@ fn measures(ui: &Ui, shown: &[&Entry], language: &str) -> Vec<Measure> {
         values: shown
             .iter()
             .map(|entry| {
-                if facts::reads_vocabulary(ui, entry.def) {
+                if facts::reads_vocabulary(entry.def) {
                     tr("Yes")
                 } else {
                     "—"
@@ -148,7 +148,7 @@ fn measures(ui: &Ui, shown: &[&Entry], language: &str) -> Vec<Measure> {
             .collect(),
         scores: shown
             .iter()
-            .map(|entry| facts::reads_vocabulary(ui, entry.def).then_some(1.0))
+            .map(|entry| facts::reads_vocabulary(entry.def).then_some(1.0))
             .collect(),
     });
     measures
@@ -170,7 +170,7 @@ fn cell(p: Paint, key: &str, height: f32, content: El) -> El {
 pub(super) fn body(ui: &Ui, p: Paint, entries: &[Entry], language: &str) -> El {
     let c = &p.k.c;
     let shown = columns(entries, picker::pinned(ui));
-    let measures = measures(ui, &shown, language);
+    let measures = measures(&shown, language);
     let width = (WIDTH - 2.0 * p.hair - 2.0 * PAD - LABEL) / shown.len().max(COLUMNS) as f32;
 
     let mut labels = col().key("labels").w(LABEL).child(el().key("head").h(HEAD));
@@ -195,7 +195,7 @@ pub(super) fn body(ui: &Ui, p: Paint, entries: &[Entry], language: &str) -> El {
     for (index, entry) in shown.iter().enumerate() {
         let recommended = entry.recommendation == Some(Recommendation::Recommended);
         // An eyebrow that a row's bold value already says goes.
-        let eyebrow = match facts::role(ui, entry, &shown) {
+        let eyebrow = match facts::role(entry, &shown) {
             Some((_, Some(key)))
                 if measures
                     .iter()

@@ -949,16 +949,13 @@ mod tests {
 
     #[test]
     fn the_preview_wraps_a_code_term_only_when_the_switch_is_on() {
-        use crate::dictation::vocabulary::{VocabularyBoost, VocabularyEntry};
+        use crate::dictation::vocabulary::VocabularyEntry;
 
-        crate::dictation::vocabulary::apply(
-            &[VocabularyEntry {
-                term: "useState".into(),
-                sounds_like: vec!["use state".into()],
-                code: true,
-            }],
-            VocabularyBoost::Normal,
-        );
+        crate::dictation::vocabulary::apply(&[VocabularyEntry {
+            term: "useState".into(),
+            sounds_like: vec!["use state".into()],
+            code: true,
+        }]);
         let mode = DictationMode::default();
         assert_eq!(
             preview(&mode, false, "I called use state"),
@@ -978,7 +975,7 @@ mod tests {
             preview(&lowercase, true, "I called use state"),
             "i called usestate"
         );
-        crate::dictation::vocabulary::apply(&[], VocabularyBoost::Normal);
+        crate::dictation::vocabulary::apply(&[]);
     }
 
     #[test]
