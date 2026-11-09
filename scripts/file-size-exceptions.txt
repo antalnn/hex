@@ -13,7 +13,7 @@ src/capture_host.rs 3099
 src/desktop/i18n.rs 1563
 src/meeting/query.rs 2403
 src/meeting/transcript.rs 2195
-src/recognition.rs 2022
+src/recognition.rs 2036
 src/rune_ui/onboarding_kit/game.rs 2192
 src/rune_ui/settings.rs 1513
 src/windows/dictation.rs 1645
