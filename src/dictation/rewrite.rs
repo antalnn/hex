@@ -297,9 +297,16 @@ fn accept(output: &str, instruction: &str) -> Result<String> {
     if output.is_empty() {
         return Err(eyre!("the model returned nothing"));
     }
-    if output.contains(SENTINEL) {
+    // The frame is a line of its own. A Markdown table separator such as
+    // `|-------|----------|` contains the dashes but is not the frame.
+    if output.lines().any(|line| line.trim() == SENTINEL) {
+        let mut excerpt: String = output.split_whitespace().collect::<Vec<_>>().join(" ");
+        if excerpt.chars().count() > 40 {
+            excerpt = excerpt.chars().take(40).collect::<String>();
+            excerpt.push_str(" ...");
+        }
         return Err(eyre!(
-            "the model echoed the message frame instead of rewriting the text"
+            "the model repeated the \"{SENTINEL}\" frame around the selection instead of the rewritten text; reply began \"{excerpt}\""
         ));
     }
     if normalized(output) == normalized(instruction) {
@@ -481,6 +488,11 @@ pub(crate) fn resolve(
     }
     let fallback = default_prompt.trim();
     if !fallback.is_empty() {
+        // A default prompt that names a snippet is that snippet's cue, the
+        // same as if it had been spoken.
+        if let Some(prompt) = snippet_prompt(fallback, snippets) {
+            return Ok(prompt);
+        }
         return Ok(fallback.to_string());
     }
     Err(eyre!(
@@ -636,9 +648,15 @@ mod tests {
         let echoed = format!("make it shorter\n\n{SENTINEL}\noriginal\n{SENTINEL}");
         let error = accept(&echoed, "make it shorter").unwrap_err();
         assert!(
-            error.to_string().contains("echoed the message frame"),
+            error.to_string().contains("frame around the selection"),
             "{error}"
         );
+    }
+
+    #[test]
+    fn a_markdown_table_separator_is_not_the_frame() {
+        let output = "Goal\n\n| Item | Result |\n|-------|----------|\n| one | two |";
+        assert_eq!(accept(output, "turn this into a prompt").unwrap(), output);
     }
 
     #[test]
@@ -671,7 +689,7 @@ mod tests {
         let error = accept(SENTINEL, "tighten it").unwrap_err();
         assert_eq!(
             error.to_string(),
-            "the model echoed the message frame instead of rewriting the text"
+            "the model repeated the \"-----\" frame around the selection instead of the rewritten text; reply began \"-----\""
         );
     }
 
@@ -904,6 +922,14 @@ mod tests {
     fn an_empty_instruction_with_no_default_reports_nothing_to_do() {
         let error = resolve("", &snippets(), "  ").unwrap_err();
         assert!(error.to_string().contains("nothing to do"), "{error}");
+    }
+
+    #[test]
+    fn a_default_prompt_that_names_a_snippet_uses_its_instruction() {
+        assert_eq!(
+            resolve("", &spoken_snippets(), "polish").unwrap(),
+            "Polish the wording."
+        );
     }
 
     fn spoken_snippets() -> Vec<(String, String)> {

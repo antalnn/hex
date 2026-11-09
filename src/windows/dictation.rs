@@ -71,8 +71,25 @@ pub fn wake() {
     }
 }
 
+/// What a job transcribes: the engine's pending run, or nothing at all for a
+/// silent rewrite, which falls back to the default prompt.
+enum JobTranscript {
+    Pending(PendingTranscript),
+    Empty,
+}
+
+impl JobTranscript {
+    /// A dictation always has a pending run; `Empty` belongs to a rewrite.
+    fn wait(self) -> Result<crate::transcription::engine::Transcribed, String> {
+        match self {
+            Self::Pending(pending) => pending.wait(),
+            Self::Empty => Err("a dictation had no transcript".into()),
+        }
+    }
+}
+
 struct Job {
-    transcript: PendingTranscript,
+    transcript: JobTranscript,
     audio_ms: u64,
     /// The language the model was asked for at submission.
     language: String,
@@ -1365,6 +1382,29 @@ where
     }
 }
 
+/// A near-silent clip is discarded for a dictation, but a rewrite keeps it: an
+/// empty instruction falls back to the default prompt.
+fn keeps_silent_clip(rewrite_selection: Option<&str>) -> bool {
+    rewrite_selection.is_some()
+}
+
+/// The instruction a rewrite sends: the spoken words when there are any, else
+/// the default prompt (which may name a snippet).
+fn rewrite_instruction(
+    transcript: JobTranscript,
+    rewrite: &crate::dictation::rewrite::RewriteRuntime,
+) -> Result<String, String> {
+    let transcript = match transcript {
+        JobTranscript::Pending(pending) => pending.wait().map(|transcribed| transcribed.text)?,
+        JobTranscript::Empty => String::new(),
+    };
+    let transcript = transcript.trim().to_string();
+    let instruction =
+        crate::dictation::rewrite::resolve(&transcript, &rewrite.snippets, &rewrite.default_prompt)
+            .map_err(|error| format!("{error:#}"))?;
+    Ok(rewrite.layer_two(instruction))
+}
+
 /// Rewrites the selection with the instruction the person just spoke. A
 /// failed or empty rewrite pastes nothing, so the selection stays exactly as it
 /// was, and a rewrite never enters History: it is an edit, not a dictation.
@@ -1379,15 +1419,7 @@ fn process_rewrite_job(
     let transcript = job.transcript;
     let rewrite = rewrite.clone();
     let result = run_cancellable(cancel.as_ref(), move || {
-        let transcript = transcript.wait().map(|transcribed| transcribed.text)?;
-        let transcript = transcript.trim().to_string();
-        let instruction = crate::dictation::rewrite::resolve(
-            &transcript,
-            &rewrite.snippets,
-            &rewrite.default_prompt,
-        )
-        .map_err(|error| format!("{error:#}"))?;
-        let instruction = rewrite.layer_two(instruction);
+        let instruction = rewrite_instruction(transcript, &rewrite)?;
         crate::dictation::rewrite::rewrite(&rewrite.model, &instruction, &selection)
             .map_err(|error| format!("{error:#}"))
     });
@@ -1634,8 +1666,41 @@ fn submit_capture(
             events.dictation(DictationPhase::Discarded, "")?
         }
         Finish::Transcribe(clip) if clip.is_near_silent() => {
-            no_speech(print);
-            events.dictation(DictationPhase::Discarded, "")?
+            if !keeps_silent_clip(rewrite_selection.as_deref()) {
+                no_speech(print);
+                events.dictation(DictationPhase::Discarded, "")?;
+            } else {
+                tracing::info!("silent rewrite uses the default prompt");
+                let audio_ms = clip.duration_ms();
+                let language = engine
+                    .held_selection()
+                    .unwrap_or_else(|| crate::app_settings::transcription_selection().1)
+                    .language;
+                let cancel = Some(Arc::new(AtomicBool::new(false)));
+                let job = OutputJob::Dictation(Job {
+                    transcript: JobTranscript::Empty,
+                    audio_ms,
+                    language,
+                    recording: None,
+                    target,
+                    rewrite_selection,
+                    cancel: cancel.clone(),
+                    flavour,
+                    print: None,
+                });
+                match jobs.try_send(job) {
+                    Ok(()) => {
+                        *pending += 1;
+                        submitted = true;
+                        rewrite_cancel = cancel;
+                        events.dictation(DictationPhase::Transcribing, "")?;
+                    }
+                    Err(TrySendError::Full(_)) => fail(events, "dictation queue is full")?,
+                    Err(TrySendError::Disconnected(_)) => {
+                        return Err(eyre!("Windows dictation worker is unavailable"));
+                    }
+                }
+            }
         }
         Finish::Transcribe(mut clip) => {
             let audio_ms = clip.duration_ms();
@@ -1650,7 +1715,7 @@ fn submit_capture(
                 .is_some()
                 .then(|| Arc::new(AtomicBool::new(false)));
             let job = OutputJob::Dictation(Job {
-                transcript: engine.finish(stream, samples)?,
+                transcript: JobTranscript::Pending(engine.finish(stream, samples)?),
                 audio_ms,
                 language,
                 recording,
@@ -1771,6 +1836,36 @@ impl Drop for IndicatorGuard {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_silent_rewrite_keeps_the_clip_while_a_silent_dictation_discards_it() {
+        assert!(keeps_silent_clip(Some("selected text")));
+        assert!(!keeps_silent_clip(None));
+    }
+
+    #[test]
+    fn a_silent_rewrite_uses_the_default_prompt() {
+        let rewrite = crate::dictation::rewrite::RewriteRuntime {
+            model: Default::default(),
+            snippets: Vec::new(),
+            default_prompt: "Tighten it.".into(),
+        };
+        assert_eq!(
+            rewrite_instruction(JobTranscript::Empty, &rewrite),
+            Ok("Tighten it.".to_string())
+        );
+    }
+
+    #[test]
+    fn a_silent_rewrite_with_no_default_prompt_reports_nothing_to_do() {
+        let rewrite = crate::dictation::rewrite::RewriteRuntime {
+            model: Default::default(),
+            snippets: Vec::new(),
+            default_prompt: "  ".into(),
+        };
+        let error = rewrite_instruction(JobTranscript::Empty, &rewrite).unwrap_err();
+        assert!(error.contains("nothing to do"), "{error}");
+    }
 
     #[test]
     fn a_settings_update_with_an_excluded_app_pauses_the_shortcut() {
