@@ -254,13 +254,17 @@ fn the_local_model_card_says_what_it_serves() {
     );
 }
 
-/// General reads the hardware first, then the keys with their mode and cancel,
-/// then Vocabulary and Launch at login, one card per section.
+/// General reads the hardware first, then the keys with their mode, then
+/// Vocabulary, one card per section. Under Advanced, Dictation puts the
+/// Speech engine above the Bluetooth switch, and Application carries the
+/// launch toggle and Launch at login together.
 #[test]
 #[cfg(target_os = "windows")]
 fn general_reads_the_hardware_then_the_keys_then_the_rest() {
     let mut rt = runtime("portal");
     rt.state.settings.shortcut_mode = crate::dictation::ShortcutMode::Toggle;
+    rt.state.advanced = vec![Pane::General];
+    rt.invalidate();
     rt.settle_all();
     rt.frame(0.0);
     let tree = rt.accessibility_json();
@@ -278,6 +282,9 @@ fn general_reads_the_hardware_then_the_keys_then_the_rest() {
         "shortcut-mode",
         "cancel-shortcut",
         "vocabulary",
+        "speech-engine",
+        "avoid-bluetooth-microphone",
+        "enable-on-launch",
         "launch-at-login",
     ];
     let indices: Vec<usize> = order.iter().map(|key| index(key)).collect();
@@ -292,7 +299,9 @@ fn general_reads_the_hardware_then_the_keys_then_the_rest() {
         "Keys",
         "Shortcut mode",
         "Vocabulary",
-        "Launch at login",
+        "Dictation",
+        "Output",
+        "Application",
     ];
     let heading = |title: &str| {
         all.iter()
@@ -307,12 +316,17 @@ fn general_reads_the_hardware_then_the_keys_then_the_rest() {
         heading_indices.windows(2).all(|pair| pair[0] < pair[1]),
         "General's sections read out of order: {headings:?} at {heading_indices:?}"
     );
-    let sections: [(&str, &[&str]); 5] = [
+    let sections: [(&str, &[&str]); 7] = [
         ("Microphone", &["microphone", "microphone-mode"]),
         ("Keys", &["dictation-shortcut", "rewrite-shortcut"]),
         ("Shortcut mode", &["shortcut-mode", "cancel-shortcut"]),
         ("Vocabulary", &["vocabulary"]),
-        ("Launch at login", &["launch-at-login"]),
+        (
+            "Dictation",
+            &["speech-engine", "avoid-bluetooth-microphone"],
+        ),
+        ("Output", &[]),
+        ("Application", &["enable-on-launch", "launch-at-login"]),
     ];
     for (position, (title, rows)) in sections.iter().enumerate() {
         let start = heading_indices[position];
@@ -328,6 +342,16 @@ fn general_reads_the_hardware_then_the_keys_then_the_rest() {
             );
         }
     }
+    // The toggle names dictation, and Launch at login sits directly under it.
+    let toggle = index("enable-on-launch");
+    assert_eq!(
+        all[toggle].1["name"].as_str(),
+        Some("Enable dictation on launch")
+    );
+    assert!(
+        index("launch-at-login") > toggle,
+        "Launch at login does not follow the launch toggle"
+    );
 }
 
 /// The Models pane puts the features before the server that serves one.

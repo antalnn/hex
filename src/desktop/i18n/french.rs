@@ -606,7 +606,7 @@ const TRANSLATIONS: &[(&str, &str)] = &[
     ("Disable", "Désactiver"),
     ("Either", "Indifférent"),
     ("Enable", "Activer"),
-    ("Enable on launch", "Activer au lancement"),
+    ("Enable dictation on launch", "Activer la dictée au lancement"),
     ("Every registered transformation is already included.", "Toutes les transformations enregistrées sont déjà incluses."),
     ("Finding applications…", "Recherche d'applications…"),
     ("Hex could not load the OpenCode model catalog.", "Hex n'a pas pu charger le catalogue de modèles d'OpenCode."),
