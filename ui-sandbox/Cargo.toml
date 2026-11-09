@@ -1,0 +1,24 @@
+[package]
+name = "ui-sandbox"
+version = "0.1.0"
+edition = "2024"
+publish = false
+license = "MIT"
+
+# Standalone on purpose: the hex workspace excludes this folder, and this empty
+# table keeps cargo from walking up to the parent manifest. See
+# `.openchamber/plans/hex-general-ui-copy-plan.md`.
+[workspace]
+
+[dependencies]
+rune = { git = "https://github.com/anomalyco/rune.git", rev = "39301f6793266450a057f270da06b048a689be96", features = ["native-file-dialog", "macos-background-cursor"] }
+rune-kit = { git = "https://github.com/anomalyco/rune.git", rev = "39301f6793266450a057f270da06b048a689be96" }
+rune-theme-opencode = { git = "https://github.com/anomalyco/rune.git", rev = "39301f6793266450a057f270da06b048a689be96" }
+rune-motion = { git = "https://github.com/anomalyco/rune.git", rev = "39301f6793266450a057f270da06b048a689be96" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+wgpu = { version = "30", default-features = false, features = ["std", "parking_lot", "metal", "wgsl"] }
+[target.'cfg(target_os = "windows")'.dependencies]
+windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_Globalization"] }

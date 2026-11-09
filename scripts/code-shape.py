@@ -35,7 +35,7 @@ FOLDER_EXC = "scripts/folder-shape-exceptions.txt"
 SOURCE_RE = re.compile(r"\.(rs|tsx?|swift)$")
 SKIPPED_RE = re.compile(
     r"(^|/)(node_modules|vendor|vendored|third_party|target|dist|build|\.build|out|"
-    r"generated|__generated__|gen|fixtures?|Pods|DerivedData)/|"
+    r"generated|__generated__|gen|fixtures?|Pods|DerivedData|ui-sandbox)/|"
     r"\.d\.ts$|\.(generated|gen|g|pb)\.(rs|tsx?|swift)$|_generated\.rs$"
 )
 TEST_RE = re.compile(
