@@ -38,27 +38,33 @@ pub(super) use self::shortcuts::shortcut_rows;
 
 pub(super) fn basics(ui: &Ui, p: Paint, layer: &mut Vec<El>, query: &str) -> Option<El> {
     let mut rows = search::Rows::new(query);
+    // The hardware block sits directly under the status card: the input in
+    // use, and whether it closes between dictations.
+    rows.extend(tr("Microphone"), microphone_rows(ui, p, layer));
+    let (description, row) = microphone_release_row(ui, p);
+    rows.push_described(
+        tr("Turn off the mic when not dictating"),
+        Some(description),
+        row,
+    );
     if ui.records_shortcuts() {
+        // The keys block: the dictation key, the rewrite key (Windows), the
+        // platform's optional keys, then the mode they share and its cancel
+        // key.
         rows.extend(
-            tr("Shortcut"),
+            tr("Dictate shortcut"),
             shortcut_rows(
                 ui,
                 p,
                 "dictation-shortcut",
                 &KEYBOARD,
-                tr("Shortcut"),
+                tr("Dictate shortcut"),
                 ShortcutTarget::Dictation,
                 None,
             ),
         );
-        rows.push(tr("Shortcut mode"), super::shortcut::mode::row(ui, p));
-        // Toggle has a cancel shortcut; Hold has none.
-        if ui.settings.shortcut_mode == crate::dictation::ShortcutMode::Toggle {
-            let (description, cancel) = search::cancel_rows(ui, p);
-            rows.extend_described(tr("Cancel"), Some(description), cancel);
-        }
         // Rewrite the selected text (Windows): records an instruction, then
-        // replaces the selection with the local model's result.
+        // replaces the selection with the remote model's result.
         #[cfg(target_os = "windows")]
         search::rewrite_rows(&mut rows, ui, p);
         // Labs › Second dictation shortcut (macOS): another key that
@@ -114,6 +120,12 @@ pub(super) fn basics(ui: &Ui, p: Paint, layer: &mut Vec<El>, query: &str) -> Opt
                 ),
             );
         }
+        rows.push(tr("Shortcut mode"), super::shortcut::mode::row(ui, p));
+        // Toggle has a cancel shortcut; Hold has none.
+        if ui.settings.shortcut_mode == crate::dictation::ShortcutMode::Toggle {
+            let (description, cancel) = search::cancel_rows(ui, p);
+            rows.extend_described(tr("Cancel"), Some(description), cancel);
+        }
         if let Some(row) = configure_shortcuts_row(ui, p) {
             rows.push_described(
                 tr("Desktop shortcuts"),
@@ -121,13 +133,6 @@ pub(super) fn basics(ui: &Ui, p: Paint, layer: &mut Vec<El>, query: &str) -> Opt
                 row,
             );
         }
-        // The apps where Hex's shortcuts stay out of the way, so a game
-        // keeps its own keys (Windows: its hook is the one that swallows).
-        #[cfg(target_os = "windows")]
-        rows.push(
-            tr("Excluded apps"),
-            super::shortcut::guard::general_row(ui, p),
-        );
     }
     let vocabulary_note = super::vocabulary::unused_note(ui);
     rows.push_described(
@@ -149,35 +154,6 @@ pub(super) fn basics(ui: &Ui, p: Paint, layer: &mut Vec<El>, query: &str) -> Opt
             ),
         ),
     );
-    rows.extend(tr("Microphone"), microphone_rows(ui, p, layer));
-    let (description, row) = microphone_release_row(ui, p);
-    rows.push_described(
-        tr("Turn off the mic when not dictating"),
-        Some(description),
-        row,
-    );
-    if ui.platform.caps.os == super::platform::Os::Windows {
-        rows.push_described(
-            tr("Paste where dictation started"),
-            Some(tr(
-                "Return to the window you were in when you pressed the shortcut",
-            )),
-            icon_toggle_row(
-                p,
-                "paste-to-start-window",
-                &PASTE,
-                tr("Paste where dictation started"),
-                tr("Return to the window you were in when you pressed the shortcut"),
-                ui.settings.dictation_processing.paste_to_start_window,
-                |ui: &mut Ui| {
-                    let enabled = !ui.settings.dictation_processing.paste_to_start_window;
-                    ui.update(|settings| {
-                        settings.dictation_processing.paste_to_start_window = enabled;
-                    });
-                },
-            ),
-        );
-    }
     rows.extend(tr("Launch at login"), launch_at_login_rows(ui, p));
     (!rows.is_empty()).then(|| card(p, "basics", rows.into_rows()))
 }
@@ -768,11 +744,22 @@ fn launch_at_login_rows(ui: &Ui, p: Paint) -> Vec<CardRow> {
 // ---------------------------------------------------------------------------
 // Advanced
 
-/// How the shortcut triggers and the microphone's idle release.
+/// How the shortcut triggers and the microphone's idle release, and the apps
+/// whose keys Hex leaves alone.
 pub(super) fn dictation(ui: &Ui, p: Paint, layer: &mut Vec<El>, query: &str) -> Vec<CardRow> {
     use super::platform_settings::{SIDES, picked_side, side_binding};
     let settings = &ui.settings;
     let mut rows = search::Rows::new(query);
+    // The apps where Hex's shortcuts stay out of the way, so a game keeps its
+    // own keys (Windows: its hook is the one that swallows). It opens the
+    // section because it gates every key.
+    #[cfg(target_os = "windows")]
+    if ui.records_shortcuts() {
+        rows.push(
+            tr("Excluded apps"),
+            super::shortcut::guard::general_row(ui, p),
+        );
+    }
     if ui.records_shortcuts()
         && let Some(side) = picked_side(ui, ShortcutTarget::Dictation)
     {
@@ -859,6 +846,30 @@ pub(super) fn output(ui: &Ui, p: Paint, layer: &mut Vec<El>, query: &str) -> Vec
                 None,
             ),
         );
+        // The paste family: where the finished text lands. It returns to the
+        // window the dictation started in (Windows).
+        if ui.platform.caps.os == super::platform::Os::Windows {
+            rows.push_described(
+                tr("Paste where dictation started"),
+                Some(tr(
+                    "Return to the window you were in when you pressed the shortcut",
+                )),
+                icon_toggle_row(
+                    p,
+                    "paste-to-start-window",
+                    &PASTE,
+                    tr("Paste where dictation started"),
+                    tr("Return to the window you were in when you pressed the shortcut"),
+                    settings.dictation_processing.paste_to_start_window,
+                    |ui: &mut Ui| {
+                        let enabled = !ui.settings.dictation_processing.paste_to_start_window;
+                        ui.update(|settings| {
+                            settings.dictation_processing.paste_to_start_window = enabled;
+                        });
+                    },
+                ),
+            );
+        }
     }
     let behaviors = RecordingAudioBehavior::ALL;
     rows.push(

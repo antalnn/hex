@@ -181,20 +181,20 @@ pub(super) fn cancel_rows(ui: &Ui, p: Paint) -> (&'static str, Vec<CardRow>) {
     )
 }
 
-/// Rewrite selection's row (Windows): the press records an instruction, then
-/// the selected text is replaced by the local model's result.
+/// Rewrite shortcut's row (Windows): the press records an instruction, then
+/// the selected text is replaced by the remote model's result.
 #[cfg(target_os = "windows")]
 pub(super) fn rewrite_rows(rows: &mut Rows, ui: &Ui, p: Paint) {
     let description = tr("Records an instruction and replaces the text you selected");
     rows.extend_described(
-        tr("Rewrite selection"),
+        tr("Rewrite shortcut"),
         Some(description),
         shortcut_rows(
             ui,
             p,
             "rewrite-shortcut",
             &super::super::icons::KEYBOARD,
-            tr("Rewrite selection"),
+            tr("Rewrite shortcut"),
             ShortcutTarget::RewriteSelection,
             Some(description),
         ),

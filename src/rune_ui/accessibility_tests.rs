@@ -254,6 +254,63 @@ fn the_local_model_card_says_what_it_serves() {
     );
 }
 
+/// General reads the hardware first, then the keys with their mode and cancel,
+/// then Vocabulary and Launch at login.
+#[test]
+#[cfg(target_os = "windows")]
+fn general_reads_the_hardware_then_the_keys_then_the_rest() {
+    let mut rt = runtime("portal");
+    rt.state.settings.shortcut_mode = crate::dictation::ShortcutMode::Toggle;
+    rt.settle_all();
+    rt.frame(0.0);
+    let tree = rt.accessibility_json();
+    let all = nodes(&tree);
+    let index = |key: &str| {
+        all.iter()
+            .position(|(_, node)| node["key"].as_str() == Some(key))
+            .unwrap_or_else(|| panic!("{key} is missing"))
+    };
+    let order = [
+        "microphone",
+        "microphone-mode",
+        "dictation-shortcut",
+        "rewrite-shortcut",
+        "shortcut-mode",
+        "cancel-shortcut",
+        "vocabulary",
+        "launch-at-login",
+    ];
+    let indices: Vec<usize> = order.iter().map(|key| index(key)).collect();
+    assert!(
+        indices.windows(2).all(|pair| pair[0] < pair[1]),
+        "General reads out of order: {order:?} at {indices:?}"
+    );
+}
+
+/// The Models pane puts the features before the server that serves one.
+#[test]
+fn models_reads_the_features_then_the_server() {
+    let mut rt = runtime("portal");
+    open_models(&mut rt);
+    let tree = rt.accessibility_json();
+    let all = nodes(&tree);
+    let index = |key: &str| {
+        all.iter()
+            .position(|(_, node)| node["key"].as_str() == Some(key))
+            .unwrap_or_else(|| panic!("{key} is missing"))
+    };
+    let order = [
+        "dictation-source",
+        "rewrite-endpoint-field",
+        "local-model-state",
+    ];
+    let indices: Vec<usize> = order.iter().map(|key| index(key)).collect();
+    assert!(
+        indices.windows(2).all(|pair| pair[0] < pair[1]),
+        "Models reads out of order: {order:?} at {indices:?}"
+    );
+}
+
 /// Rewrite selection always calls a remote endpoint: the Models pane shows its
 /// address fields and no Local choice, while Dictation keeps its own choice.
 #[test]

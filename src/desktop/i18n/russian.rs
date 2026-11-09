@@ -1265,6 +1265,8 @@ const TRANSLATIONS: &[(&str, &str)] = &[
     ("Another dictation shortcut that always pastes with Ctrl+Shift+V", "Ещё одно сочетание для диктовки, которое всегда вставляет через Ctrl+Shift+V"),
     ("Rewrite snippet match", "Сопоставление фрагмента при переписывании"),
     ("Let the model match a spoken rewrite instruction to one of your saved snippets", "Позвольте модели сопоставить произнесённую инструкцию переписывания с сохранённым фрагментом"),
+    ("Dictate shortcut", "Сочетание для диктовки"),
+    ("Rewrite shortcut", "Сочетание для переписывания"),
 ];
 
 #[cfg(test)]

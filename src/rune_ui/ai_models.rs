@@ -1,12 +1,13 @@
 //! The Models pane: where each model call goes.
 //!
 //! Three cards and nothing else, so the pane stays a switchboard rather than a
-//! second General. Local model is the llama.cpp server Hex owns, shown here
-//! instead of in the sidebar and Output. Dictation picks `Local` or `Remote`:
-//! Remote is any OpenAI-compatible endpoint, a hosted provider or a server on
-//! the network, with its own model name and an optional bearer token. Rewrite
-//! selection always calls a remote endpoint, so its card shows the address,
-//! model and key with no Local choice.
+//! second General. The features come first: Dictation picks `Local` or
+//! `Remote`, and Rewrite selection always calls a remote endpoint, so its card
+//! shows the address, model and key with no Local choice. The server that
+//! serves one of them, Local model, comes last: it is the llama.cpp server Hex
+//! owns, shown here instead of in the sidebar and Output. Remote is any
+//! OpenAI-compatible endpoint, a hosted provider or a server on the network,
+//! with its own model name and an optional bearer token.
 //!
 //! The Rewrite prompts sheet holds Rewrite selection's snippets and its default
 //! prompt, edited like the Vocabulary sheet and saved when typing pauses.
@@ -208,9 +209,9 @@ fn remove_snippet(ui: &mut Ui, id: u64) {
 
 pub(super) fn pane(ui: &Ui, p: Paint, layer: &mut Vec<El>) -> (Vec<El>, El) {
     let content = page("content")
-        .child(local_model_card(ui, p))
         .child(dictation_card(ui, p, layer))
-        .child(rewrite_card(ui, p));
+        .child(rewrite_card(ui, p))
+        .child(local_model_card(ui, p));
     (
         Vec::new(),
         super::scroll_body(p.k, "models-scroll", content),
