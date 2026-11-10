@@ -992,7 +992,8 @@ pub fn run(
                     .flatten();
                 let warning = (result.kind != OutputKind::Repaste)
                     .then(|| result.warning.clone())
-                    .flatten();
+                    .flatten()
+                    .map(|reason| crate::dictation::ai_rewrite::human_cleanup_reason(&reason));
                 indicator.send(if let Some(message) = failure.or(warning) {
                     crate::rune_hud::HudEvent::JobFailed {
                         job_id,

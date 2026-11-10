@@ -347,6 +347,57 @@ fn drifted(before: &str, after: &str) -> bool {
     added > added_limit || missing > missing_limit
 }
 
+/// A cleanup failure as the pill says it: one plain sentence under 80
+/// characters, saying what happened and that the words were kept. The
+/// History entry keeps the technical reason; this is only for the pill.
+pub(crate) fn human_cleanup_reason(reason: &str) -> String {
+    let reason = reason.to_ascii_lowercase();
+    let local = reason.contains("local model");
+    if reason.contains("timed out") {
+        return if local {
+            "The local model took too long, so your words were kept.".into()
+        } else {
+            "The remote service took too long, so your words were kept.".into()
+        };
+    }
+    if reason.contains("connection failed") || reason.contains("could not reach") {
+        return if local {
+            "The local model isn't running, so your words were kept.".into()
+        } else {
+            "The remote service didn't answer, so your words were kept.".into()
+        };
+    }
+    if reason.contains("changed too many words") {
+        return "The cleanup changed too much, so your words were kept.".into();
+    }
+    if reason.contains("less than half") {
+        return "The cleanup cut too much, so your words were kept.".into();
+    }
+    if reason.contains("returned nothing") {
+        return "The cleanup returned nothing, so your words were kept.".into();
+    }
+    if reason.contains("endpoint address is empty") || reason.contains("model name is empty") {
+        return "The remote setup is incomplete, so your words were kept.".into();
+    }
+    if reason.contains("http 401") || reason.contains("http 403") {
+        return "The remote key was rejected, so your words were kept.".into();
+    }
+    if reason.contains("http 404") {
+        return "The remote service couldn't find the model, so your words were kept.".into();
+    }
+    if reason.contains("http 429") {
+        return "The remote service is busy, so your words were kept.".into();
+    }
+    if reason.contains("http 5") {
+        return "The remote service had a problem, so your words were kept.".into();
+    }
+    if local {
+        "The local model didn't answer, so your words were kept.".into()
+    } else {
+        "The remote service didn't answer, so your words were kept.".into()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -489,6 +540,42 @@ mod tests {
         }
         assert_eq!(snippet_in(&table, "email me the link"), None);
         assert_eq!(snippet_in(&table, "_comment"), None);
+    }
+
+    #[test]
+    fn a_cleanup_failure_reads_as_one_plain_sentence() {
+        let cases = [
+            (
+                "the local model did not answer: the connection failed (No connection could be made because the target machine actively refused it)",
+                "The local model isn't running, so your words were kept.",
+            ),
+            (
+                "the local model did not answer: the connection timed out",
+                "The local model took too long, so your words were kept.",
+            ),
+            (
+                "the model changed too many words, so the dictation was kept",
+                "The cleanup changed too much, so your words were kept.",
+            ),
+            (
+                "the model returned less than half the dictation, so it was kept",
+                "The cleanup cut too much, so your words were kept.",
+            ),
+            (
+                "the model returned nothing",
+                "The cleanup returned nothing, so your words were kept.",
+            ),
+            (
+                "the model did not answer: the connection failed",
+                "The remote service didn't answer, so your words were kept.",
+            ),
+        ];
+        for (reason, expected) in cases {
+            let pill = human_cleanup_reason(reason);
+            assert_eq!(pill, expected, "{reason}");
+            assert!(pill.chars().count() < 80, "{pill}");
+            assert!(!pill.contains('('), "no details in {pill}");
+        }
     }
 
     #[test]

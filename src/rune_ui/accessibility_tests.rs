@@ -225,15 +225,20 @@ fn settings_switches_say_whether_they_are_on() {
     assert_eq!(on(&node(&rt, "microphone-mode")), !release);
 }
 
-/// The local model server's controls live on the Models pane only.
+/// The local model server's controls live in the AI cleanup setup window on
+/// the Models pane only.
 #[test]
 fn the_local_model_controls_live_on_the_models_pane_only() {
     let mut rt = runtime("portal");
     open_models(&mut rt);
+    assert!(rt.accessibility_action("open-cleanup-setup", Action::Click, None));
+    settle(&mut rt);
     assert!(
         rt.find("local-model-start").is_some() || rt.find("local-model-stop").is_some(),
-        "the Models pane keeps the server control"
+        "the setup window keeps the server control"
     );
+    assert!(rt.accessibility_action("close-cleanup-setup", Action::Click, None));
+    settle(&mut rt);
 
     rt.state.pane = Pane::Output;
     rt.settle_all();
@@ -241,17 +246,6 @@ fn the_local_model_controls_live_on_the_models_pane_only() {
     assert!(rt.find("local-model-start").is_none());
     assert!(rt.find("local-model-stop").is_none());
     assert!(rt.find("local-model-state").is_none());
-}
-
-/// The local model card says what the server is for.
-#[test]
-fn the_local_model_card_says_what_it_serves() {
-    let mut rt = runtime("portal");
-    open_models(&mut rt);
-    assert!(
-        rt.find("local-model-purpose").is_some(),
-        "the Models pane states the local model's job"
-    );
 }
 
 /// General reads the hardware first, then the keys with their mode, then
@@ -354,9 +348,10 @@ fn general_reads_the_hardware_then_the_keys_then_the_rest() {
     );
 }
 
-/// The Models pane puts the features before the server that serves one.
+/// The Models pane puts the feature rows before the setup door that holds
+/// everything else.
 #[test]
-fn models_reads_the_features_then_the_server() {
+fn models_reads_the_features_then_their_setup_rows() {
     let mut rt = runtime("portal");
     open_models(&mut rt);
     let tree = rt.accessibility_json();
@@ -370,11 +365,7 @@ fn models_reads_the_features_then_the_server() {
         "rewrite-endpoint-field",
         "ai-cleanup-enabled",
         "ai-cleanup-prompt",
-        "ai-cleanup-run-on",
-        "ai-cleanup-source",
-        "local-model-auto-start",
-        "local-model-state",
-        "local-model-files",
+        "ai-cleanup-setup",
     ];
     let indices: Vec<usize> = order.iter().map(|key| index(key)).collect();
     assert!(
@@ -383,11 +374,10 @@ fn models_reads_the_features_then_the_server() {
     );
 }
 
-/// AI cleanup reads as its own card: a switch that flips through
-/// accessibility, the prompt row that opens its sheet, and where it runs,
-/// all between Rewrite selection and the local model server.
+/// AI cleanup reads as three rows: a switch, the prompt sheet, and the setup
+/// door. The server and remote rows live inside the setup window.
 #[test]
-fn ai_cleanup_reads_its_switch_prompt_and_server() {
+fn ai_cleanup_reads_its_switch_prompt_and_setup() {
     let mut rt = runtime("portal");
     open_models(&mut rt);
     let switch = node(&rt, "ai-cleanup-enabled");
@@ -405,17 +395,18 @@ fn ai_cleanup_reads_its_switch_prompt_and_server() {
         rt.find("open-ai-cleanup-prompt").is_some(),
         "the prompt opens its own sheet"
     );
-    assert!(rt.find("ai-cleanup-runs").is_some());
+    assert!(rt.find("ai-cleanup-setup").is_some());
 
+    assert!(rt.accessibility_action("open-cleanup-setup", Action::Click, None));
+    settle(&mut rt);
     let auto_start = node(&rt, "local-model-auto-start");
     assert_eq!(auto_start["role"], "switch");
     assert_eq!(name(&auto_start), "Start with Hex");
     assert!(states(&auto_start).contains(&"checked"));
-
-    assert!(rt.accessibility_action("ai-cleanup-enabled", Action::Click, None));
+    assert!(rt.find("ai-cleanup-limit-down").is_some());
+    assert!(rt.find("ai-cleanup-limit-up").is_some());
+    assert!(rt.accessibility_action("close-cleanup-setup", Action::Click, None));
     settle(&mut rt);
-    assert!(!rt.state.settings.ai_cleanup.enabled);
-    assert!(!states(&node(&rt, "ai-cleanup-enabled")).contains(&"checked"));
 
     assert!(rt.accessibility_action("open-ai-cleanup-prompt", Action::Click, None));
     settle(&mut rt);
@@ -426,6 +417,19 @@ fn ai_cleanup_reads_its_switch_prompt_and_server() {
         ),
         "{warning}"
     );
+    assert!(rt.accessibility_action("close-ai-cleanup-prompt", Action::Click, None));
+    settle(&mut rt);
+
+    assert!(rt.accessibility_action("ai-cleanup-enabled", Action::Click, None));
+    settle(&mut rt);
+    assert!(!rt.state.settings.ai_cleanup.enabled);
+    assert!(!states(&node(&rt, "ai-cleanup-enabled")).contains(&"checked"));
+    assert!(rt.find("ai-cleanup-prompt").is_none());
+    assert!(rt.find("ai-cleanup-setup").is_none());
+    assert!(rt.accessibility_action("ai-cleanup-enabled", Action::Click, None));
+    settle(&mut rt);
+    assert!(rt.find("ai-cleanup-prompt").is_some());
+    assert!(rt.find("ai-cleanup-setup").is_some());
 }
 
 /// Rewrite selection always calls a remote endpoint: the Models pane shows its
@@ -436,8 +440,8 @@ fn rewrite_selection_calls_a_remote_endpoint_only() {
     let mut rt = runtime("portal");
     open_models(&mut rt);
     assert!(
-        rt.find("ai-cleanup-source").is_some(),
-        "AI cleanup carries the Local or Remote choice"
+        rt.find("open-cleanup-setup").is_some(),
+        "AI cleanup carries the setup door"
     );
     assert!(
         rt.find("rewrite-source").is_none(),
@@ -452,6 +456,12 @@ fn rewrite_selection_calls_a_remote_endpoint_only() {
     assert!(
         rt.find("dictation-endpoint-field").is_none(),
         "AI cleanup starts on Local"
+    );
+    assert!(rt.accessibility_action("open-cleanup-setup", Action::Click, None));
+    settle(&mut rt);
+    assert!(
+        rt.find("ai-cleanup-source").is_some(),
+        "the setup window carries the Local or Remote choice"
     );
 }
 
@@ -540,7 +550,10 @@ fn an_external_cleanup_change_reloads_the_card() {
         rt.state.model_sources.cleanup_prompt.text,
         "Fix only: grammar."
     );
-    assert_eq!(rt.state.model_sources.cleanup_deadline.text, "45");
+    assert!(
+        super::ai_models::setup_summary(&rt.state).contains("45 seconds"),
+        "the setup row reads the adopted limit"
+    );
 }
 
 /// The Output list's AI cleanup row carries an Edit button that opens the
@@ -565,20 +578,29 @@ fn the_output_ai_cleanup_row_edits_its_prompt() {
     );
 }
 
-/// The AI cleanup card's Run on controls read `dictation_rewrite.source`, the
-/// setting the dictation cleanup already uses: Remote swaps the local server
-/// controls for the endpoint, model and key rows.
+/// The AI cleanup card opens its setup window, and that window reads the
+/// reused `dictation_rewrite.source`: Remote swaps the local server rows for
+/// the endpoint, model and key fields.
 #[test]
 fn the_ai_cleanup_card_reads_the_reused_source_setting() {
     let mut rt = runtime("portal");
     open_models(&mut rt);
+    assert!(rt.find("ai-cleanup-setup").is_some());
+    assert!(rt.find("open-cleanup-setup").is_some());
+    assert!(
+        rt.find("ai-cleanup-deadline-field").is_none(),
+        "the time limit is a stepper in the window, not a text box on the card"
+    );
+    assert!(rt.accessibility_action("open-cleanup-setup", Action::Click, None));
+    settle(&mut rt);
     assert!(rt.find("ai-cleanup-run-on").is_some());
-    assert!(rt.find("ai-cleanup-deadline-field").is_some());
+    assert!(rt.find("ai-cleanup-limit-down").is_some());
+    assert!(rt.find("ai-cleanup-limit-up").is_some());
     assert!(rt.find("local-model-auto-start").is_some());
     assert!(rt.find("local-model-state").is_some());
+    assert!(rt.find("local-model-files").is_some());
 
-    rt.state.settings.dictation_rewrite.source = crate::app_settings::AiSource::Remote;
-    rt.state.model_sources.reload(&rt.state.settings);
+    super::ai_models::set_dictation_source(&mut rt.state, crate::app_settings::AiSource::Remote);
     settle(&mut rt);
     assert!(rt.find("dictation-endpoint-field").is_some());
     assert!(rt.find("dictation-model-field").is_some());
@@ -588,11 +610,27 @@ fn the_ai_cleanup_card_reads_the_reused_source_setting() {
         "the local controls hide while Remote runs"
     );
     assert!(rt.find("local-model-state").is_none());
-    assert!(
-        rt.find("local-model-section").is_none(),
-        "the Local model section hides while Remote runs"
-    );
     assert!(rt.find("local-model-files").is_none());
+}
+
+/// The card reads three rows at most, and switching AI cleanup off leaves
+/// only the switch. The setup row is the door to everything else.
+#[test]
+fn switching_ai_cleanup_off_leaves_only_the_switch() {
+    let mut rt = runtime("portal");
+    open_models(&mut rt);
+    assert!(rt.find("ai-cleanup-prompt").is_some());
+    assert!(rt.find("ai-cleanup-setup").is_some());
+    assert!(rt.accessibility_action("ai-cleanup-enabled", Action::Click, None));
+    settle(&mut rt);
+    assert!(!rt.state.settings.ai_cleanup.enabled);
+    assert!(rt.find("ai-cleanup-enabled").is_some());
+    assert!(rt.find("ai-cleanup-prompt").is_none());
+    assert!(rt.find("ai-cleanup-setup").is_none());
+    assert!(rt.accessibility_action("ai-cleanup-enabled", Action::Click, None));
+    settle(&mut rt);
+    assert!(rt.find("ai-cleanup-prompt").is_some());
+    assert!(rt.find("ai-cleanup-setup").is_some());
 }
 
 /// The speech model and language stay on Dictation whichever source cleans

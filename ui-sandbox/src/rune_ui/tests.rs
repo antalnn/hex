@@ -162,13 +162,16 @@ fn models_pane_snapshots() {
     };
     let size = (980.0, 1500.0);
     let scale = 2.0;
-    for (label, prompt_open, remote) in [
-        ("ai-cleanup", false, false),
-        ("ai-cleanup-prompt", true, false),
-        ("ai-cleanup-remote", false, true),
+    for (label, prompt_open, setup_open, remote, enabled) in [
+        ("ai-cleanup", false, false, false, true),
+        ("ai-cleanup-off", false, false, false, false),
+        ("ai-cleanup-prompt", true, false, false, true),
+        ("ai-cleanup-setup", false, true, false, true),
+        ("ai-cleanup-setup-remote", false, true, true, true),
     ] {
         for dark in [false, true] {
             let mut settings = AppSettings::default();
+            settings.ai_cleanup.enabled = enabled;
             if remote {
                 settings.dictation_rewrite.source = crate::app_settings::AiSource::Remote;
                 settings.dictation_rewrite.remote.endpoint =
@@ -188,6 +191,7 @@ fn models_pane_snapshots() {
             rt.on_key = Some(Ui::on_key);
             rt.state.pane = Pane::Models;
             rt.state.model_sources.cleanup_open = prompt_open;
+            rt.state.model_sources.setup_open = setup_open;
             let width = (size.0 * scale) as u32;
             let height = (size.1 * scale) as u32;
             let pixels = crate::rune_ui::offscreen::draw(&gpu, &mut rt, width, height);

@@ -890,6 +890,43 @@ mod tests {
     }
 
     #[test]
+    fn a_cleanup_pill_shows_every_word_of_its_short_reason() {
+        for message in [
+            "The local model took too long, so your words were kept.",
+            "The local model isn't running, so your words were kept.",
+            "The remote service took too long, so your words were kept.",
+            "The cleanup changed too much, so your words were kept.",
+            "The remote service couldn't find the model, so your words were kept.",
+        ] {
+            let rt = runtime_plate(
+                Plate {
+                    failure: Some(Failure {
+                        message: message.into(),
+                        phase: FailurePhase::Text,
+                    }),
+                    ..Plate::default()
+                },
+                false,
+            );
+            let laid_out = rect(&rt, "failure").expect("the message draws");
+            let shown = visible(&rt, "failure").expect("the message is visible");
+            assert!(
+                (shown[2] - laid_out[2]).abs() < 1.0,
+                "{message}: shown {} of {} points",
+                shown[2],
+                laid_out[2]
+            );
+            let pill = rect(&rt, "failure-pill").expect("the pill draws");
+            assert!(
+                laid_out[2] <= pill[2],
+                "{message}: {} points of text in a {} point pill",
+                laid_out[2],
+                pill[2]
+            );
+        }
+    }
+
+    #[test]
     fn the_failure_mark_is_a_soft_disc_behind_the_exclamation() {
         let px = 64;
         let coverage = rune::text::icon_coverage(&FAILURE_MARK_ICON, px);

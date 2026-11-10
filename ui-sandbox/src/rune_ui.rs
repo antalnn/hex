@@ -203,8 +203,6 @@ impl Ui {
     pub(crate) fn flush_drafts(&mut self) {
         let mut candidate = self.settings.clone();
         self.model_sources.project(&mut candidate);
-        self.model_sources
-            .settle_cleanup(candidate.ai_cleanup.deadline_seconds, true);
         if candidate != self.settings {
             self.settings = candidate;
             self.saved += 1;
@@ -274,6 +272,9 @@ pub(crate) fn view(ui: &Ui, cx: &mut Cx<Ui>) -> El {
             let (mut extra, body) = ai_models::pane(ui, p, &mut layer);
             layer.append(&mut extra);
             if let Some(modal) = ai_models::cleanup_modal(ui, p) {
+                layer.extend(modal);
+            }
+            if let Some(modal) = ai_models::setup_modal(ui, p) {
                 layer.extend(modal);
             }
             if let Some(modal) = ai_models::prompts_modal(ui, p) {

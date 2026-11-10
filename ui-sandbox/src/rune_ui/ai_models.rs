@@ -27,13 +27,9 @@ use crate::desktop::host::DesktopAction;
 use crate::desktop::i18n::{tr, tr_fill};
 
 const FIELD_WIDTH: f32 = 280.0;
-/// One snippet row: its two fields.
 const ROW_HEIGHT: f32 = 36.0;
 const PADDING: f32 = 18.0;
 const MODAL_WIDTH: f32 = 640.0;
-/// What the local server is for, said on its card. The card above it holds
-/// the AI cleanup switch, prompt and Local choice, with the server controls.
-const LOCAL_MODEL_PURPOSE: &str = "The model server AI cleanup uses when it runs on Local. Its controls sit with that choice above.";
 
 /// The endpoint, model and key of one feature's remote call.
 #[derive(Default)]
@@ -84,8 +80,9 @@ pub(super) struct ModelSources {
     pub(super) prompts_open: bool,
     /// The AI cleanup prompt sheet and its text.
     pub(super) cleanup_prompt: TextEdit,
-    /// The AI cleanup deadline's seconds, edited in the card.
-    pub(super) cleanup_deadline: TextEdit,
+    /// The AI cleanup setup window: Run on, the time limit, and the chosen
+    /// side's details.
+    pub(super) setup_open: bool,
     pub(super) cleanup_open: bool,
 }
 
@@ -103,7 +100,6 @@ impl ModelSources {
         self.rewrite = SourceFields::new(&settings.rewrite.remote);
         self.default_prompt = TextEdit::new(settings.rewrite.default_prompt.clone());
         self.cleanup_prompt = TextEdit::new(settings.ai_cleanup.prompt.clone());
-        self.cleanup_deadline = TextEdit::new(settings.ai_cleanup.deadline_seconds.to_string());
         self.snippets = settings
             .rewrite
             .snippets
@@ -134,14 +130,6 @@ impl ModelSources {
         self.rewrite.project(&mut settings.rewrite.remote);
         settings.rewrite.default_prompt = self.default_prompt.text.trim().to_string();
         settings.ai_cleanup.prompt = self.cleanup_prompt.text.trim().to_string();
-        settings.ai_cleanup.deadline_seconds = self
-            .cleanup_deadline
-            .text
-            .trim()
-            .parse::<i64>()
-            .map_or(settings.ai_cleanup.deadline_seconds, |seconds| {
-                seconds.clamp(1, 3600) as u64
-            });
         settings.rewrite.snippets = self
             .snippets
             .iter()
@@ -156,23 +144,6 @@ impl ModelSources {
                 })
             })
             .collect();
-    }
-
-    /// Rewrites the deadline field when what was typed is outside the saved
-    /// range, so "-1" and "0" become the one second they were saved as
-    /// instead of sitting there looking accepted. A partial number is left
-    /// alone while it is typed; `finalize` (leaving the pane) rewrites text
-    /// that is not a number too.
-    pub(super) fn settle_cleanup(&mut self, saved: u64, finalize: bool) {
-        let typed = self.cleanup_deadline.text.trim();
-        if typed.is_empty() {
-            return;
-        }
-        let parsed = typed.parse::<i64>().ok();
-        let matches = parsed.is_some_and(|seconds| seconds == saved as i64);
-        if !matches && (finalize || parsed.is_some()) {
-            self.cleanup_deadline = TextEdit::new(saved.to_string());
-        }
     }
 
     fn field(&mut self, id: u64, prompt: bool) -> &mut TextEdit {
@@ -267,54 +238,36 @@ fn remove_snippet(ui: &mut Ui, id: u64) {
 // The pane
 
 pub(super) fn pane(ui: &Ui, p: Paint, layer: &mut Vec<El>) -> (Vec<El>, El) {
-    let mut content = page("content")
+    let content = page("content")
         .child(dictation_card(ui, p, layer))
         .child(rewrite_card(ui, p))
         .child(ai_cleanup_card(ui, p));
-    // The server's card is about the Local choice; with Remote selected it
-    // has nothing to serve and its controls are not on the page.
-    if ui.model_sources.dictation_source == AiSource::Local {
-        content = content.child(local_model_card(ui, p));
-    }
     (
         Vec::new(),
         super::scroll_body(p.k, "models-scroll", content),
     )
 }
 
-/// AI cleanup's switch, prompt, and where it runs: Local on the server Hex
-/// owns, or Remote on the endpoint the fields below name.
+/// AI cleanup's switch and its two doors: the prompt sheet and the setup
+/// window. Where it runs, how long it may take and the server or endpoint
+/// details all live in the window, so the card stays three rows of one kind.
 fn ai_cleanup_card(ui: &Ui, p: Paint) -> El {
     let enabled = ui.settings.ai_cleanup.enabled;
-    let source = ui.model_sources.dictation_source;
-    let local = source == AiSource::Local;
-    let snapshot = ui.view.as_ref().and_then(|view| view.local_model.as_ref());
-    let (state, start) = local_model_copy(snapshot.map(|snapshot| snapshot.state));
-    let running = matches!(
-        snapshot.map(|snapshot| snapshot.state),
-        Some(crate::local_model::State::Ready | crate::local_model::State::External)
-    );
-    let where_it_runs = if !enabled {
-        tr("Off: each dictation is pasted as transcribed, with no model step.")
-    } else if local && running {
-        tr("Runs on the local model server.")
-    } else if local {
-        tr("Runs on the local model server when it is running.")
-    } else {
-        tr("Runs on the remote endpoint.")
-    };
-    let mut rows = vec![
-        toggle_row(
-            p,
-            "ai-cleanup-enabled",
-            tr("AI cleanup"),
-            Some(tr("Fix grammar, punctuation and paragraphs with a model")),
-            enabled,
-            |ui: &mut Ui| {
-                ui.update(|settings| settings.ai_cleanup.enabled = !settings.ai_cleanup.enabled);
-            },
-        ),
-        setting_row(
+    let mut rows = vec![toggle_row(
+        p,
+        "ai-cleanup-enabled",
+        tr("AI cleanup"),
+        Some(tr("Fix grammar, punctuation and paragraphs with a model")),
+        enabled,
+        |ui: &mut Ui| {
+            ui.update(|settings| settings.ai_cleanup.enabled = !settings.ai_cleanup.enabled);
+        },
+    )];
+    // Everything below the switch belongs to the feature, so switching it off
+    // leaves the switch alone and the card stops describing a step that never
+    // runs.
+    if enabled {
+        rows.push(setting_row(
             p,
             "ai-cleanup-prompt",
             tr("Prompt"),
@@ -326,23 +279,123 @@ fn ai_cleanup_card(ui: &Ui, p: Paint) -> El {
                 ButtonKind::Secondary,
                 |ui: &mut Ui, _| open_cleanup_prompt(ui),
             ),
-        ),
+        ));
+        rows.push(described_row(
+            p,
+            "ai-cleanup-setup",
+            tr("Cleanup setup"),
+            Some((setup_summary(ui), p.muted())),
+            button(
+                p,
+                "open-cleanup-setup",
+                tr("Set up"),
+                ButtonKind::Secondary,
+                |ui: &mut Ui, _| open_cleanup_setup(ui),
+            ),
+        ));
+    }
+    super::controls::section(p, "ai-cleanup-section", tr("AI cleanup"), rows)
+}
+
+/// The setup row's line: where cleanup runs, its limit and, on Local, whether
+/// the server is up.
+fn setup_summary(ui: &Ui) -> String {
+    let seconds = tr_fill(
+        "{} seconds",
+        &ui.settings.ai_cleanup.deadline_seconds.to_string(),
+    );
+    match ui.model_sources.dictation_source {
+        AiSource::Local => {
+            let running = matches!(
+                ui.view
+                    .as_ref()
+                    .and_then(|view| view.local_model.as_ref())
+                    .map(|snapshot| snapshot.state),
+                Some(crate::local_model::State::Ready | crate::local_model::State::External)
+            );
+            if running {
+                tr_fill("Local · {} · server running", &seconds)
+            } else {
+                tr_fill("Local · {} · server off", &seconds)
+            }
+        }
+        AiSource::Remote => tr_fill("Remote · {}", &seconds),
+    }
+}
+
+fn open_cleanup_setup(ui: &mut Ui) {
+    ui.model_sources.setup_open = true;
+    ui.model_sources.prompts_open = false;
+    ui.model_sources.cleanup_open = false;
+}
+
+fn close_cleanup_setup(ui: &mut Ui) {
+    ui.model_sources.setup_open = false;
+}
+
+/// The setup window: Run on, the time limit as a stepper, and the chosen
+/// side's details. Done closes it.
+pub(super) fn setup_modal(ui: &Ui, p: Paint) -> Option<[El; 2]> {
+    if !ui.model_sources.setup_open {
+        return None;
+    }
+    let c = &p.k.c;
+    let source = ui.model_sources.dictation_source;
+    let local = source == AiSource::Local;
+    let limit = ui.settings.ai_cleanup.deadline_seconds;
+    let heading = col()
+        .key("heading")
+        .gap(4.0)
+        .child(
+            text(tr("AI cleanup setup"))
+                .key("title")
+                .font(p.k.ty.body_medium)
+                .color(p.text()),
+        )
+        .child(
+            text(tr("Where cleanup runs and how long it may wait."))
+                .key("description")
+                .font(DESCRIPTION)
+                .color(p.muted())
+                .wrap(),
+        );
+    let stepper = row()
+        .key("ai-cleanup-limit-stepper")
+        .gap(6.0)
+        .center_y()
+        .child(button(
+            p,
+            "ai-cleanup-limit-down",
+            "-",
+            ButtonKind::Secondary,
+            |ui: &mut Ui, _| change_cleanup_limit(ui, -1),
+        ))
+        .child(
+            text(limit.to_string())
+                .key("value")
+                .font(p.k.ty.ui_medium)
+                .color(p.text()),
+        )
+        .child(button(
+            p,
+            "ai-cleanup-limit-up",
+            "+",
+            ButtonKind::Secondary,
+            |ui: &mut Ui, _| change_cleanup_limit(ui, 1),
+        ));
+    let mut rows = vec![
+        source_row(p, "ai-cleanup", source, set_dictation_source),
         setting_row(
             p,
-            "ai-cleanup-deadline",
+            "ai-cleanup-limit",
             tr("Clean up time limit"),
             Some(tr("Seconds")),
-            TextInput::new(&ui.model_sources.cleanup_deadline)
-                .label(tr("Clean up time limit"))
-                .placeholder("20")
-                .width(Some(96.0))
-                .on_edit(|ui: &mut Ui| &mut ui.model_sources.cleanup_deadline)
-                .build(p.k)
-                .key("ai-cleanup-deadline-field"),
+            stepper,
         ),
-        source_row(p, "ai-cleanup", source, set_dictation_source),
     ];
     if local {
+        let snapshot = ui.view.as_ref().and_then(|view| view.local_model.as_ref());
+        let (state, start) = local_model_copy(snapshot.map(|snapshot| snapshot.state));
         rows.push(toggle_row(
             p,
             "local-model-auto-start",
@@ -361,6 +414,23 @@ fn ai_cleanup_card(ui: &Ui, p: Paint) -> El {
             &state,
             Some((format!("127.0.0.1:{}", ui.settings.llm.port), p.muted())),
             local_model_control(p, start),
+        ));
+        rows.push(described_row(
+            p,
+            "local-model-files",
+            tr("Local model files"),
+            Some((
+                tr("llama.cpp and the GGUF the server loads").to_string(),
+                p.muted(),
+            )),
+            super::controls::value_button(
+                p,
+                "local-model-files-control",
+                tr("Local model files"),
+                tr("Edit"),
+                &rune_theme_opencode::icons::CHEVRON_RIGHT,
+                super::local_models::open,
+            ),
         ));
     } else {
         let fields = &ui.model_sources.dictation;
@@ -384,8 +454,65 @@ fn ai_cleanup_card(ui: &Ui, p: Paint) -> El {
             ));
         }
     }
-    rows.push(note("ai-cleanup-runs", where_it_runs, p.muted()));
-    super::controls::section(p, "ai-cleanup-section", tr("AI cleanup"), rows)
+    let footer = row()
+        .key("footer")
+        .gap(12.0)
+        .center_y()
+        .child(rune::el().key("spacer").grow(1.0))
+        .child(
+            button(
+                p,
+                "close-cleanup-setup",
+                tr("Done"),
+                ButtonKind::Secondary,
+                |ui: &mut Ui, _| close_cleanup_setup(ui),
+            )
+            .default_button(),
+        );
+    let mut panel = col()
+        .key("cleanup-setup")
+        .role("dialog")
+        .label(tr("AI cleanup setup"))
+        .w(MODAL_WIDTH)
+        .pt(PADDING)
+        .px(PADDING)
+        .pb(14.0)
+        .gap(12.0)
+        .radius(p.k.radius.xl)
+        .fill(c.bg_base)
+        .border(p.hair, c.border_weak)
+        .on_press(|_: &mut Ui| {})
+        .child(heading)
+        .children(rows)
+        .child(footer);
+    for shadow in &p.k.elevation.overlay {
+        panel = panel.box_shadow(*shadow);
+    }
+    let layer = |key: &str| {
+        rune::el()
+            .key(key)
+            .role("none")
+            .absolute(0.0, 0.0)
+            .w_full()
+            .h_full()
+    };
+    Some([
+        layer("cleanup-setup-scrim")
+            .fill(c.scrim)
+            .on_press(close_cleanup_setup)
+            .transition(super::controls::modal_scrim_transition(p)),
+        layer("cleanup-setup-layer")
+            .center()
+            .transition(super::controls::modal_transition(p))
+            .child(panel.modal(true, close_cleanup_setup)),
+    ])
+}
+
+fn change_cleanup_limit(ui: &mut Ui, delta: i64) {
+    ui.update(|settings| {
+        let next = settings.ai_cleanup.deadline_seconds as i64 + delta;
+        settings.ai_cleanup.deadline_seconds = next.clamp(1, 3600) as u64;
+    });
 }
 
 /// The llama.cpp server's Start or Stop, sent to the host that owns it.
@@ -415,34 +542,6 @@ fn local_model_control(p: Paint, start: bool) -> El {
 
 /// The llama.cpp server Hex owns: what it serves and its files. Start/Stop
 /// and the auto-start switch sit with the Local choice in the AI cleanup card
-/// above, where the server is chosen.
-fn local_model_card(_ui: &Ui, p: Paint) -> El {
-    super::controls::section(
-        p,
-        "local-model-section",
-        tr("Local model"),
-        vec![
-            note("local-model-purpose", tr(LOCAL_MODEL_PURPOSE), p.muted()),
-            described_row(
-                p,
-                "local-model-files",
-                tr("Local model files"),
-                Some((
-                    tr("llama.cpp and the GGUF the server loads").to_string(),
-                    p.muted(),
-                )),
-                super::controls::value_button(
-                    p,
-                    "local-model-files-control",
-                    tr("Local model files"),
-                    tr("Edit"),
-                    &rune_theme_opencode::icons::CHEVRON_RIGHT,
-                    super::local_models::open,
-                ),
-            ),
-        ],
-    )
-}
 
 /// The card's title and whether it offers Start, for each server state.
 fn local_model_copy(state: Option<crate::local_model::State>) -> (&'static str, bool) {
@@ -916,13 +1015,13 @@ mod tests {
     }
 
     #[test]
-    fn the_local_card_says_it_serves_the_ai_cleanup() {
-        assert!(LOCAL_MODEL_PURPOSE.contains("AI cleanup"));
-        assert!(LOCAL_MODEL_PURPOSE.contains("Local"));
-        assert!(LOCAL_MODEL_PURPOSE.contains("controls sit with that choice"));
-        // The Modes pane is hidden (`Pane::Modes` is never shown), so naming
-        // it sent people to a surface that is not in the app.
-        assert!(!LOCAL_MODEL_PURPOSE.contains("Modes"));
+    fn the_setup_row_reads_the_mode_limit_and_server() {
+        let mut ui = ui();
+        ui.settings.ai_cleanup.deadline_seconds = 20;
+        ui.model_sources.dictation_source = AiSource::Local;
+        assert_eq!(setup_summary(&ui), "Local · 20 seconds · server off");
+        ui.model_sources.dictation_source = AiSource::Remote;
+        assert_eq!(setup_summary(&ui), "Remote · 20 seconds");
     }
 
     #[test]
@@ -959,37 +1058,19 @@ mod tests {
     }
 
     #[test]
-    fn the_cleanup_deadline_edits_save_as_whole_seconds() {
+    fn the_setup_stepper_keeps_the_limit_between_one_and_an_hour() {
         let mut ui = ui();
-        ui.model_sources.cleanup_deadline = TextEdit::new(" 45 ");
-        ui.flush_drafts();
-        assert_eq!(ui.settings.ai_cleanup.deadline_seconds, 45);
-
-        ui.model_sources.cleanup_deadline = TextEdit::new("nonsense");
-        ui.flush_drafts();
-        assert_eq!(ui.settings.ai_cleanup.deadline_seconds, 45);
-        assert_eq!(
-            ui.model_sources.cleanup_deadline.text, "45",
-            "leaving the field shows the value it kept"
-        );
-
-        ui.model_sources.cleanup_deadline = TextEdit::new("0");
-        ui.flush_drafts();
+        ui.settings.ai_cleanup.deadline_seconds = 20;
+        change_cleanup_limit(&mut ui, 1);
+        assert_eq!(ui.settings.ai_cleanup.deadline_seconds, 21);
+        change_cleanup_limit(&mut ui, -1);
+        assert_eq!(ui.settings.ai_cleanup.deadline_seconds, 20);
+        ui.settings.ai_cleanup.deadline_seconds = 1;
+        change_cleanup_limit(&mut ui, -1);
         assert_eq!(ui.settings.ai_cleanup.deadline_seconds, 1);
-        assert_eq!(
-            ui.model_sources.cleanup_deadline.text, "1",
-            "the field shows the floor it saved"
-        );
-
-        ui.model_sources.cleanup_deadline = TextEdit::new("-1");
-        ui.flush_drafts();
-        assert_eq!(ui.settings.ai_cleanup.deadline_seconds, 1);
-        assert_eq!(ui.model_sources.cleanup_deadline.text, "1");
-
-        ui.model_sources.cleanup_deadline = TextEdit::new("9999");
-        ui.flush_drafts();
+        ui.settings.ai_cleanup.deadline_seconds = 3600;
+        change_cleanup_limit(&mut ui, 1);
         assert_eq!(ui.settings.ai_cleanup.deadline_seconds, 3600);
-        assert_eq!(ui.model_sources.cleanup_deadline.text, "3600");
     }
 
     #[test]

@@ -952,8 +952,6 @@ impl Ui {
     /// Saves text-field edits once typing pauses for [`DRAFT_DELAY`].
     fn save_drafts(&mut self, now: Instant) -> bool {
         let candidate = self.drafted();
-        self.model_sources
-            .settle_cleanup(candidate.ai_cleanup.deadline_seconds, false);
         if candidate == self.settings {
             self.draft_since = None;
             return false;
@@ -968,8 +966,6 @@ impl Ui {
     /// Saves pending text-field edits now (leaving a pane or a mode).
     fn flush_drafts(&mut self) {
         let candidate = self.drafted();
-        self.model_sources
-            .settle_cleanup(candidate.ai_cleanup.deadline_seconds, true);
         if candidate != self.settings {
             self.commit(candidate);
         }
@@ -1172,6 +1168,9 @@ impl Ui {
         shortcut::guard::close(self);
         local_models::close(self);
         history::close_stats(self);
+        // The AI cleanup setup window belongs to Models; leaving the pane
+        // closes it like the sheets above.
+        self.model_sources.setup_open = false;
     }
 
     /// Switches panes at once: the new pane replaces the old without a fade,
@@ -1542,6 +1541,9 @@ fn view(ui: &Ui, cx: &mut Cx<Ui>) -> El {
         layer.extend(modal);
     }
     if let Some(modal) = ai_models::cleanup_modal(ui, p) {
+        layer.extend(modal);
+    }
+    if let Some(modal) = ai_models::setup_modal(ui, p) {
         layer.extend(modal);
     }
     if let Some(first_run) = onboarding_kit::live::overlay(ui, p, cx.is_reduced_motion()) {
