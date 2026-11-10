@@ -232,22 +232,36 @@ pub(crate) fn clean(
         .first()
         .map(|choice| choice.message.content.trim().to_string())
         .unwrap_or_default();
-    accept(text, &output, who)
+    let strict = strict_instruction(instruction);
+    accept(text, &output, who, strict)
+}
+
+/// Whether the cleanup runs the shipped wording, where the length and drift
+/// guards apply. A saved prompt that differs asked for a transformation, so
+/// only an empty reply is refused there.
+fn strict_instruction(instruction: &str) -> bool {
+    system_instruction(instruction) == SYSTEM_PROMPT
 }
 
 /// The script's guards: a reply is kept only when it is a cleanup of the same
 /// words. Empty, much shorter, or too many new words all mean the model
-/// wandered, and the input is better than that.
-fn accept(input: &str, output: &str, who: &str) -> Result<String> {
+/// wandered, and the input is better than that. A saved prompt that differs
+/// from the shipped wording asked for a transformation, so its reply only has
+/// to be non-empty; the guards police the shipped cleanup alone. A rejected
+/// reply is logged, so the next failure can be seen instead of guessed.
+fn accept(input: &str, output: &str, who: &str, strict: bool) -> Result<String> {
     if output.is_empty() {
+        tracing::warn!(who, "the cleanup reply was empty");
         return Err(eyre!("the {who} returned nothing"));
     }
-    if output.chars().count() < input.chars().count() / 2 {
+    if strict && output.chars().count() < input.chars().count() / 2 {
+        tracing::warn!(who, reply = %output, "the cleanup reply was too short");
         return Err(eyre!(
             "the {who} returned less than half the dictation, so it was kept"
         ));
     }
-    if drifted(input, output) {
+    if strict && drifted(input, output) {
+        tracing::warn!(who, reply = %output, "the cleanup reply changed too many words");
         return Err(eyre!(
             "the {who} changed too many words, so the dictation was kept"
         ));
@@ -469,27 +483,51 @@ mod tests {
     }
 
     #[test]
-    fn an_empty_reply_is_refused() {
-        let error = accept("some words here", "", "local model").unwrap_err();
-        assert_eq!(error.to_string(), "the local model returned nothing");
+    fn only_the_shipped_wording_keeps_the_guards() {
+        assert!(strict_instruction(""));
+        assert!(strict_instruction("   "));
+        assert!(strict_instruction(SYSTEM_PROMPT));
+        assert!(!strict_instruction(
+            "Reply with two short bullet points and nothing else"
+        ));
     }
 
     #[test]
-    fn a_reply_under_half_the_input_is_refused() {
+    fn an_empty_reply_is_refused() {
+        let error = accept("some words here", "", "local model", true).unwrap_err();
+        assert_eq!(error.to_string(), "the local model returned nothing");
+        // A custom prompt cannot keep nothing either.
+        assert!(accept("some words here", "", "model", false).is_err());
+    }
+
+    #[test]
+    fn a_reply_under_half_the_input_is_refused_for_the_shipped_prompt() {
         let error = accept(
             "a long dictation with plenty of words in it",
             "short",
             "model",
+            true,
         )
         .unwrap_err();
         assert!(error.to_string().contains("less than half"), "{error}");
     }
 
     #[test]
+    fn a_custom_prompt_keeps_a_short_bulleted_reply() {
+        let input = "Claude wrote the bootstrap script for the release pipeline and I \
+                     reviewed it before we merged the telemetry fix alongside it";
+        let output =
+            "- Claude wrote the release pipeline bootstrap.\n- The telemetry fix merged too.";
+        assert_eq!(accept(input, output, "model", false).unwrap(), output);
+        // The same reply under the shipped cleanup is still refused.
+        assert!(accept(input, output, "model", true).is_err());
+    }
+
+    #[test]
     fn a_cleanup_that_only_removes_filler_is_kept() {
         let input = "So I wanted to, um, just make something that works today";
         let output = "So I wanted to just make something that works today.";
-        assert_eq!(accept(input, output, "local model").unwrap(), output);
+        assert_eq!(accept(input, output, "local model", true).unwrap(), output);
     }
 
     #[test]
@@ -497,11 +535,13 @@ mod tests {
         let input = "one two three four five six seven eight nine ten";
         let output = "one two three four five six seven eight nine ten eleven twelve \
                       thirteen fourteen fifteen sixteen";
-        let error = accept(input, output, "local model").unwrap_err();
+        let error = accept(input, output, "local model", true).unwrap_err();
         assert!(
             error.to_string().contains("changed too many words"),
             "{error}"
         );
+        // A custom prompt asked for the change, so the same reply is kept.
+        assert_eq!(accept(input, output, "model", false).unwrap(), output);
     }
 
     #[test]
