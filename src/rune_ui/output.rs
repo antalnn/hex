@@ -838,7 +838,7 @@ fn agent_prompt(fix: Option<(&str, &str)>) -> String {
          The steps live in {path} under `dictation_processing`:\n\
          - `default_mode` runs on every dictation, in this order: `replacements` (a \
          list of {{\"matched_phrase\", \"output\"}}), then `post_processing` (an \
-         optional AI rewrite), then `transformations` (ids, in order).\n\
+         optional AI cleanup), then `transformations` (ids, in order).\n\
          - `modes` are rules for some apps: each names `applications` (app names) or \
          `browser_hosts` (sites). There, `default_mode`'s replacements run first, then \
          the mode's own `replacements`, `post_processing`, and `transformations` \

@@ -1130,7 +1130,7 @@ Gaps: the bar and touch are not verified on a real Windows PC or touchscreen.
 ```ts
 Output (main sidebar, replaces the Modes editor) // rune_ui/output.rs; scenes output*
 ├── Trust prompt -> Allow a config that uses fetch or programs (only when one asks)
-├── Edit with agent -> Copy a prompt naming the steps' keys (the AI rewrite too), `hex settings`,
+├── Edit with agent -> Copy a prompt naming the steps' keys (the AI cleanup too), `hex settings`,
 │   `hex vocabulary` for names, and the transforms docs
 ├── Open file -> settings.json in the default editor
 ├── Every dictation -> Global's steps, numbered, read-only

@@ -49,7 +49,7 @@ describes the foreground app, each field present only when known:
 Transform typed text (Linux), which runs the same steps on text already typed.
 
 Selected transforms run in order after the mode's word replacements and
-optional AI rewrite. Don't reuse the built-in ids `lowercase`,
+optional AI cleanup. Don't reuse the built-in ids `lowercase`,
 `spongebob-case`, or `no-trailing-punctuation`.
 
 ## What a script has

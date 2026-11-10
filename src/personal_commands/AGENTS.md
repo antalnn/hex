@@ -42,7 +42,7 @@ To check types in an editor or agent, run `npx -y -p typescript tsc` here.
 
 `transformations` registers named text functions that appear as optional
 final steps in Hex's dictation modes. Selected transformations run in order
-after the mode's corrections and optional AI rewrite. A transformation receives
+after the mode's corrections and optional AI cleanup. A transformation receives
 the text and the foreground context and returns the new text. If any
 transformation fails, Hex keeps the text from before the transformations.
 

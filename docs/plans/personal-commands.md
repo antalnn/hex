@@ -92,7 +92,7 @@ registered script function.
 
 Each dictation selects one complete mode. The required Global mode applies
 unless a more specific application or browser-host mode matches. A mode owns
-its corrections, optional AI rewrite, and selected custom transformations;
+its corrections, optional AI cleanup, and selected custom transformations;
 contextual modes do not inherit hidden processing from Global.
 
 ## Trust Boundary
