@@ -55,6 +55,10 @@ pub struct DictationMode {
         serialize_with = "serialize_saved"
     )]
     pub vocabulary: Vec<VocabularyEntry>,
+    /// Steps switched off from the Output list. They keep their place in
+    /// `transformations`, so turning one back on restores its order.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub skipped: Vec<String>,
 }
 
 /// Persisted OpenCode rewrite settings for one mode.

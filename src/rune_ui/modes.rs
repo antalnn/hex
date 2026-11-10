@@ -12,8 +12,8 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use rune::{
-    Align, Drag, El, Phase, ScrollSpec, Side, TextEdit, Tx, Waker, col, edit_access, el, row,
-    spacer, text,
+    Align, Cursor, Drag, El, Phase, ScrollSpec, Shadow, Side, TextEdit, Tx, Waker, col,
+    edit_access, el, row, spacer, text,
 };
 use rune_kit::{ControlSize, IconButton, IconButtonVariant, Switch, TextArea, TextInput};
 

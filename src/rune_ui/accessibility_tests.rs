@@ -526,6 +526,28 @@ fn an_ai_cleanup_prompt_draft_survives_a_publish() {
     );
 }
 
+/// The Output list's AI cleanup row carries an Edit button that opens the
+/// same prompt sheet Models › Prompt uses.
+#[test]
+fn the_output_ai_cleanup_row_edits_its_prompt() {
+    let mut rt = runtime("output");
+    rt.state
+        .settings
+        .dictation_processing
+        .default_mode
+        .transformations
+        .push(crate::dictation::ai_rewrite::TRANSFORMATION_ID.into());
+    rt.state.model_sources.reload(&rt.state.settings);
+    settle(&mut rt);
+    assert!(rt.find("output-ai-cleanup-prompt").is_some());
+    assert!(rt.accessibility_action("output-ai-cleanup-prompt", Action::Click, None));
+    settle(&mut rt);
+    assert!(
+        rt.find("ai-cleanup-prompt-field").is_some(),
+        "the prompt sheet opens from Output"
+    );
+}
+
 /// The AI cleanup card's Run on controls read `dictation_rewrite.source`, the
 /// setting the dictation cleanup already uses: Remote swaps the local server
 /// controls for the endpoint, model and key rows.

@@ -35,6 +35,8 @@ pub struct ModeRuntime {
     ai_cleanup_prompt: String,
     /// How long the cleanup call may wait before it gives up.
     ai_deadline: Duration,
+    /// The Global mode's steps switched off in the Output list.
+    default_skipped: Vec<String>,
     modes: Vec<DictationMode>,
     reads_page: bool,
 }
@@ -63,6 +65,7 @@ impl ModeRuntime {
             ai_cleanup_enabled: settings.ai_cleanup.enabled,
             ai_cleanup_prompt: settings.ai_cleanup.prompt.clone(),
             ai_deadline: Duration::from_secs(settings.ai_cleanup.deadline_seconds.max(1)),
+            default_skipped: processing.default_mode.skipped.clone(),
             modes: processing.modes.clone(),
             reads_page: uses_page(processing),
         }
@@ -183,7 +186,9 @@ impl ModeRuntime {
         }
     }
 
-    /// The matching mode's profile, or Global's.
+    /// The matching mode's profile, or Global's, with the steps switched off
+    /// in the Output list left out of the ordering. They keep their place in
+    /// the saved list, so turning one back on restores its order.
     fn profile(&self, context: &crate::dictation::context::ContextSnapshot) -> Profile {
         let mode = mode_for_context(
             &self.modes,
@@ -192,17 +197,28 @@ impl ModeRuntime {
         );
         mode.map_or_else(
             || {
+                let transformations = self
+                    .default_transformations
+                    .iter()
+                    .filter(|id| !self.default_skipped.contains(id))
+                    .cloned()
+                    .collect();
                 Profile::configured(
                     "Global",
                     ReplacementSet::new(&crate::dictation::vocabulary::replacements(
                         &self.default_vocabulary,
                     )),
-                    self.default_transformations.clone(),
+                    transformations,
                     &self.default,
                 )
                 .vocabulary(self.default_vocabulary.clone())
             },
-            Profile::from_mode,
+            |mode| {
+                let skipped = mode.skipped.clone();
+                let mut mode = mode.clone();
+                mode.transformations.retain(|id| !skipped.contains(id));
+                Profile::from_mode(&mode)
+            },
         )
     }
 }
@@ -408,6 +424,36 @@ mod tests {
             crate::dictation::processor::Source::Dictation,
         );
         assert_eq!(processed.text, "I opened OpenCode today");
+    }
+
+    #[test]
+    fn a_skipped_step_keeps_its_place_but_does_not_run() {
+        let context = crate::dictation::context::ContextSnapshot {
+            application: None,
+            browser_url: None,
+            window_title: None,
+            input_revision: None,
+        };
+        let client = crate::personal_commands::TransformationClient::default();
+        let run = |skipped: Vec<String>| {
+            let runtime = runtime(move |settings| {
+                let mode = &mut settings.dictation_processing.default_mode;
+                mode.transformations = vec!["lowercase".into()];
+                mode.skipped = skipped;
+                mode.post_processing.enabled = false;
+            });
+            runtime
+                .process(
+                    "MiXeD Words",
+                    "en",
+                    &context,
+                    &client,
+                    crate::dictation::processor::Source::Dictation,
+                )
+                .text
+        };
+        assert_eq!(run(Vec::new()), "mixed words");
+        assert_eq!(run(vec!["lowercase".into()]), "MiXeD Words");
     }
 
     #[test]

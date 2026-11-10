@@ -32,6 +32,7 @@ pub(super) fn transformations(
             .map_or_else(|| id.clone(), |transformation| transformation.name.clone());
         let held = dragging.is_some_and(|drag| drag.id() == id);
         let (dragged, remove) = (id.clone(), id.clone());
+        let cursor = if held { Cursor::Grabbing } else { Cursor::Grab };
         let handle = row()
             .key("handle")
             .role("button")
@@ -39,6 +40,8 @@ pub(super) fn transformations(
             .w(20.0)
             .h_full()
             .center()
+            .cursor(cursor)
+            .press_scale(1.15)
             .on_drag(move |ui: &mut Ui, d: &mut Drag, _: &mut Tx| {
                 drag_transformation(ui, &dragged, index, pitch, d)
             })
@@ -71,7 +74,16 @@ pub(super) fn transformations(
                 },
             ));
         if held {
-            item = item.fill(p.k.c.layer_02);
+            item = item
+                .fill(p.k.c.layer_02)
+                .scale(1.02)
+                .scale_motion(p.k.motion.control)
+                .box_shadow(Shadow {
+                    y: 6.0,
+                    blur: 18.0,
+                    color: p.k.c.scrim,
+                    ..Shadow::default()
+                });
         }
         rows.push(item);
     }

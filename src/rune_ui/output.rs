@@ -102,6 +102,9 @@ struct Step {
     /// The transformation id when this row is one of the mode's steps; the
     /// number drags it. Derived rows have none.
     id: Option<String>,
+    /// False when the step is switched off: the row dims and a press on its
+    /// number turns it back on, while the dictation skips it.
+    enabled: bool,
 }
 
 /// A step's button, for the steps changed somewhere else.
@@ -109,6 +112,8 @@ struct Step {
 enum StepAction {
     /// Opens General › Vocabulary, where terms and their spellings live.
     Vocabulary,
+    /// Opens the AI cleanup prompt sheet, the same one Models › Prompt edits.
+    CleanupPrompt,
 }
 
 /// A mode's steps in the order they run: the vocabulary, its own names and
@@ -151,6 +156,7 @@ fn steps(ui: &Ui, mode: &DictationMode, order: &[String]) -> Vec<Step> {
             runner: Runner::BuiltIn,
             action: Some(StepAction::Vocabulary),
             id: None,
+            enabled: true,
         });
     }
     if !mode.vocabulary.is_empty() {
@@ -166,6 +172,7 @@ fn steps(ui: &Ui, mode: &DictationMode, order: &[String]) -> Vec<Step> {
             runner: Runner::BuiltIn,
             action: None,
             id: None,
+            enabled: true,
         });
     }
     if !mode.replacements.is_empty() {
@@ -189,6 +196,7 @@ fn steps(ui: &Ui, mode: &DictationMode, order: &[String]) -> Vec<Step> {
             runner: Runner::BuiltIn,
             action: None,
             id: None,
+            enabled: true,
         });
     }
     if mode.post_processing.enabled {
@@ -198,21 +206,25 @@ fn steps(ui: &Ui, mode: &DictationMode, order: &[String]) -> Vec<Step> {
             runner: Runner::Rewrite,
             action: None,
             id: None,
+            enabled: true,
         });
     }
     for id in order {
-        // Off drops the native AI cleanup step from the ordering, so the
-        // Output list must not print a step the next dictation does not run.
-        if !shows(ui, id) {
-            continue;
-        }
+        // Every step keeps its row: the number turns it on and off, so the
+        // AI cleanup row stays while its switch is off and dims instead.
+        let enabled = !mode.skipped.iter().any(|skipped| skipped == id)
+            && (id != crate::dictation::ai_rewrite::TRANSFORMATION_ID
+                || ui.settings.ai_cleanup.enabled);
+        let action = (id == crate::dictation::ai_rewrite::TRANSFORMATION_ID)
+            .then_some(StepAction::CleanupPrompt);
         steps.push(match builtin(id) {
             Some((title, detail)) => Step {
                 title: title.into(),
                 detail: Some(detail.into()),
                 runner: Runner::BuiltIn,
-                action: None,
+                action,
                 id: Some(id.clone()),
+                enabled,
             },
             None => {
                 let script = ui
@@ -225,8 +237,9 @@ fn steps(ui: &Ui, mode: &DictationMode, order: &[String]) -> Vec<Step> {
                     title: script.map_or_else(|| id.clone(), |script| script.name.clone()),
                     detail: script.and_then(|script| script.description.clone()),
                     runner: Runner::Script,
-                    action: None,
+                    action,
                     id: Some(id.clone()),
+                    enabled,
                 }
             }
         });
@@ -234,20 +247,10 @@ fn steps(ui: &Ui, mode: &DictationMode, order: &[String]) -> Vec<Step> {
     steps
 }
 
-/// Whether the ordering shows this step while its settings stand. AI cleanup
-/// disappears while its switch is off.
-fn shows(ui: &Ui, id: &str) -> bool {
-    id != crate::dictation::ai_rewrite::TRANSFORMATION_ID || ui.settings.ai_cleanup.enabled
-}
-
-/// The slots of the rows [steps] shows, in `order`.
-fn transformation_slots(ui: &Ui, order: &[String]) -> Vec<usize> {
-    order
-        .iter()
-        .enumerate()
-        .filter(|(_, id)| shows(ui, id))
-        .map(|(slot, _)| slot)
-        .collect()
+/// The slots of the rows [steps] draws, in `order`. Every step has a row now
+/// that its number toggles it, so this is the whole list.
+fn transformation_slots(order: &[String]) -> Vec<usize> {
+    (0..order.len()).collect()
 }
 
 /// A built-in transformation's name and what it does.
@@ -276,6 +279,9 @@ fn preview(mode: &DictationMode, wrap_code: bool, input: &str) -> String {
     pairs.extend(mode.replacements.iter().cloned());
     let mut output = ReplacementSet::new(&pairs).replace(input);
     for id in &mode.transformations {
+        if mode.skipped.contains(id) {
+            continue;
+        }
         if let Some(next) = crate::personal_commands::apply_builtin_transformation(id, &output) {
             output = next;
         }
@@ -539,9 +545,19 @@ fn step_row(p: Paint, key: &str, index: usize, step: &Step, held: bool, draggabl
         );
     if draggable && let Some(id) = &step.id {
         let dragged = id.clone();
-        badge = badge.role("button").label(tr("Reorder")).on_drag(
-            move |ui: &mut Ui, d: &mut Drag, _: &mut Tx| drag_output_step(ui, &dragged, d),
-        );
+        let cursor = if held {
+            rune::Cursor::Grabbing
+        } else {
+            rune::Cursor::Grab
+        };
+        badge = badge
+            .role("button")
+            .label(tr("Reorder"))
+            .cursor(cursor)
+            .press_scale(1.15)
+            .on_drag(move |ui: &mut Ui, d: &mut Drag, _: &mut Tx| {
+                drag_output_step(ui, &dragged, d)
+            });
         if held {
             badge = badge.fill(c.layer_03);
         }
@@ -551,15 +567,33 @@ fn step_row(p: Paint, key: &str, index: usize, step: &Step, held: bool, draggabl
         Runner::Script => tone_tag(p, "runner", "JS", Tone::Accent),
         Runner::Rewrite => tone_tag(p, "runner", "AI", Tone::Accent),
     };
-    row()
+    let mut row = row()
         .key(key)
         .min_h(METRICS.row_h_described)
         .px(METRICS.row_px)
         .py(8.0)
         .gap(12.0)
         .center_y()
-        .label(step.title.clone())
-        .child(badge)
+        .label(step.title.clone());
+    // A switched-off step dims but keeps its row: its number turns it back
+    // on, and the dictation skips it until then.
+    if !step.enabled {
+        row = row.layer_opacity(0.5);
+    }
+    // Held, the row lifts: it scales up a little and takes a shadow, the way
+    // a folder pops when a desktop drag starts.
+    if held {
+        row = row
+            .scale(1.02)
+            .scale_motion(p.k.motion.control)
+            .box_shadow(rune::Shadow {
+                y: 6.0,
+                blur: 18.0,
+                color: c.scrim,
+                ..rune::Shadow::default()
+            });
+    }
+    row.child(badge)
         .child(
             col()
                 .key("copy")
@@ -570,7 +604,7 @@ fn step_row(p: Paint, key: &str, index: usize, step: &Step, held: bool, draggabl
                     text(step.title.clone())
                         .key("title")
                         .font(p.k.ty.ui)
-                        .color(p.text()),
+                        .color(if step.enabled { p.text() } else { p.muted() }),
                 )
                 .children(step.detail.as_ref().map(|detail| {
                     text(detail.clone())
@@ -580,6 +614,7 @@ fn step_row(p: Paint, key: &str, index: usize, step: &Step, held: bool, draggabl
                         .wrap()
                 })),
         )
+        .children((!step.enabled).then(|| tone_tag(p, "off", tr("Off"), Tone::Neutral)))
         .child(tag)
         .children(step.action.map(|action| match action {
             StepAction::Vocabulary => button(
@@ -591,6 +626,13 @@ fn step_row(p: Paint, key: &str, index: usize, step: &Step, held: bool, draggabl
                     ui.pane = super::Pane::General;
                     super::vocabulary::open(ui);
                 },
+            ),
+            StepAction::CleanupPrompt => button(
+                p,
+                "output-ai-cleanup-prompt",
+                tr("Edit"),
+                ButtonKind::Secondary,
+                |ui: &mut Ui, _: &mut Tx| super::ai_models::open_cleanup_prompt(ui),
             ),
         }))
 }
@@ -607,7 +649,7 @@ fn drag_output_step(ui: &mut Ui, id: &str, d: &Drag) {
                 .default_mode
                 .transformations
                 .clone();
-            let slots = transformation_slots(ui, &committed);
+            let slots = transformation_slots(&committed);
             let Some(start) = slots.iter().position(|&slot| committed[slot] == id) else {
                 return;
             };
@@ -619,15 +661,45 @@ fn drag_output_step(ui: &mut Ui, id: &str, d: &Drag) {
             }
         }
         Phase::Up => {
-            if let Some(drag) = ui.output.drag.take()
-                && let Some(order) = drag.finish(d.cancelled())
-            {
-                ui.update(|settings| {
-                    settings.dictation_processing.default_mode.transformations = order;
-                });
+            // A press that never moved is a click, and the number is the
+            // step's switch: it turns the step off or back on. A real drag
+            // saves the order it settled on.
+            let moved = d.dx.hypot(d.dy) >= 4.0;
+            let drag = ui.output.drag.take();
+            if d.cancelled() || moved {
+                if let Some(drag) = drag
+                    && let Some(order) = drag.finish(d.cancelled())
+                {
+                    ui.update(|settings| {
+                        settings.dictation_processing.default_mode.transformations = order;
+                    });
+                }
+            } else {
+                toggle_output_step(ui, id);
             }
         }
     }
+}
+
+/// Turns one of the Global mode's steps off or back on. AI cleanup's number
+/// flips its own switch, the one setting that turns that step on in every
+/// pipeline; any other step joins the mode's skip list, which keeps its
+/// place in `transformations`.
+fn toggle_output_step(ui: &mut Ui, id: &str) {
+    if id == crate::dictation::ai_rewrite::TRANSFORMATION_ID {
+        ui.update(|settings| settings.ai_cleanup.enabled = !settings.ai_cleanup.enabled);
+        return;
+    }
+    let id = id.to_string();
+    ui.update(|settings| {
+        let mode = &mut settings.dictation_processing.default_mode;
+        match mode.skipped.iter().position(|skipped| skipped == &id) {
+            Some(index) => {
+                mode.skipped.remove(index);
+            }
+            None => mode.skipped.push(id.clone()),
+        }
+    });
 }
 
 /// Labs › Transform typed text: a shortcut that runs the focused app's
@@ -1035,7 +1107,7 @@ mod tests {
     use crate::app_settings::AppSettings;
 
     #[test]
-    fn the_output_hides_ai_cleanup_when_the_switch_is_off() {
+    fn the_output_keeps_a_switched_off_step_visible_and_dimmed() {
         let mut ui = Ui::with(AppSettings::default(), Service::Fixture(Vec::new()));
         let mode = DictationMode {
             transformations: vec![
@@ -1044,22 +1116,70 @@ mod tests {
             ],
             ..DictationMode::default()
         };
-        let titles = |ui: &Ui| {
+        let rows = |ui: &Ui| {
             steps(ui, &mode, &mode.transformations)
                 .into_iter()
-                .map(|step| step.title)
+                .filter(|step| step.id.is_some())
+                .map(|step| (step.title, step.enabled))
                 .collect::<Vec<_>>()
         };
-        assert!(
-            titles(&ui).iter().any(|title| title == "AI cleanup"),
-            "the step shows while the switch is on"
+        assert_eq!(
+            rows(&ui),
+            [
+                ("Lowercase".to_string(), true),
+                ("AI cleanup".to_string(), true)
+            ]
         );
         ui.settings.ai_cleanup.enabled = false;
-        assert!(
-            !titles(&ui).iter().any(|title| title == "AI cleanup"),
-            "the step is gone while the switch is off"
+        assert_eq!(
+            rows(&ui),
+            [
+                ("Lowercase".to_string(), true),
+                ("AI cleanup".to_string(), false)
+            ],
+            "the row stays so its number can turn it back on"
         );
-        assert!(titles(&ui).iter().any(|title| title == "Lowercase"));
+    }
+
+    #[test]
+    fn a_press_on_a_number_toggles_a_step_and_keeps_its_place() {
+        let mut ui = Ui::with(AppSettings::default(), Service::Fixture(Vec::new()));
+        ui.settings
+            .dictation_processing
+            .default_mode
+            .transformations = vec!["one".into(), "two".into(), "three".into()];
+        toggle_output_step(&mut ui, "two");
+        let mode = &ui.settings.dictation_processing.default_mode;
+        assert_eq!(mode.skipped, ["two"]);
+        assert_eq!(mode.transformations, ["one", "two", "three"]);
+        toggle_output_step(&mut ui, "two");
+        assert!(
+            ui.settings
+                .dictation_processing
+                .default_mode
+                .skipped
+                .is_empty()
+        );
+        assert_eq!(
+            ui.settings
+                .dictation_processing
+                .default_mode
+                .transformations,
+            ["one", "two", "three"]
+        );
+
+        toggle_output_step(&mut ui, crate::dictation::ai_rewrite::TRANSFORMATION_ID);
+        assert!(!ui.settings.ai_cleanup.enabled);
+        toggle_output_step(&mut ui, crate::dictation::ai_rewrite::TRANSFORMATION_ID);
+        assert!(ui.settings.ai_cleanup.enabled);
+        assert!(
+            ui.settings
+                .dictation_processing
+                .default_mode
+                .skipped
+                .is_empty(),
+            "AI cleanup flips its own switch, not the skip list"
+        );
     }
 
     #[test]
@@ -1080,7 +1200,7 @@ mod tests {
             .default_mode
             .transformations
             .clone();
-        let slots = transformation_slots(&ui, &committed);
+        let slots = transformation_slots(&committed);
         assert_eq!(slots, [0, 1, 2, 3]);
 
         // Drag the last number two rows up: it lands above the model step,
@@ -1105,19 +1225,19 @@ mod tests {
             ])
         );
 
-        // With cleanup off, its row is hidden but keeps slot 1 while the
-        // visible rows trade places around it.
+        // A switched-off step keeps its slot and its row: the visible rows
+        // still trade places around it.
         ui.settings.ai_cleanup.enabled = false;
-        let slots = transformation_slots(&ui, &committed);
-        assert_eq!(slots, [0, 2, 3]);
-        let mut drag = OrderDrag::begin("three", 2, slots, committed);
-        drag.preview(-1);
+        let slots = transformation_slots(&committed);
+        assert_eq!(slots, [0, 1, 2, 3]);
+        let mut drag = OrderDrag::begin("three", 3, slots, committed);
+        drag.preview(-2);
         assert_eq!(
             drag.finish(false),
             Some(vec![
                 "one".to_string(),
-                "ai-rewrite".into(),
                 "three".into(),
+                "ai-rewrite".into(),
                 "two".into()
             ])
         );
