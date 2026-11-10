@@ -15,6 +15,16 @@ pub(super) fn table() -> &'static HashMap<&'static str, &'static str> {
 
 #[rustfmt::skip]
 const TRANSLATIONS: &[(&str, &str)] = &[
+    ("AI cleanup prompt", "Invite de nettoyage IA"),
+    ("Describe how AI cleanup should fix the dictation…", "Décrivez comment le nettoyage IA doit corriger la dictée…"),
+    ("Fix grammar, punctuation and paragraphs with a model", "Corriger la grammaire, la ponctuation et les paragraphes avec un modèle"),
+    ("Off: each dictation is pasted as transcribed, with no model step.", "Désactivé : chaque dictée est collée telle que transcrite, sans étape de modèle."),
+    ("Prompt", "Invite"),
+    ("Runs on the local model server when it is running.", "S'exécute sur le serveur de modèle local lorsqu'il est en marche."),
+    ("Runs on the local model server.", "S'exécute sur le serveur de modèle local."),
+    ("Runs on the remote endpoint Dictation names.", "S'exécute sur le point de terminaison distant indiqué par Dictée."),
+    ("The instruction the model follows", "L'instruction que suit le modèle"),
+    ("The instruction the model follows for every dictation. Leave it empty to use the shipped wording.", "L'instruction que suit le modèle pour chaque dictée. Laissez vide pour utiliser le texte fourni."),
     ("Hex picks a fast model", "Hex choisit un modèle rapide"),
     ("Follow live transcript", "Suivre la transcription en direct"),
     ("More call apps", "Plus d'apps d'appel"),

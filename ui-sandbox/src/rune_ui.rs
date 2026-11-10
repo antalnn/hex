@@ -10,6 +10,7 @@ use crate::desktop::host::{
 };
 use crate::desktop::i18n::tr;
 
+mod ai_models;
 pub(crate) mod controls;
 mod explainer;
 mod general;
@@ -17,6 +18,7 @@ mod icons;
 mod labs;
 mod list_detail;
 mod lists;
+mod local_models;
 mod model_import;
 mod onboarding;
 mod picker;
@@ -37,16 +39,25 @@ use platform::{Capabilities, Os, PlatformRequest, PlatformState};
 pub(crate) use rune::ScrollSpec;
 use settings::Capture;
 
-/// One pane of the window. The sandbox carries General only.
+/// One pane of the window. The sandbox carries General and the Models cards.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum Pane {
     General,
+    Models,
 }
 
 impl Pane {
     pub(crate) fn title(self) -> &'static str {
         match self {
             Self::General => tr("General"),
+            Self::Models => tr("Models"),
+        }
+    }
+
+    pub(crate) fn key(self) -> &'static str {
+        match self {
+            Self::General => "nav-general",
+            Self::Models => "nav-models",
         }
     }
 }
@@ -97,11 +108,13 @@ pub(crate) struct ServiceView {
     pub(crate) listener: DesktopListenerSnapshot,
     pub(crate) transcription: DesktopTranscriptionSnapshot,
     pub(crate) update_status: DesktopUpdateStatus,
+    pub(crate) local_model: Option<crate::local_model::Snapshot>,
 }
 
 /// The sandbox's whole window state.
 pub(crate) struct Ui {
     pub(crate) settings: AppSettings,
+    pub(crate) model_sources: ai_models::ModelSources,
     service: Service,
     pub(crate) window: Option<rune::AppHandle<Ui>>,
     pub(crate) view: Option<ServiceView>,
@@ -138,8 +151,10 @@ impl Ui {
     }
 
     pub(crate) fn with(settings: AppSettings, service: Service) -> Self {
+        let model_sources = ai_models::ModelSources::new(&settings);
         Self {
             settings,
+            model_sources,
             service,
             window: None,
             view: None,
@@ -177,9 +192,21 @@ impl Ui {
     pub(crate) fn update(&mut self, change: impl FnOnce(&mut AppSettings)) -> bool {
         let mut candidate = self.settings.clone();
         change(&mut candidate);
+        self.model_sources.project(&mut candidate);
         self.settings = candidate;
         self.saved += 1;
         true
+    }
+
+    /// Writes the typed Models fields into the settings, as the app's draft
+    /// flush does.
+    pub(crate) fn flush_drafts(&mut self) {
+        let mut candidate = self.settings.clone();
+        self.model_sources.project(&mut candidate);
+        if candidate != self.settings {
+            self.settings = candidate;
+            self.saved += 1;
+        }
     }
 
     /// Asks the OS host for something only it can do.
@@ -239,7 +266,33 @@ fn managed_note() -> &'static str {
 pub(crate) fn view(ui: &Ui, cx: &mut Cx<Ui>) -> El {
     let p = Paint::new(cx.system_dark(), cx.env().scale);
     let mut layer = Vec::new();
-    let body = general::pane(ui, p, &mut layer);
+    let body = match ui.pane {
+        Pane::General => general::pane(ui, p, &mut layer),
+        Pane::Models => {
+            let (mut extra, body) = ai_models::pane(ui, p, &mut layer);
+            layer.append(&mut extra);
+            if let Some(modal) = ai_models::cleanup_modal(ui, p) {
+                layer.extend(modal);
+            }
+            if let Some(modal) = ai_models::prompts_modal(ui, p) {
+                layer.extend(modal);
+            }
+            body
+        }
+    };
+    let switch = controls::segmented(
+        p,
+        "sandbox-pane",
+        &[tr("General"), tr("Models")],
+        usize::from(ui.pane == Pane::Models),
+        |ui: &mut Ui, index| {
+            ui.pane = if index == 0 {
+                Pane::General
+            } else {
+                Pane::Models
+            };
+        },
+    );
     let panel = col()
         .key("panel")
         .role("main")
@@ -259,12 +312,15 @@ pub(crate) fn view(ui: &Ui, cx: &mut Cx<Ui>) -> El {
                 .h(52.0)
                 .px(controls::METRICS.gutter)
                 .center_y()
+                .gap(12.0)
                 .child(
-                    text(tr("General"))
+                    text(ui.pane.title())
                         .key("pane-title")
                         .role("heading")
                         .font(p.k.ty.body_medium),
-                ),
+                )
+                .child(rune::el().key("spacer").grow(1.0))
+                .child(switch),
         )
         .child(body);
     let _ = &mut layer;
@@ -273,8 +329,8 @@ pub(crate) fn view(ui: &Ui, cx: &mut Cx<Ui>) -> El {
         .role("none")
         .fill(p.k.c.bg_deep)
         .size(980.0, 760.0)
-        .children(layer)
         .child(panel)
+        .children(layer)
 }
 
 const SCROLL_FADE: (f32, f32) = (4.0, 24.0);

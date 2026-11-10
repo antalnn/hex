@@ -10,3 +10,7 @@ pub(crate) struct SoundSets {
 pub(super) fn open(ui: &mut Ui) {
     ui.sound_sets.open = true;
 }
+
+pub(super) fn close(ui: &mut Ui) {
+    ui.sound_sets.open = false;
+}

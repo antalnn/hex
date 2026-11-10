@@ -146,6 +146,47 @@ fn general_reads_the_hardware_then_the_keys_then_the_rest() {
     );
 }
 
+/// `HEX_SANDBOX_SNAPS=<folder>` writes the Models pane's AI cleanup card,
+/// light and dark, with the prompt sheet closed and open.
+#[test]
+#[cfg(target_os = "windows")]
+fn models_pane_snapshots() {
+    let Some(folder) = std::env::var_os("HEX_SANDBOX_SNAPS") else {
+        return;
+    };
+    let folder = std::path::PathBuf::from(folder);
+    std::fs::create_dir_all(&folder).unwrap();
+    let Ok(gpu) = rune::render::Gpu::try_new(rune::render::Gpu::instance(), None) else {
+        eprintln!("skipping Models snapshots: no GPU adapter");
+        return;
+    };
+    let size = (980.0, 1500.0);
+    let scale = 2.0;
+    for (label, prompt_open) in [("ai-cleanup", false), ("ai-cleanup-prompt", true)] {
+        for dark in [false, true] {
+            let state = Ui::with(AppSettings::default(), Service::Fixture(Vec::new()));
+            let env = Env {
+                system_dark: dark,
+                scale,
+            };
+            let text = TextSystem::new(rune_theme_opencode::FONTS, rune_theme_opencode::FAMILIES);
+            let mut rt = Runtime::with_text(state, view, size, env, text);
+            rt.set_srgb_blend(true);
+            rt.poll = Some(Ui::poll);
+            rt.on_key = Some(Ui::on_key);
+            rt.state.pane = Pane::Models;
+            rt.state.model_sources.cleanup_open = prompt_open;
+            let width = (size.0 * scale) as u32;
+            let height = (size.1 * scale) as u32;
+            let pixels = crate::rune_ui::offscreen::draw(&gpu, &mut rt, width, height);
+            let theme = if dark { "dark" } else { "light" };
+            let path = folder.join(format!("models-{label}-{theme}.png"));
+            rune::render::write_png(&path, width, height, &pixels).unwrap();
+            println!("wrote {}", path.display());
+        }
+    }
+}
+
 /// `HEX_SANDBOX_SNAPS=<folder>` writes the General pane with its Advanced
 /// cards open, light and dark, tall enough to show the changed rows.
 #[test]

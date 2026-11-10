@@ -303,6 +303,112 @@ pub struct DictationProcessing {
     pub wrap_code_terms: bool,
 }
 
+/// The local model server (`llm`), fixture only.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct LlmSettings {
+    pub port: u16,
+}
+
+impl Default for LlmSettings {
+    fn default() -> Self {
+        Self { port: 8081 }
+    }
+}
+
+/// Which endpoint a model call uses.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum AiSource {
+    #[default]
+    Local,
+    Remote,
+}
+
+/// A remote model call.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct RemoteModel {
+    pub endpoint: String,
+    pub model: String,
+    pub api_key: String,
+}
+
+impl RemoteModel {
+    pub fn missing(&self) -> Option<&'static str> {
+        let endpoint = self.endpoint.trim();
+        if endpoint.is_empty() {
+            return Some("the remote endpoint address is empty");
+        }
+        if !(endpoint.starts_with("http://") || endpoint.starts_with("https://")) {
+            return Some("the remote endpoint address must start with http:// or https://");
+        }
+        if self.model.trim().is_empty() {
+            return Some("the remote model name is empty");
+        }
+        None
+    }
+}
+
+/// One feature's model call.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct ModelSource {
+    pub source: AiSource,
+    pub remote: RemoteModel,
+}
+
+impl ModelSource {
+    pub fn missing(&self) -> Option<&'static str> {
+        if self.source == AiSource::Remote {
+            self.remote.missing()
+        } else {
+            None
+        }
+    }
+}
+
+/// One named instruction Rewrite selection can use.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct RewriteSnippet {
+    pub name: String,
+    pub prompt: String,
+}
+
+/// Rewrite selection's settings.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct RewriteSettings {
+    pub remote: RemoteModel,
+    pub snippets: Vec<RewriteSnippet>,
+    pub default_prompt: String,
+}
+
+/// AI cleanup's settings; the shipped wording is a fixture stand-in.
+pub const CLEANUP_PROMPT: &str =
+    "Clean up dictated speech: fix grammar, punctuation and paragraphs.";
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct AiCleanupSettings {
+    pub enabled: bool,
+    pub prompt: String,
+}
+
+impl Default for AiCleanupSettings {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            prompt: CLEANUP_PROMPT.into(),
+        }
+    }
+}
+
+impl AiCleanupSettings {
+    pub fn instruction(&self) -> &str {
+        let saved = self.prompt.trim();
+        if saved.is_empty() {
+            CLEANUP_PROMPT
+        } else {
+            saved
+        }
+    }
+}
+
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct CaptureSettings {
     pub enabled: bool,
@@ -327,6 +433,10 @@ pub struct AppSettings {
     pub transcription_device: TranscriptionDevice,
     pub keyboard_model_switching: KeyboardModelSwitching,
     pub dictation_processing: DictationProcessing,
+    pub llm: LlmSettings,
+    pub dictation_rewrite: ModelSource,
+    pub rewrite: RewriteSettings,
+    pub ai_cleanup: AiCleanupSettings,
     pub recording_audio_behavior: RecordingAudioBehavior,
     pub recording_duck_volume: f32,
     pub indicator_position: IndicatorPosition,
@@ -365,6 +475,10 @@ impl Default for AppSettings {
             transcription_device: TranscriptionDevice::Auto,
             keyboard_model_switching: KeyboardModelSwitching::default(),
             dictation_processing: DictationProcessing::default(),
+            llm: LlmSettings::default(),
+            dictation_rewrite: ModelSource::default(),
+            rewrite: RewriteSettings::default(),
+            ai_cleanup: AiCleanupSettings::default(),
             recording_audio_behavior: RecordingAudioBehavior::default(),
             recording_duck_volume: 0.25,
             indicator_position: IndicatorPosition::default(),

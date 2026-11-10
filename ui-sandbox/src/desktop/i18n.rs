@@ -353,6 +353,18 @@ pub(super) fn all_translations() -> impl Iterator<Item = &'static (&'static str,
 #[rustfmt::skip]
 const TRANSLATIONS: &[(&str, [&str; 6])] = &[
     ("Hex picks a fast model", ["Hex wybiera szybki model", "由 Hex 选择快速模型", "Hex が高速なモデルを選ぶ", "Hex wählt ein schnelles Modell", "Hex elige un modelo rápido", "Hex вибирає швидку модель"]),
+    // The Models pane's AI cleanup card. The sandbox fixture uses English in
+    // every column; the app's four tables get their own rows on import.
+    ("AI cleanup prompt", ["AI cleanup prompt", "AI cleanup prompt", "AI cleanup prompt", "AI cleanup prompt", "AI cleanup prompt", "AI cleanup prompt"]),
+    ("Describe how AI cleanup should fix the dictation…", ["Describe how AI cleanup should fix the dictation…", "Describe how AI cleanup should fix the dictation…", "Describe how AI cleanup should fix the dictation…", "Describe how AI cleanup should fix the dictation…", "Describe how AI cleanup should fix the dictation…", "Describe how AI cleanup should fix the dictation…"]),
+    ("Fix grammar, punctuation and paragraphs with a model", ["Fix grammar, punctuation and paragraphs with a model", "Fix grammar, punctuation and paragraphs with a model", "Fix grammar, punctuation and paragraphs with a model", "Fix grammar, punctuation and paragraphs with a model", "Fix grammar, punctuation and paragraphs with a model", "Fix grammar, punctuation and paragraphs with a model"]),
+    ("Off: each dictation is pasted as transcribed, with no model step.", ["Off: each dictation is pasted as transcribed, with no model step.", "Off: each dictation is pasted as transcribed, with no model step.", "Off: each dictation is pasted as transcribed, with no model step.", "Off: each dictation is pasted as transcribed, with no model step.", "Off: each dictation is pasted as transcribed, with no model step.", "Off: each dictation is pasted as transcribed, with no model step."]),
+    ("Prompt", ["Prompt", "Prompt", "Prompt", "Prompt", "Prompt", "Prompt"]),
+    ("Runs on the local model server when it is running.", ["Runs on the local model server when it is running.", "Runs on the local model server when it is running.", "Runs on the local model server when it is running.", "Runs on the local model server when it is running.", "Runs on the local model server when it is running.", "Runs on the local model server when it is running."]),
+    ("Runs on the local model server.", ["Runs on the local model server.", "Runs on the local model server.", "Runs on the local model server.", "Runs on the local model server.", "Runs on the local model server.", "Runs on the local model server."]),
+    ("Runs on the remote endpoint Dictation names.", ["Runs on the remote endpoint Dictation names.", "Runs on the remote endpoint Dictation names.", "Runs on the remote endpoint Dictation names.", "Runs on the remote endpoint Dictation names.", "Runs on the remote endpoint Dictation names.", "Runs on the remote endpoint Dictation names."]),
+    ("The instruction the model follows", ["The instruction the model follows", "The instruction the model follows", "The instruction the model follows", "The instruction the model follows", "The instruction the model follows", "The instruction the model follows"]),
+    ("The instruction the model follows for every dictation. Leave it empty to use the shipped wording.", ["The instruction the model follows for every dictation. Leave it empty to use the shipped wording.", "The instruction the model follows for every dictation. Leave it empty to use the shipped wording.", "The instruction the model follows for every dictation. Leave it empty to use the shipped wording.", "The instruction the model follows for every dictation. Leave it empty to use the shipped wording.", "The instruction the model follows for every dictation. Leave it empty to use the shipped wording.", "The instruction the model follows for every dictation. Leave it empty to use the shipped wording."]),
     ("Summary models show once Hex connects to OpenCode.", ["Modele podsumowań pojawią się, gdy Hex połączy się z OpenCode.", "Hex 连接到 OpenCode 后会显示摘要模型。", "Hex が OpenCode に接続すると要約モデルが表示されます。", "Modelle für Zusammenfassungen erscheinen, sobald Hex mit OpenCode verbunden ist.", "Los modelos de resumen aparecen cuando Hex se conecta a OpenCode.", "Моделі для підсумків з'являться, щойно Hex під'єднається до OpenCode."]),
     ("Start OpenCode to choose a summary model. Hex keeps the saved one.", ["Uruchom OpenCode, aby wybrać model podsumowań. Hex zachowuje zapisany.", "启动 OpenCode 以选择摘要模型。Hex 会保留已保存的模型。", "要約モデルを選ぶには OpenCode を起動してください。保存済みのモデルはそのまま残ります。", "Starte OpenCode, um ein Modell für Zusammenfassungen zu wählen. Hex behält das gespeicherte.", "Inicia OpenCode para elegir un modelo de resumen. Hex conserva el guardado.", "Запустіть OpenCode, щоб вибрати модель для підсумків. Hex зберігає збережену."]),
     ("Your answer", ["Twoja odpowiedź", "你的回答", "あなたの回答", "Deine Antwort", "Tu respuesta", "Ваша відповідь"]),
@@ -1723,6 +1735,7 @@ mod tests {
     /// fixture modules around them.
     const SOURCES: &[&str] = &[
         include_str!("../rune_ui.rs"),
+        include_str!("../rune_ui/ai_models.rs"),
         include_str!("../rune_ui/controls.rs"),
         include_str!("../rune_ui/explainer.rs"),
         include_str!("../rune_ui/general.rs"),
@@ -1793,7 +1806,7 @@ mod tests {
                 checked += 1;
             }
         }
-        assert!(checked > 150, "only {checked} translated strings found");
+        assert!(checked >= 229, "only {checked} translated strings found");
     }
 
     /// The sound picker translates each set's name and character and each

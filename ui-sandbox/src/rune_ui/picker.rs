@@ -23,6 +23,10 @@ pub(super) fn open(ui: &mut Ui) {
     ui.picker.open = true;
 }
 
+pub(super) fn close(ui: &mut Ui) {
+    ui.picker.open = false;
+}
+
 pub(super) fn fallback_note(_ui: &Ui) -> Option<String> {
     None
 }

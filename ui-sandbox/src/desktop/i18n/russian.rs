@@ -15,6 +15,16 @@ pub(super) fn table() -> &'static HashMap<&'static str, &'static str> {
 
 #[rustfmt::skip]
 const TRANSLATIONS: &[(&str, &str)] = &[
+    ("AI cleanup prompt", "Инструкция ИИ-очистки"),
+    ("Describe how AI cleanup should fix the dictation…", "Опишите, как ИИ-очистка должна исправлять диктовку…"),
+    ("Fix grammar, punctuation and paragraphs with a model", "Исправлять грамматику, пунктуацию и абзацы с помощью модели"),
+    ("Off: each dictation is pasted as transcribed, with no model step.", "Выключено: каждая диктовка вставляется как расшифрована, без шага модели."),
+    ("Prompt", "Инструкция"),
+    ("Runs on the local model server when it is running.", "Работает на локальном сервере модели, когда он запущен."),
+    ("Runs on the local model server.", "Работает на локальном сервере модели."),
+    ("Runs on the remote endpoint Dictation names.", "Работает на удалённой точке доступа, указанной в «Диктовке»."),
+    ("The instruction the model follows", "Инструкция, которой следует модель"),
+    ("The instruction the model follows for every dictation. Leave it empty to use the shipped wording.", "Инструкция, которой следует модель для каждой диктовки. Оставьте пустой, чтобы использовать встроенный текст."),
     ("Hex picks a fast model", "Hex выбирает быструю модель"),
     ("Follow live transcript", "Следить за расшифровкой в реальном времени"),
     ("More call apps", "Больше приложений для звонков"),

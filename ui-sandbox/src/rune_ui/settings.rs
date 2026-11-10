@@ -337,3 +337,7 @@ pub(super) fn record_button(p: Paint, key: &'static str, target: ShortcutTarget)
 pub(super) fn portal_shortcuts(ui: &Ui) -> Option<DesktopShortcuts> {
     ui.shortcuts()
 }
+
+/// A sheet opened over a shortcut capture closes it first; the sandbox has no
+/// capture, so there is nothing to cancel.
+pub(super) fn cancel_capture(_ui: &mut Ui) {}

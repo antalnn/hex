@@ -10,3 +10,7 @@ pub(crate) struct Explainer {
 pub(super) fn open(ui: &mut Ui) {
     ui.explainer.open = true;
 }
+
+pub(super) fn close(ui: &mut Ui) {
+    ui.explainer.open = false;
+}
