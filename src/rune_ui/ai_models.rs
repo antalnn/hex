@@ -67,11 +67,14 @@ struct SnippetRow {
     prompt: TextEdit,
 }
 
-/// The pane's typed state: both features' remote fields, and the Rewrite
-/// prompts sheet's contents.
+/// The pane's typed state: both features' remote fields, the AI cleanup
+/// switch's source, and the Rewrite prompts sheet's contents.
 #[derive(Default)]
 pub(super) struct ModelSources {
     dictation: SourceFields,
+    /// The AI cleanup card's Local or Remote choice. A projection like the
+    /// fields, so a publish from before the save cannot flip it back.
+    pub(super) dictation_source: AiSource,
     rewrite: SourceFields,
     default_prompt: TextEdit,
     snippets: Vec<SnippetRow>,
@@ -80,7 +83,7 @@ pub(super) struct ModelSources {
     detached: TextEdit,
     pub(super) prompts_open: bool,
     /// The AI cleanup prompt sheet and its text.
-    cleanup_prompt: TextEdit,
+    pub(super) cleanup_prompt: TextEdit,
     /// The AI cleanup deadline's seconds, edited in the card.
     cleanup_deadline: TextEdit,
     pub(super) cleanup_open: bool,
@@ -96,6 +99,7 @@ impl ModelSources {
     /// Rebuilds the fields from `settings`.
     pub(super) fn reload(&mut self, settings: &AppSettings) {
         self.dictation = SourceFields::new(&settings.dictation_rewrite.remote);
+        self.dictation_source = settings.dictation_rewrite.source;
         self.rewrite = SourceFields::new(&settings.rewrite.remote);
         self.default_prompt = TextEdit::new(settings.rewrite.default_prompt.clone());
         self.cleanup_prompt = TextEdit::new(settings.ai_cleanup.prompt.clone());
@@ -126,6 +130,7 @@ impl ModelSources {
     pub(super) fn project(&self, settings: &mut AppSettings) {
         self.dictation
             .project(&mut settings.dictation_rewrite.remote);
+        settings.dictation_rewrite.source = self.dictation_source;
         self.rewrite.project(&mut settings.rewrite.remote);
         settings.rewrite.default_prompt = self.default_prompt.text.trim().to_string();
         settings.ai_cleanup.prompt = self.cleanup_prompt.text.trim().to_string();
@@ -133,9 +138,10 @@ impl ModelSources {
             .cleanup_deadline
             .text
             .trim()
-            .parse::<u64>()
-            .unwrap_or(settings.ai_cleanup.deadline_seconds)
-            .max(1);
+            .parse::<i64>()
+            .map_or(settings.ai_cleanup.deadline_seconds, |seconds| {
+                seconds.clamp(1, 3600) as u64
+            });
         settings.rewrite.snippets = self
             .snippets
             .iter()
@@ -150,6 +156,20 @@ impl ModelSources {
                 })
             })
             .collect();
+    }
+
+    /// Rewrites the deadline field when what was typed is outside the saved
+    /// range, so "-1" and "0" become the one second they were saved as
+    /// instead of sitting there looking accepted. Text that is not a number
+    /// keeps the old value and is left alone while it is typed.
+    pub(super) fn settle_cleanup(&mut self, saved: u64) {
+        let typed = self.cleanup_deadline.text.trim();
+        if typed
+            .parse::<i64>()
+            .is_ok_and(|seconds| seconds != saved as i64)
+        {
+            self.cleanup_deadline = TextEdit::new(saved.to_string());
+        }
     }
 
     fn field(&mut self, id: u64, prompt: bool) -> &mut TextEdit {
@@ -244,11 +264,15 @@ fn remove_snippet(ui: &mut Ui, id: u64) {
 // The pane
 
 pub(super) fn pane(ui: &Ui, p: Paint, layer: &mut Vec<El>) -> (Vec<El>, El) {
-    let content = page("content")
+    let mut content = page("content")
         .child(dictation_card(ui, p, layer))
         .child(rewrite_card(ui, p))
-        .child(ai_cleanup_card(ui, p))
-        .child(local_model_card(ui, p));
+        .child(ai_cleanup_card(ui, p));
+    // The server's card is about the Local choice; with Remote selected it
+    // has nothing to serve and its controls are not on the page.
+    if ui.model_sources.dictation_source == AiSource::Local {
+        content = content.child(local_model_card(ui, p));
+    }
     (
         Vec::new(),
         super::scroll_body(p.k, "models-scroll", content),
@@ -259,7 +283,7 @@ pub(super) fn pane(ui: &Ui, p: Paint, layer: &mut Vec<El>) -> (Vec<El>, El) {
 /// owns, or Remote on the endpoint the fields below name.
 fn ai_cleanup_card(ui: &Ui, p: Paint) -> El {
     let enabled = ui.settings.ai_cleanup.enabled;
-    let source = ui.settings.dictation_rewrite.source;
+    let source = ui.model_sources.dictation_source;
     let local = source == AiSource::Local;
     let snapshot = ui.view.as_ref().and_then(|view| view.local_model.as_ref());
     let (state, start) = local_model_copy(snapshot.map(|snapshot| snapshot.state));
@@ -303,19 +327,17 @@ fn ai_cleanup_card(ui: &Ui, p: Paint) -> El {
         setting_row(
             p,
             "ai-cleanup-deadline",
-            tr("Deadline"),
+            tr("Clean up deadline/timeout"),
             Some(tr("Seconds")),
             TextInput::new(&ui.model_sources.cleanup_deadline)
-                .label(tr("Deadline"))
+                .label(tr("Clean up deadline/timeout"))
                 .placeholder("20")
                 .width(Some(96.0))
                 .on_edit(|ui: &mut Ui| &mut ui.model_sources.cleanup_deadline)
                 .build(p.k)
                 .key("ai-cleanup-deadline-field"),
         ),
-        source_row(p, "ai-cleanup", source, |ui: &mut Ui, source| {
-            ui.update(|settings| settings.dictation_rewrite.source = source);
-        }),
+        source_row(p, "ai-cleanup", source, set_dictation_source),
     ];
     if local {
         rows.push(toggle_row(
@@ -465,6 +487,14 @@ fn rewrite_card(ui: &Ui, p: Paint) -> El {
     }
     rows.push(prompts_row(ui, p));
     super::controls::section(p, "rewrite-model", tr("Rewrite selection"), rows)
+}
+
+/// Sets the AI cleanup card's Run on choice and saves at once. The choice is
+/// a projection beside the endpoint fields, so a host publish carrying the
+/// pre-save copy cannot flip it back before the save lands.
+pub(super) fn set_dictation_source(ui: &mut Ui, source: AiSource) {
+    ui.model_sources.dictation_source = source;
+    ui.flush_drafts();
 }
 
 /// The `Local | Remote` control, which saves as soon as it is pressed.
@@ -790,9 +820,7 @@ pub(super) fn cleanup_modal(ui: &Ui, p: Paint) -> Option<[El; 2]> {
         .child(heading)
         .child(note(
             "ai-cleanup-model-limit",
-            tr(
-                "Results depend on the local model you installed and how large it is. A small model made only for cleaning up English cannot be expected to reliably fix grammar, false starts or abandoned clauses, and it loses a detailed instruction on long text.",
-            ),
+            tr("How well this works depends on how large the local model you installed is."),
             p.warning(),
         ))
         .child(prompt)
@@ -941,6 +969,20 @@ mod tests {
         ui.model_sources.cleanup_deadline = TextEdit::new("0");
         ui.flush_drafts();
         assert_eq!(ui.settings.ai_cleanup.deadline_seconds, 1);
+        assert_eq!(
+            ui.model_sources.cleanup_deadline.text, "1",
+            "the field shows the floor it saved"
+        );
+
+        ui.model_sources.cleanup_deadline = TextEdit::new("-1");
+        ui.flush_drafts();
+        assert_eq!(ui.settings.ai_cleanup.deadline_seconds, 1);
+        assert_eq!(ui.model_sources.cleanup_deadline.text, "1");
+
+        ui.model_sources.cleanup_deadline = TextEdit::new("9999");
+        ui.flush_drafts();
+        assert_eq!(ui.settings.ai_cleanup.deadline_seconds, 3600);
+        assert_eq!(ui.model_sources.cleanup_deadline.text, "3600");
     }
 
     #[test]

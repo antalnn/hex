@@ -127,6 +127,43 @@ fn system_instruction(saved: &str) -> &str {
     }
 }
 
+/// The URL and JSON body one cleanup call sends. Split from the send so a
+/// test can read the model, instruction and text without a network.
+fn request_for(
+    source: &ModelSource,
+    port: u16,
+    instruction: &str,
+    text: &str,
+) -> Result<(String, String)> {
+    let url = source.chat_url(port);
+    let system = system_instruction(instruction);
+    let body = Request {
+        model: source
+            .is_remote()
+            .then(|| source.remote.model.trim().to_string()),
+        messages: vec![
+            Message {
+                role: "system",
+                content: system.to_string(),
+            },
+            Message {
+                role: "user",
+                content: text.to_string(),
+            },
+        ],
+        temperature: 0.0,
+        max_tokens: if source.is_remote() {
+            REMOTE_MAX_TOKENS
+        } else {
+            MAX_TOKENS
+        },
+        stream: false,
+    };
+    let json = serde_json::to_string(&body)
+        .map_err(|error| eyre!("the cleanup request could not be built: {error}"))?;
+    Ok((url, json))
+}
+
 /// Cleans `text` with the model `source` names. `instruction` is the saved AI
 /// cleanup prompt; empty uses [`SYSTEM_PROMPT`], so clearing the box never
 /// degrades silently. `deadline` is how long the call may wait. `Err` means
@@ -155,37 +192,12 @@ pub(crate) fn clean(
     } else {
         "local model"
     };
-    let url = source.chat_url(port);
-    let system = system_instruction(instruction);
-    let body = Request {
-        model: source
-            .is_remote()
-            .then(|| source.remote.model.trim().to_string()),
-        messages: vec![
-            Message {
-                role: "system",
-                content: system.to_string(),
-            },
-            Message {
-                role: "user",
-                content: text.to_string(),
-            },
-        ],
-        temperature: 0.0,
-        max_tokens: if source.is_remote() {
-            REMOTE_MAX_TOKENS
-        } else {
-            MAX_TOKENS
-        },
-        stream: false,
-    };
+    let (url, json) = request_for(source, port, instruction, text)?;
     let agent = if source.is_remote() {
         crate::net::agent(&url, |settings| settings.timeout_global(Some(deadline)))
     } else {
         crate::net::loopback_agent(|settings| settings.timeout_global(Some(deadline)))
     };
-    let json = serde_json::to_string(&body)
-        .map_err(|error| eyre!("the cleanup request could not be built: {error}"))?;
 
     let mut request = agent.post(&url).header("content-type", "application/json");
     if source.is_remote() {
@@ -457,6 +469,90 @@ mod tests {
         }
         assert_eq!(snippet_in(&table, "email me the link"), None);
         assert_eq!(snippet_in(&table, "_comment"), None);
+    }
+
+    #[test]
+    fn a_saved_remote_model_and_custom_prompt_reach_the_request() {
+        let source = ModelSource {
+            source: crate::app_settings::AiSource::Remote,
+            remote: crate::app_settings::RemoteModel {
+                endpoint: "https://opencode.ai/inference/go/openai/v1/chat/completions".into(),
+                model: "muse-spark-1.3-contributor".into(),
+                api_key: String::new(),
+            },
+        };
+        let (url, json) = request_for(
+            &source,
+            8081,
+            "Reply with two short bullet points and nothing else",
+            "Claude wrote the bootstrap script for the release pipeline",
+        )
+        .unwrap();
+        assert_eq!(
+            url,
+            "https://opencode.ai/inference/go/openai/v1/chat/completions"
+        );
+        let body: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(body["model"], "muse-spark-1.3-contributor");
+        assert_eq!(
+            body["messages"][0]["content"],
+            "Reply with two short bullet points and nothing else"
+        );
+        assert_eq!(
+            body["messages"][1]["content"],
+            "Claude wrote the bootstrap script for the release pipeline"
+        );
+    }
+
+    #[test]
+    fn an_empty_prompt_sends_the_shipped_instruction() {
+        let (_, json) = request_for(
+            &ModelSource::default(),
+            8081,
+            "   ",
+            "a dictation long enough to send",
+        )
+        .unwrap();
+        let body: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(body["messages"][0]["content"], SYSTEM_PROMPT);
+        assert!(body.get("model").is_none(), "a local call names no model");
+    }
+
+    #[test]
+    fn a_slow_server_is_abandoned_at_the_deadline() {
+        use std::io::{Read, Write};
+
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let server = std::thread::spawn(move || {
+            if let Ok((mut stream, _)) = listener.accept() {
+                let mut buffer = [0u8; 4096];
+                let _ = stream.read(&mut buffer);
+                std::thread::sleep(Duration::from_secs(2));
+                let _ = stream.write_all(
+                    b"HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: 2\r\n\r\n{}",
+                );
+            }
+        });
+        let started = std::time::Instant::now();
+        let error = clean(
+            &ModelSource::default(),
+            port,
+            Duration::from_millis(300),
+            "",
+            "a dictation long enough to send",
+        )
+        .unwrap_err();
+        let elapsed = started.elapsed();
+        assert!(
+            elapsed < Duration::from_millis(1500),
+            "the call waited {elapsed:?} instead of the 300 ms deadline"
+        );
+        assert!(
+            error.to_string().contains("did not answer"),
+            "the reason names the model: {error}"
+        );
+        server.join().unwrap();
     }
 
     #[test]

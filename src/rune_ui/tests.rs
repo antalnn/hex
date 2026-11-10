@@ -775,6 +775,11 @@ fn service_settings_are_adopted_only_when_the_service_changes_them() {
     // The service has not reloaded yet: its stale copy must not win.
     ui.adopt(service.clone());
     assert!(!ui.settings.paste_with_shift);
+    // A newer publish lands once the save's settle window has passed.
+    ui.pending_save = ui
+        .pending_save
+        .take()
+        .map(|(saved, _)| (saved, std::time::Instant::now() - SAVE_SETTLE));
     let mut changed = service;
     changed.enable_on_launch = false;
     ui.adopt(changed);

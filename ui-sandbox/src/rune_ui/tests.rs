@@ -162,9 +162,21 @@ fn models_pane_snapshots() {
     };
     let size = (980.0, 1500.0);
     let scale = 2.0;
-    for (label, prompt_open) in [("ai-cleanup", false), ("ai-cleanup-prompt", true)] {
+    for (label, prompt_open, remote) in [
+        ("ai-cleanup", false, false),
+        ("ai-cleanup-prompt", true, false),
+        ("ai-cleanup-remote", false, true),
+    ] {
         for dark in [false, true] {
-            let state = Ui::with(AppSettings::default(), Service::Fixture(Vec::new()));
+            let mut settings = AppSettings::default();
+            if remote {
+                settings.dictation_rewrite.source = crate::app_settings::AiSource::Remote;
+                settings.dictation_rewrite.remote.endpoint =
+                    "https://opencode.ai/inference/go/openai/v1/chat/completions".into();
+                settings.dictation_rewrite.remote.model = "muse-spark-1.3-contributor".into();
+            }
+            let mut state = Ui::with(settings, Service::Fixture(Vec::new()));
+            state.model_sources.reload(&state.settings);
             let env = Env {
                 system_dark: dark,
                 scale,

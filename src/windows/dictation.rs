@@ -135,6 +135,9 @@ struct JobResult {
     text: Option<String>,
     latency_ms: u32,
     result: Result<(), String>,
+    /// Something the job survived: the cleanup's reason for keeping the
+    /// text. The paste still happens; the pill shows why.
+    warning: Option<String>,
 }
 
 pub struct WindowsDictationConfig {
@@ -987,7 +990,10 @@ pub fn run(
                 let failure = (result.kind != OutputKind::Repaste)
                     .then(|| result.result.as_ref().err().cloned())
                     .flatten();
-                indicator.send(if let Some(message) = failure {
+                let warning = (result.kind != OutputKind::Repaste)
+                    .then(|| result.warning.clone())
+                    .flatten();
+                indicator.send(if let Some(message) = failure.or(warning) {
                     crate::rune_hud::HudEvent::JobFailed {
                         job_id,
                         message: Some(message),
@@ -1271,6 +1277,7 @@ fn process_dictation_job(
     let inference_ms = inference_started.elapsed().as_millis() as u64;
     let context = pending_context.finish();
     let application = context.application.clone();
+    let mut cleanup_warning = None;
     let result = transcription.and_then(|raw_text| {
         if raw_text.is_empty() {
             return Err("transcription was empty".into());
@@ -1291,6 +1298,13 @@ fn process_dictation_job(
             )
         };
         let text = processed.text.clone();
+        // The cleanup keeps the text when its call fails; the reason still
+        // goes to the pill, so a timeout never looks like a model that
+        // ignored the prompt.
+        cleanup_warning = processed
+            .observation
+            .as_ref()
+            .and_then(|observation| observation.fallback.clone());
         if text.trim().is_empty() {
             return Err("text replacements produced empty output".into());
         }
@@ -1344,9 +1358,13 @@ fn process_dictation_job(
             Ok(text) => PrintedTranscript::Text(text.clone()),
             Err(error) => PrintedTranscript::Failed(error.clone()),
         });
-        return job_result(OutputKind::Printed, result, latency_ms);
+        let mut result = job_result(OutputKind::Printed, result, latency_ms);
+        result.warning = cleanup_warning;
+        return result;
     }
-    job_result(OutputKind::Dictation, result, latency_ms)
+    let mut result = job_result(OutputKind::Dictation, result, latency_ms);
+    result.warning = cleanup_warning;
+    result
 }
 
 /// Runs blocking rewrite work on a helper thread so Escape can drop it.
@@ -1470,12 +1488,14 @@ fn job_result(kind: OutputKind, result: Result<String, String>, latency_ms: u32)
             text: Some(text),
             latency_ms,
             result: Ok(()),
+            warning: None,
         },
         Err(error) => JobResult {
             kind,
             text: None,
             latency_ms,
             result: Err(error),
+            warning: None,
         },
     }
 }

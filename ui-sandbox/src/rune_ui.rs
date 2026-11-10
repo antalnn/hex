@@ -203,6 +203,8 @@ impl Ui {
     pub(crate) fn flush_drafts(&mut self) {
         let mut candidate = self.settings.clone();
         self.model_sources.project(&mut candidate);
+        self.model_sources
+            .settle_cleanup(candidate.ai_cleanup.deadline_seconds);
         if candidate != self.settings {
             self.settings = candidate;
             self.saved += 1;

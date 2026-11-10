@@ -79,7 +79,9 @@ use rune::{
     Anim, AppSpec, Cx, El, Icon, ScrollSpec, TextEdit, Tx, Waker, col, el, icon, row, text,
 };
 
-use crate::app_settings::{AppSettings, HotkeyBinding, HotkeyKey, HotkeyModifiers, ModifierSide};
+use crate::app_settings::{
+    AiSource, AppSettings, HotkeyBinding, HotkeyKey, HotkeyModifiers, ModifierSide,
+};
 use crate::desktop::host::{
     DesktopAction, DesktopGrantedShortcut, DesktopListenerSnapshot, DesktopShortcuts,
     DesktopTranscriptionSnapshot, DesktopUpdateStatus,
@@ -96,6 +98,10 @@ use sidebar::{BuildKind, Pane, pane_header, sidebar};
 
 /// How long typing pauses before a text field's edit is saved.
 const DRAFT_DELAY: Duration = Duration::from_millis(250);
+/// How long after a save a host publish that is not the saved copy is still
+/// the pre-save snapshot. Within this window it must not win over the save;
+/// after it, the runtime is taken at its word so a newer writer can land.
+const SAVE_SETTLE: Duration = Duration::from_millis(1200);
 /// How often timed state (draft saves, "Saved" badges, the OpenCode retry,
 /// the setup beat, permission polling) is checked while the window shows.
 const WINDOW_TICK: Duration = Duration::from_millis(250);
@@ -668,6 +674,11 @@ pub(crate) struct Ui {
     preparing: Option<(TranscriptionModelId, Instant)>,
     /// When a text field last changed without being saved.
     draft_since: Option<Instant>,
+    /// The settings this window last wrote, and when. A publish that carries
+    /// something else before the settle window is the pre-save copy: the
+    /// runtime has not reloaded the file yet, so adopting it drops a setting
+    /// the save already made (the Run on choice, the cleanup prompt).
+    pending_save: Option<(AppSettings, Instant)>,
     duck_volume_drag: Option<f32>,
     models: models::Models,
     history: history::HistoryPane,
@@ -793,6 +804,7 @@ impl Ui {
             model_sources,
             preparing: None,
             draft_since: None,
+            pending_save: None,
             duck_volume_drag: None,
             models: models::Models::default(),
             history: history::HistoryPane::default(),
@@ -861,6 +873,8 @@ impl Ui {
     }
 
     fn commit(&mut self, candidate: AppSettings) -> bool {
+        let cleanup_changed = candidate.ai_cleanup != self.settings.ai_cleanup;
+        let endpoint_changed = candidate.dictation_rewrite != self.settings.dictation_rewrite;
         match &mut self.service {
             Service::Live(backend) => {
                 if let Err(error) = backend.save(&candidate) {
@@ -872,8 +886,30 @@ impl Ui {
             Service::Pending(_) => {}
         }
         self.error = None;
+        self.pending_save = Some((candidate.clone(), Instant::now()));
         self.settings = candidate;
         self.draft_since = None;
+        // The two settings a live pass could not tell apart: a prompt or
+        // endpoint that was typed but not saved looks exactly like a model
+        // that ignored it. Name what landed, never the prompt or the key.
+        if cleanup_changed {
+            tracing::info!(
+                enabled = self.settings.ai_cleanup.enabled,
+                deadline_seconds = self.settings.ai_cleanup.deadline_seconds,
+                prompt_chars = self.settings.ai_cleanup.prompt.chars().count(),
+                "the AI cleanup settings were saved"
+            );
+        }
+        if endpoint_changed {
+            let remote = &self.settings.dictation_rewrite.remote;
+            tracing::info!(
+                remote = self.settings.dictation_rewrite.source == AiSource::Remote,
+                endpoint = !remote.endpoint.is_empty(),
+                model = !remote.model.is_empty(),
+                key = !remote.api_key.is_empty(),
+                "the dictation cleanup endpoint settings were saved"
+            );
+        }
         self.settings_changed();
         true
     }
@@ -908,13 +944,16 @@ impl Ui {
             vocabulary: self.vocabulary.project() != settings.vocabulary,
             shortcut_guard: self.shortcut_guard.project() != settings.shortcuts.excluded_processes,
             model_sources: model_sources.dictation_rewrite != settings.dictation_rewrite
-                || model_sources.rewrite != settings.rewrite,
+                || model_sources.rewrite != settings.rewrite
+                || model_sources.ai_cleanup != settings.ai_cleanup,
         }
     }
 
     /// Saves text-field edits once typing pauses for [`DRAFT_DELAY`].
     fn save_drafts(&mut self, now: Instant) -> bool {
         let candidate = self.drafted();
+        self.model_sources
+            .settle_cleanup(candidate.ai_cleanup.deadline_seconds);
         if candidate == self.settings {
             self.draft_since = None;
             return false;
@@ -929,6 +968,8 @@ impl Ui {
     /// Saves pending text-field edits now (leaving a pane or a mode).
     fn flush_drafts(&mut self) {
         let candidate = self.drafted();
+        self.model_sources
+            .settle_cleanup(candidate.ai_cleanup.deadline_seconds);
         if candidate != self.settings {
             self.commit(candidate);
         }
@@ -1071,6 +1112,17 @@ impl Ui {
     /// draft's save never writes back what another writer (`hex settings
     /// set`, a capture's saved rule) changed meanwhile.
     fn adopt(&mut self, service: AppSettings) -> bool {
+        if let Some((saved, at)) = &self.pending_save {
+            if service == *saved {
+                self.pending_save = None;
+            } else if at.elapsed() < SAVE_SETTLE {
+                // The runtime is still publishing the settings it held before
+                // this window's save; the save wins.
+                return false;
+            } else {
+                self.pending_save = None;
+            }
+        }
         if self.service_settings.as_ref() == Some(&service) {
             return false;
         }

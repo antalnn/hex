@@ -6,7 +6,7 @@
 
 use rune::accesskit::Action;
 use rune::text::TextSystem;
-use rune::{Env, Runtime};
+use rune::{Env, Runtime, TextEdit};
 use serde_json::Value;
 
 use super::*;
@@ -421,9 +421,9 @@ fn ai_cleanup_reads_its_switch_prompt_and_server() {
     settle(&mut rt);
     let warning = node(&rt, "ai-cleanup-model-limit");
     assert!(
-        warning["children"][0]["name"]
-            .as_str()
-            .is_some_and(|name| name.contains("Results depend on the local model")),
+        warning["children"][0]["name"].as_str().is_some_and(
+            |name| name.contains("How well this works depends on how large the local model")
+        ),
         "{warning}"
     );
 }
@@ -455,6 +455,77 @@ fn rewrite_selection_calls_a_remote_endpoint_only() {
     );
 }
 
+/// A publish made before the window's save carries the old source; it must
+/// not flip Run on back. The remote fields are editors and survive by the
+/// draft check, but the source is a direct setting and had no protection.
+#[test]
+fn a_stale_publish_cannot_undo_the_run_on_choice() {
+    let mut rt = runtime("portal");
+    open_models(&mut rt);
+    let stale = rt.state.settings.clone();
+    rt.state.adopt(stale.clone());
+    super::ai_models::set_dictation_source(&mut rt.state, crate::app_settings::AiSource::Remote);
+    let mut older = stale;
+    older.enable_on_launch = !older.enable_on_launch;
+    rt.state.adopt(older);
+    assert_eq!(
+        rt.state.model_sources.dictation_source,
+        crate::app_settings::AiSource::Remote,
+        "the pre-save publish flipped the control's draft back"
+    );
+    rt.state.flush_drafts();
+    assert_eq!(
+        rt.state.settings.dictation_rewrite.source,
+        crate::app_settings::AiSource::Remote,
+        "the choice is saved again after the stale publish"
+    );
+}
+
+/// Typing into the AI cleanup prompt sheet and pressing Done saves the typed
+/// instruction, not the shipped one it opened with. The text field takes the
+/// text through its accessibility `set-value`, the same path automation uses.
+#[test]
+fn the_cleanup_prompt_sheet_saves_typed_text() {
+    let mut rt = runtime("portal");
+    open_models(&mut rt);
+    assert!(rt.accessibility_action("open-ai-cleanup-prompt", Action::Click, None));
+    settle(&mut rt);
+    assert!(rt.accessibility_action(
+        "input",
+        Action::SetValue,
+        Some(rune::accesskit::ActionData::Value(
+            "Reply with two short bullet points and nothing else".into()
+        ))
+    ));
+    settle(&mut rt);
+    assert!(rt.accessibility_action("close-ai-cleanup-prompt", Action::Click, None));
+    settle(&mut rt);
+    assert_eq!(
+        rt.state.settings.ai_cleanup.prompt,
+        "Reply with two short bullet points and nothing else"
+    );
+}
+
+/// Typing the AI cleanup prompt is a draft like any other: a publish that
+/// arrives before it saves must not reload the sheet's text from the old
+/// settings.
+#[test]
+fn an_ai_cleanup_prompt_draft_survives_a_publish() {
+    let mut rt = runtime("portal");
+    open_models(&mut rt);
+    let stale = rt.state.settings.clone();
+    rt.state.adopt(stale.clone());
+    rt.state.model_sources.cleanup_prompt =
+        TextEdit::new("Reply with two short bullet points and nothing else");
+    let mut older = stale;
+    older.rewrite.remote.model = "another-model".into();
+    rt.state.adopt(older);
+    assert_eq!(
+        rt.state.model_sources.cleanup_prompt.text,
+        "Reply with two short bullet points and nothing else"
+    );
+}
+
 /// The AI cleanup card's Run on controls read `dictation_rewrite.source`, the
 /// setting the dictation cleanup already uses: Remote swaps the local server
 /// controls for the endpoint, model and key rows.
@@ -468,6 +539,7 @@ fn the_ai_cleanup_card_reads_the_reused_source_setting() {
     assert!(rt.find("local-model-state").is_some());
 
     rt.state.settings.dictation_rewrite.source = crate::app_settings::AiSource::Remote;
+    rt.state.model_sources.reload(&rt.state.settings);
     settle(&mut rt);
     assert!(rt.find("dictation-endpoint-field").is_some());
     assert!(rt.find("dictation-model-field").is_some());
@@ -477,6 +549,11 @@ fn the_ai_cleanup_card_reads_the_reused_source_setting() {
         "the local controls hide while Remote runs"
     );
     assert!(rt.find("local-model-state").is_none());
+    assert!(
+        rt.find("local-model-section").is_none(),
+        "the Local model section hides while Remote runs"
+    );
+    assert!(rt.find("local-model-files").is_none());
 }
 
 /// The speech model and language stay on Dictation whichever source cleans
