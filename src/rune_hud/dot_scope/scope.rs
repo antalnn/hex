@@ -43,7 +43,7 @@ const DOT_SETTLE: f32 = 0.6;
 /// The rise constant while a bar is still a dot, s: the first width change
 /// after silence eases in instead of spiking. Above the track threshold the
 /// approved [`BAR_RISE`] takes over.
-const DOT_EASE: f32 = 0.35;
+const DOT_EASE: f32 = 0.5;
 /// The settle band's top, as a multiple of the track threshold. Below it the
 /// fall uses [`DOT_SETTLE`]; above it the approved [`BAR_FALL`] is untouched.
 const DOT_BAND: f32 = 2.0;
@@ -1490,7 +1490,7 @@ mod tests {
         }
         let first = first_above.expect("the bars leave the dots");
         assert!(
-            (0.12..=0.22).contains(&first),
+            (0.15..=0.28).contains(&first),
             "the first width change eases in: {first}"
         );
 
