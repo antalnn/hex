@@ -12,6 +12,7 @@ src/app_settings.rs 1574
 src/capture_host.rs 3099
 src/control/settings.rs 1544
 src/desktop/i18n.rs 1566
+src/labs.rs 1523
 src/meeting/query.rs 2403
 src/meeting/transcript.rs 2195
 src/recognition.rs 2046
