@@ -81,6 +81,8 @@ pub(super) struct ModelSources {
     pub(super) prompts_open: bool,
     /// The AI cleanup prompt sheet and its text.
     cleanup_prompt: TextEdit,
+    /// The AI cleanup deadline's seconds, edited in the card.
+    cleanup_deadline: TextEdit,
     pub(super) cleanup_open: bool,
 }
 
@@ -97,6 +99,7 @@ impl ModelSources {
         self.rewrite = SourceFields::new(&settings.rewrite.remote);
         self.default_prompt = TextEdit::new(settings.rewrite.default_prompt.clone());
         self.cleanup_prompt = TextEdit::new(settings.ai_cleanup.prompt.clone());
+        self.cleanup_deadline = TextEdit::new(settings.ai_cleanup.deadline_seconds.to_string());
         self.snippets = settings
             .rewrite
             .snippets
@@ -126,6 +129,13 @@ impl ModelSources {
         self.rewrite.project(&mut settings.rewrite.remote);
         settings.rewrite.default_prompt = self.default_prompt.text.trim().to_string();
         settings.ai_cleanup.prompt = self.cleanup_prompt.text.trim().to_string();
+        settings.ai_cleanup.deadline_seconds = self
+            .cleanup_deadline
+            .text
+            .trim()
+            .parse::<u64>()
+            .unwrap_or(settings.ai_cleanup.deadline_seconds)
+            .max(1);
         settings.rewrite.snippets = self
             .snippets
             .iter()
@@ -289,6 +299,19 @@ fn ai_cleanup_card(ui: &Ui, p: Paint) -> El {
                 ButtonKind::Secondary,
                 |ui: &mut Ui, _| open_cleanup_prompt(ui),
             ),
+        ),
+        setting_row(
+            p,
+            "ai-cleanup-deadline",
+            tr("Deadline"),
+            Some(tr("Seconds")),
+            TextInput::new(&ui.model_sources.cleanup_deadline)
+                .label(tr("Deadline"))
+                .placeholder("20")
+                .width(Some(96.0))
+                .on_edit(|ui: &mut Ui| &mut ui.model_sources.cleanup_deadline)
+                .build(p.k)
+                .key("ai-cleanup-deadline-field"),
         ),
         source_row(p, "ai-cleanup", source, |ui: &mut Ui, source| {
             ui.update(|settings| settings.dictation_rewrite.source = source);

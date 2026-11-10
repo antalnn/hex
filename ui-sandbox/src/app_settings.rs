@@ -391,6 +391,7 @@ pub const CLEANUP_PROMPT: &str =
 pub struct AiCleanupSettings {
     pub enabled: bool,
     pub prompt: String,
+    pub deadline_seconds: u64,
 }
 
 impl Default for AiCleanupSettings {
@@ -398,6 +399,7 @@ impl Default for AiCleanupSettings {
         Self {
             enabled: true,
             prompt: CLEANUP_PROMPT.into(),
+            deadline_seconds: 20,
         }
     }
 }

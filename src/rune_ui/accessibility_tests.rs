@@ -463,6 +463,7 @@ fn the_ai_cleanup_card_reads_the_reused_source_setting() {
     let mut rt = runtime("portal");
     open_models(&mut rt);
     assert!(rt.find("ai-cleanup-run-on").is_some());
+    assert!(rt.find("ai-cleanup-deadline-field").is_some());
     assert!(rt.find("local-model-auto-start").is_some());
     assert!(rt.find("local-model-state").is_some());
 
