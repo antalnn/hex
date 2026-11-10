@@ -21,6 +21,7 @@ use super::controls::{
     ButtonKind, DESCRIPTION, Highlight, METRICS, Paint, button, card, note, page, section,
     section_with, setting_row,
 };
+use super::drag_order::OrderDrag;
 use super::lists::{LIST_COLUMN_PL, list_row, remove_button, source_list};
 use super::models::{self, Target};
 use super::{Menu, Ui};
@@ -104,15 +105,6 @@ impl Editor {
     }
 }
 
-/// A transformation being dragged: the order it started from, the order
-/// shown while dragging, and where it started.
-struct TransformationDrag {
-    id: String,
-    start: usize,
-    committed: Vec<String>,
-    order: Vec<String>,
-}
-
 pub(super) type ChosenApplication = Result<Option<InstalledApplication>, String>;
 
 enum Applications {
@@ -132,7 +124,7 @@ pub(super) struct ModesPane {
     applications: Applications,
     /// The native file dialog, while it is open.
     chooser: Option<Pending>,
-    drag: Option<TransformationDrag>,
+    drag: Option<OrderDrag>,
     pub(super) waker: Option<Waker>,
     /// Rasterizes application icons off the UI thread; made in `setup`.
     pub(super) icon_cache: Option<rune::ImageCache>,
@@ -580,46 +572,22 @@ fn drag_transformation(ui: &mut Ui, id: &str, start: usize, pitch: f32, d: &Drag
             let committed = mode(&ui.settings, ui.modes.selected)
                 .transformations
                 .clone();
-            ui.modes.drag = Some(TransformationDrag {
-                id: id.to_string(),
-                start,
-                order: committed.clone(),
-                committed,
-            });
+            let slots = (0..committed.len()).collect();
+            ui.modes.drag = Some(OrderDrag::begin(id, start, slots, committed));
         }
         Phase::Move => {
-            let Some(drag) = &mut ui.modes.drag else {
-                return;
-            };
-            let moved = ((d.y - d.start_y) / pitch).round() as isize;
-            let last = drag.committed.len().saturating_sub(1) as isize;
-            let target = (drag.start as isize + moved).clamp(0, last) as usize;
-            let mut order = drag.committed.clone();
-            reorder_transformation(&mut order, &drag.id, target);
-            drag.order = order;
+            if let Some(drag) = &mut ui.modes.drag {
+                drag.preview(((d.y - d.start_y) / pitch).round() as isize);
+            }
         }
         Phase::Up => {
-            let Some(drag) = ui.modes.drag.take() else {
-                return;
-            };
-            if !d.cancelled() && drag.order != drag.committed {
-                update_mode(ui, |mode| mode.transformations = drag.order);
+            if let Some(drag) = ui.modes.drag.take()
+                && let Some(order) = drag.finish(d.cancelled())
+            {
+                update_mode(ui, |mode| mode.transformations = order);
             }
         }
     }
-}
-
-/// Moves `id` to `target_index`; false when it is missing or already there.
-fn reorder_transformation(values: &mut Vec<String>, id: &str, target_index: usize) -> bool {
-    let Some(from) = values.iter().position(|candidate| candidate == id) else {
-        return false;
-    };
-    if from == target_index {
-        return false;
-    }
-    let value = values.remove(from);
-    values.insert(target_index.min(values.len()), value);
-    true
 }
 
 fn provision_workspace(ui: &mut Ui) {
@@ -1307,7 +1275,8 @@ fn fixture_icon(rgb: [u8; 3]) -> Vec<u8> {
 
 #[cfg(test)]
 mod tests {
-    use super::{reorder_transformation, set_ai_rewrite};
+    use super::OrderDrag;
+    use super::set_ai_rewrite;
     use crate::app_settings::DictationMode;
     use crate::dictation::ai_rewrite::TRANSFORMATION_ID;
 
@@ -1328,18 +1297,31 @@ mod tests {
 
     #[test]
     fn transformations_reorder_in_both_directions() {
-        let mut transformations = vec!["one".to_string(), "two".into(), "three".into()];
-        assert!(reorder_transformation(&mut transformations, "one", 2));
-        assert_eq!(transformations, ["two", "three", "one"]);
-        assert!(reorder_transformation(&mut transformations, "one", 0));
-        assert_eq!(transformations, ["one", "two", "three"]);
+        let committed = vec!["one".to_string(), "two".into(), "three".into()];
+        let slots = (0..committed.len()).collect::<Vec<usize>>();
+        let mut drag = OrderDrag::begin("one", 0, slots.clone(), committed.clone());
+        drag.preview(2);
+        let moved = drag.finish(false).expect("the row moved");
+        assert_eq!(moved, vec!["two".to_string(), "three".into(), "one".into()]);
+
+        let mut drag = OrderDrag::begin("one", 2, slots, moved);
+        drag.preview(-2);
+        assert_eq!(
+            drag.finish(false),
+            Some(vec!["one".to_string(), "two".into(), "three".into()])
+        );
     }
 
     #[test]
     fn transformation_reorder_ignores_same_position_and_missing_ids() {
-        let mut transformations = vec!["one".to_string(), "two".into()];
-        assert!(!reorder_transformation(&mut transformations, "one", 0));
-        assert!(!reorder_transformation(&mut transformations, "missing", 1));
-        assert_eq!(transformations, ["one", "two"]);
+        let committed = vec!["one".to_string(), "two".into()];
+        let slots = (0..committed.len()).collect::<Vec<usize>>();
+        let mut drag = OrderDrag::begin("one", 0, slots.clone(), committed.clone());
+        drag.preview(0);
+        assert!(drag.finish(false).is_none());
+
+        let mut drag = OrderDrag::begin("missing", 0, slots, committed);
+        drag.preview(1);
+        assert!(drag.finish(false).is_none());
     }
 }

@@ -5,13 +5,14 @@
 //! agent, which copies a prompt saying where the steps live and what each
 //! can be.
 
-use rune::{El, TextEdit, Tx, col, el, row, text};
+use rune::{Drag, El, Phase, TextEdit, Tx, col, el, row, text};
 use rune_kit::{Button, ButtonVariant, TextInput};
 
 use super::controls::{
     ButtonKind, CardRow, DESCRIPTION, METRICS, Paint, PushSize, button, card, folding, note, page,
     raised, status_dot,
 };
+use super::drag_order::OrderDrag;
 use super::icons::MIC;
 use super::lists::{Tone, tone_tag};
 use super::modes::{application_icon, monogram};
@@ -40,6 +41,8 @@ const RULE_STEPS: [&str; 8] = [
 const TRANSFORMS_DOCS: &str = "https://anoma.ly/hex/docs/transforms";
 /// A step's number sits in a disc this wide, on the row text's edge.
 const STEP_BADGE: f32 = 20.0;
+/// One Every dictation row's height; dragging moves one place per row.
+const STEP_PITCH: f32 = METRICS.row_h_described + 1.0;
 
 #[derive(Default)]
 pub(super) struct OutputPane {
@@ -58,6 +61,8 @@ pub(super) struct OutputPane {
     pub(super) order: examples::Order,
     /// The agent card's turning spark.
     pub(super) spark: Spark,
+    /// The step being dragged in Every dictation, and its pending order.
+    pub(super) drag: Option<OrderDrag>,
 }
 
 impl OutputPane {
@@ -94,6 +99,9 @@ struct Step {
     detail: Option<String>,
     runner: Runner,
     action: Option<StepAction>,
+    /// The transformation id when this row is one of the mode's steps; the
+    /// number drags it. Derived rows have none.
+    id: Option<String>,
 }
 
 /// A step's button, for the steps changed somewhere else.
@@ -104,8 +112,10 @@ enum StepAction {
 }
 
 /// A mode's steps in the order they run: the vocabulary, its own names and
-/// swaps, OpenCode rewriting when it is on, then its transformations.
-fn steps(ui: &Ui, mode: &DictationMode) -> Vec<Step> {
+/// swaps, OpenCode rewriting when it is on, then its transformations. `order`
+/// is usually the mode's own list; while a row is dragged it is the pending
+/// order instead.
+fn steps(ui: &Ui, mode: &DictationMode, order: &[String]) -> Vec<Step> {
     let mut steps = Vec::new();
     // The shared vocabulary corrects every dictation: each "sounds like"
     // spelling becomes its term. The pane leads to where terms are added, so
@@ -140,6 +150,7 @@ fn steps(ui: &Ui, mode: &DictationMode) -> Vec<Step> {
             detail: Some(detail),
             runner: Runner::BuiltIn,
             action: Some(StepAction::Vocabulary),
+            id: None,
         });
     }
     if !mode.vocabulary.is_empty() {
@@ -154,6 +165,7 @@ fn steps(ui: &Ui, mode: &DictationMode) -> Vec<Step> {
             detail: Some(terms),
             runner: Runner::BuiltIn,
             action: None,
+            id: None,
         });
     }
     if !mode.replacements.is_empty() {
@@ -176,6 +188,7 @@ fn steps(ui: &Ui, mode: &DictationMode) -> Vec<Step> {
             detail: (!pairs.is_empty()).then_some(pairs),
             runner: Runner::BuiltIn,
             action: None,
+            id: None,
         });
     }
     if mode.post_processing.enabled {
@@ -184,13 +197,13 @@ fn steps(ui: &Ui, mode: &DictationMode) -> Vec<Step> {
             detail: mode.post_processing.model.clone(),
             runner: Runner::Rewrite,
             action: None,
+            id: None,
         });
     }
-    for id in &mode.transformations {
+    for id in order {
         // Off drops the native AI cleanup step from the ordering, so the
         // Output list must not print a step the next dictation does not run.
-        if id == crate::dictation::ai_rewrite::TRANSFORMATION_ID && !ui.settings.ai_cleanup.enabled
-        {
+        if !shows(ui, id) {
             continue;
         }
         steps.push(match builtin(id) {
@@ -199,6 +212,7 @@ fn steps(ui: &Ui, mode: &DictationMode) -> Vec<Step> {
                 detail: Some(detail.into()),
                 runner: Runner::BuiltIn,
                 action: None,
+                id: Some(id.clone()),
             },
             None => {
                 let script = ui
@@ -212,11 +226,28 @@ fn steps(ui: &Ui, mode: &DictationMode) -> Vec<Step> {
                     detail: script.and_then(|script| script.description.clone()),
                     runner: Runner::Script,
                     action: None,
+                    id: Some(id.clone()),
                 }
             }
         });
     }
     steps
+}
+
+/// Whether the ordering shows this step while its settings stand. AI cleanup
+/// disappears while its switch is off.
+fn shows(ui: &Ui, id: &str) -> bool {
+    id != crate::dictation::ai_rewrite::TRANSFORMATION_ID || ui.settings.ai_cleanup.enabled
+}
+
+/// The slots of the rows [steps] shows, in `order`.
+fn transformation_slots(ui: &Ui, order: &[String]) -> Vec<usize> {
+    order
+        .iter()
+        .enumerate()
+        .filter(|(_, id)| shows(ui, id))
+        .map(|(slot, _)| slot)
+        .collect()
 }
 
 /// A built-in transformation's name and what it does.
@@ -417,7 +448,12 @@ fn trust_card(ui: &Ui, p: Paint) -> Option<El> {
 
 /// The steps every dictation goes through, numbered in order.
 fn every_dictation(ui: &Ui, p: Paint, mode: &DictationMode) -> El {
-    let steps = steps(ui, mode);
+    let order: &[String] = ui
+        .output
+        .drag
+        .as_ref()
+        .map_or(mode.transformations.as_slice(), |drag| drag.order());
+    let steps = steps(ui, mode, order);
     let rows: Vec<CardRow> = if steps.is_empty() {
         vec![
             note(
@@ -431,7 +467,14 @@ fn every_dictation(ui: &Ui, p: Paint, mode: &DictationMode) -> El {
         steps
             .iter()
             .enumerate()
-            .map(|(index, step)| step_row(p, &format!("step{index}"), index, step).into())
+            .map(|(index, step)| {
+                let held = ui
+                    .output
+                    .drag
+                    .as_ref()
+                    .is_some_and(|drag| step.id.as_deref() == Some(drag.id()));
+                step_row(p, &format!("step{index}"), index, step, held, true).into()
+            })
             .collect()
     };
     labeled(
@@ -480,9 +523,9 @@ fn labeled(p: Paint, key: &str, title: &str, hint: &str, rows: Vec<CardRow>) -> 
         .child(card(p, "card", rows))
 }
 
-fn step_row(p: Paint, key: &str, index: usize, step: &Step) -> El {
+fn step_row(p: Paint, key: &str, index: usize, step: &Step, held: bool, draggable: bool) -> El {
     let c = &p.k.c;
-    let badge = row()
+    let mut badge = row()
         .key("number")
         .size(STEP_BADGE, STEP_BADGE)
         .center()
@@ -494,6 +537,15 @@ fn step_row(p: Paint, key: &str, index: usize, step: &Step) -> El {
                 .font(p.k.ty.small_medium)
                 .color(p.muted()),
         );
+    if draggable && let Some(id) = &step.id {
+        let dragged = id.clone();
+        badge = badge.role("button").label(tr("Reorder")).on_drag(
+            move |ui: &mut Ui, d: &mut Drag, _: &mut Tx| drag_output_step(ui, &dragged, d),
+        );
+        if held {
+            badge = badge.fill(c.layer_03);
+        }
+    }
     let tag = match step.runner {
         Runner::BuiltIn => tone_tag(p, "runner", tr("Built in"), Tone::Neutral),
         Runner::Script => tone_tag(p, "runner", "JS", Tone::Accent),
@@ -541,6 +593,41 @@ fn step_row(p: Paint, key: &str, index: usize, step: &Step) -> El {
                 },
             ),
         }))
+}
+
+/// Drags a number in Every dictation to reorder the mode's transformations.
+/// The same `default_mode.transformations` the Modes pane writes is saved
+/// once, on release; a cancelled drag drops the pending order.
+fn drag_output_step(ui: &mut Ui, id: &str, d: &Drag) {
+    match d.phase {
+        Phase::Down => {
+            let committed = ui
+                .settings
+                .dictation_processing
+                .default_mode
+                .transformations
+                .clone();
+            let slots = transformation_slots(ui, &committed);
+            let Some(start) = slots.iter().position(|&slot| committed[slot] == id) else {
+                return;
+            };
+            ui.output.drag = Some(OrderDrag::begin(id, start, slots, committed));
+        }
+        Phase::Move => {
+            if let Some(drag) = &mut ui.output.drag {
+                drag.preview(((d.y - d.start_y) / STEP_PITCH).round() as isize);
+            }
+        }
+        Phase::Up => {
+            if let Some(drag) = ui.output.drag.take()
+                && let Some(order) = drag.finish(d.cancelled())
+            {
+                ui.update(|settings| {
+                    settings.dictation_processing.default_mode.transformations = order;
+                });
+            }
+        }
+    }
 }
 
 /// Labs › Transform typed text: a shortcut that runs the focused app's
@@ -668,7 +755,7 @@ fn fix_row(ui: &Ui, p: Paint, trial: &str) -> El {
 fn some_apps(ui: &Ui, p: Paint, modes: &[DictationMode]) -> El {
     let mut rows: Vec<CardRow> = Vec::new();
     for (index, mode) in modes.iter().enumerate() {
-        let steps = steps(ui, mode);
+        let steps = steps(ui, mode, &mode.transformations);
         rows.push(app_row(ui, p, index, mode, &steps).into());
         let open = ui.output.expanded == Some(index);
         rows.push(folding(
@@ -678,8 +765,15 @@ fn some_apps(ui: &Ui, p: Paint, modes: &[DictationMode]) -> El {
                 .filter(|_| open)
                 .enumerate()
                 .map(|(step, item)| {
-                    step_row(p, &format!("rule{index}-step{step}"), step, item)
-                        .pl(28.0 + METRICS.row_px)
+                    step_row(
+                        p,
+                        &format!("rule{index}-step{step}"),
+                        step,
+                        item,
+                        false,
+                        false,
+                    )
+                    .pl(28.0 + METRICS.row_px)
                 }),
         ));
     }
@@ -951,7 +1045,7 @@ mod tests {
             ..DictationMode::default()
         };
         let titles = |ui: &Ui| {
-            steps(ui, &mode)
+            steps(ui, &mode, &mode.transformations)
                 .into_iter()
                 .map(|step| step.title)
                 .collect::<Vec<_>>()
@@ -966,6 +1060,77 @@ mod tests {
             "the step is gone while the switch is off"
         );
         assert!(titles(&ui).iter().any(|title| title == "Lowercase"));
+    }
+
+    #[test]
+    fn the_output_numbers_reorder_the_transformations() {
+        let mut ui = Ui::with(AppSettings::default(), Service::Fixture(Vec::new()));
+        ui.settings
+            .dictation_processing
+            .default_mode
+            .transformations = vec![
+            "one".into(),
+            crate::dictation::ai_rewrite::TRANSFORMATION_ID.into(),
+            "two".into(),
+            "three".into(),
+        ];
+        let committed = ui
+            .settings
+            .dictation_processing
+            .default_mode
+            .transformations
+            .clone();
+        let slots = transformation_slots(&ui, &committed);
+        assert_eq!(slots, [0, 1, 2, 3]);
+
+        // Drag the last number two rows up: it lands above the model step,
+        // and the preview order is what the list draws.
+        let mut drag = OrderDrag::begin("three", 3, slots, committed.clone());
+        drag.preview(-2);
+        let order = drag.order().to_vec();
+        assert_eq!(order, ["one", "three", "ai-rewrite", "two"]);
+        let titles = steps(&ui, &ui.settings.dictation_processing.default_mode, &order)
+            .into_iter()
+            .filter(|step| step.id.is_some())
+            .map(|step| step.title)
+            .collect::<Vec<_>>();
+        assert_eq!(titles, ["one", "three", "AI cleanup", "two"]);
+        assert_eq!(
+            drag.finish(false),
+            Some(vec![
+                "one".to_string(),
+                "three".into(),
+                "ai-rewrite".into(),
+                "two".into()
+            ])
+        );
+
+        // With cleanup off, its row is hidden but keeps slot 1 while the
+        // visible rows trade places around it.
+        ui.settings.ai_cleanup.enabled = false;
+        let slots = transformation_slots(&ui, &committed);
+        assert_eq!(slots, [0, 2, 3]);
+        let mut drag = OrderDrag::begin("three", 2, slots, committed);
+        drag.preview(-1);
+        assert_eq!(
+            drag.finish(false),
+            Some(vec![
+                "one".to_string(),
+                "ai-rewrite".into(),
+                "three".into(),
+                "two".into()
+            ])
+        );
+        assert!(drag_order_stays_cancelled());
+    }
+
+    /// The drag handler drops a cancelled drag; this mirrors its release
+    /// branch without needing a synthetic pointer event.
+    fn drag_order_stays_cancelled() -> bool {
+        let committed = vec!["one".to_string(), "two".into()];
+        let mut drag = OrderDrag::begin("one", 0, vec![0, 1], committed);
+        drag.preview(1);
+        drag.finish(true).is_none()
     }
 
     #[test]

@@ -23,14 +23,14 @@ pub(super) fn transformations(
     let action = (!catalog.is_empty()).then(|| transformation_menu(ui, p, current, layer));
     let mut rows = Vec::new();
     let dragging = ui.modes.drag.as_ref();
-    let order = dragging.map_or(&current.transformations, |drag| &drag.order);
+    let order: &[String] = dragging.map_or(current.transformations.as_slice(), |drag| drag.order());
     let pitch = TRANSFORMATION_ROW + p.hair;
     for (index, id) in order.iter().enumerate() {
         let name = catalog
             .iter()
             .find(|transformation| &transformation.id == id)
             .map_or_else(|| id.clone(), |transformation| transformation.name.clone());
-        let held = dragging.is_some_and(|drag| &drag.id == id);
+        let held = dragging.is_some_and(|drag| drag.id() == id);
         let (dragged, remove) = (id.clone(), id.clone());
         let handle = row()
             .key("handle")
