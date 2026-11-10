@@ -81,10 +81,38 @@ const REWRITE_OPENERS: &[&str] = &[
     "elaborate",
 ];
 /// The system prompt for the snippet match: a classification, not an edit.
-const MATCH_PROMPT: &str = "You match a spoken instruction to one saved snippet. \
-The snippets you may choose are listed by name. Reply with exactly one name from \
-the list, copied as written, or the word NONE when no snippet fits. Reply with \
-nothing else: no punctuation, no explanation, and no quotes.";
+const MATCH_PROMPT: &str = "You match a spoken request to one saved snippet. \
+Each snippet is listed with its name and the instruction it performs. The \
+request is the person's spoken words. Reply with exactly one saved snippet's \
+name, copied as written, or the word NONE when none fits. Reply with one word \
+only: no punctuation, no explanation, and no quotes.";
+
+/// Four example turns that teach the reply shape to a small model: one request
+/// per snippet, and the bare name back. The catalogue here is fixed, so the
+/// examples never put words in the real snippet list's mouth; the real list
+/// comes last, after the model has seen the answer format.
+const MATCH_EXAMPLES: &[(&str, &str, &str)] = &[
+    (
+        "shorten",
+        "Make the wording shorter without changing the meaning",
+        "make this shorter",
+    ),
+    (
+        "reword",
+        "Replace the wording with different words, keeping the meaning",
+        "say the same thing in different words",
+    ),
+    (
+        "expand",
+        "Add detail and examples to the text",
+        "add more detail to this",
+    ),
+    (
+        "outline",
+        "List the main points as an outline",
+        "give me the main points as a list",
+    ),
+];
 
 /// What the model is told, and nothing about its own voice: it edits the
 /// person's text, it does not write its own.
@@ -514,15 +542,28 @@ pub(crate) fn layer_two(
         return instruction;
     }
     match match_snippet(&instruction, snippets, remote) {
-        Ok(Some(prompt)) => {
-            tracing::info!(instruction = %instruction, "layer two matched a saved snippet");
-            prompt
-        }
-        Ok(None) => instruction,
+        Ok(matched) => apply_match(instruction, matched),
         Err(error) => {
             tracing::warn!(%error, "the snippet match failed; keeping the instruction");
             instruction
         }
+    }
+}
+
+/// Applies one match reply: the snippet's prompt replaces the instruction, and
+/// its name goes to the log so a live diagnosis never has to infer which
+/// snippet won from the result text.
+fn apply_match(instruction: String, matched: Option<(String, String)>) -> String {
+    match matched {
+        Some((name, prompt)) => {
+            tracing::info!(
+                instruction = %instruction,
+                snippet = %name,
+                "layer two matched a saved snippet"
+            );
+            prompt
+        }
+        None => instruction,
     }
 }
 
@@ -573,30 +614,63 @@ fn match_snippet(
     instruction: &str,
     snippets: &[(String, String)],
     remote: &RemoteModel,
-) -> Result<Option<String>> {
-    let names = snippets
-        .iter()
-        .map(|(name, _)| format!("- {name}"))
-        .collect::<Vec<_>>()
-        .join("\n");
-    let messages = vec![
-        Message {
-            role: "system",
-            content: MATCH_PROMPT.to_string(),
-        },
-        Message {
-            role: "user",
-            content: format!("Instruction: {}\n\nSnippets:\n{names}", instruction.trim()),
-        },
-    ];
-    let reply = chat(remote, messages, MATCH_MAX_TOKENS, MATCH_TIMEOUT)?;
+) -> Result<Option<(String, String)>> {
+    let reply = chat(
+        remote,
+        match_messages(instruction, snippets),
+        MATCH_MAX_TOKENS,
+        MATCH_TIMEOUT,
+    )?;
     Ok(match_reply(&reply, snippets))
 }
 
-/// The prompt a match reply names, or nothing. Only a reply that is a saved
-/// name after case, quotes and punctuation are ignored counts; NONE, an
+/// The messages for one snippet match: every candidate with its name and the
+/// instruction it performs, so a spoken request can be told from a snippet
+/// whose name merely looks like it. Names alone made "make this a structured
+/// prompt" pick `structure` (measured 2026-11-10). The example turns come
+/// first because the small local model copies the last shape it was shown.
+fn match_messages(instruction: &str, snippets: &[(String, String)]) -> Vec<Message> {
+    let catalogue = snippets
+        .iter()
+        .map(|(name, prompt)| format!("- {name}: {prompt}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let examples = MATCH_EXAMPLES
+        .iter()
+        .map(|(name, what, _)| format!("- {name}: {what}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let example_request =
+        |request: &str| format!("Snippets:\n{examples}\nRequest: {request}\nAnswer:");
+
+    let mut messages = vec![Message {
+        role: "system",
+        content: MATCH_PROMPT.to_string(),
+    }];
+    for (name, _, request) in MATCH_EXAMPLES {
+        messages.push(Message {
+            role: "user",
+            content: example_request(request),
+        });
+        messages.push(Message {
+            role: "assistant",
+            content: (*name).to_string(),
+        });
+    }
+    messages.push(Message {
+        role: "user",
+        content: format!(
+            "Snippets:\n{catalogue}\nRequest: {}\nAnswer:",
+            instruction.trim()
+        ),
+    });
+    messages
+}
+
+/// The name and prompt a match reply names, or nothing. Only a reply that is a
+/// saved name after case, quotes and punctuation are ignored counts; NONE, an
 /// unknown name and anything wordier leave the instruction as spoken.
-fn match_reply(reply: &str, snippets: &[(String, String)]) -> Option<String> {
+fn match_reply(reply: &str, snippets: &[(String, String)]) -> Option<(String, String)> {
     let spoken = cue(reply);
     if spoken.is_empty() || spoken == "none" {
         return None;
@@ -604,7 +678,7 @@ fn match_reply(reply: &str, snippets: &[(String, String)]) -> Option<String> {
     snippets
         .iter()
         .find(|(name, _)| cue(name) == spoken)
-        .map(|(_, prompt)| prompt.clone())
+        .map(|(name, prompt)| (name.clone(), prompt.clone()))
 }
 
 #[cfg(test)]
@@ -849,6 +923,29 @@ mod tests {
         ]
     }
 
+    /// Anthony's four saved snippets as `%APPDATA%\hex\settings.json` carries
+    /// them on 2026-11-10, so the intent tests speak the wording in use.
+    fn anthonys_snippets() -> Vec<(String, String)> {
+        vec![
+            (
+                "prompt".to_string(),
+                "Turn the selected text into a structured AI prompt. Extract the goal, the context, the instructions, the constraints, and the required output format. If the input is vague, infer a sensible default but do not invent facts, names, numbers, or paths. Use headings Goal, Context, Instructions, Constraints, Output format. Keep it concise and executable. Return only the prompt.".to_string(),
+            ),
+            (
+                "polish".to_string(),
+                "Polish this for clarity and readability. Cut filler and wordiness, reorder sentences so the main point comes first and the flow is logical, add structure where it helps (short paragraphs, and a heading or list only when the text is long enough to need one), and keep the author's tone and vocabulary. Change nothing the meaning does not ask for. Return only the polished text.".to_string(),
+            ),
+            (
+                "tighten".to_string(),
+                "Tighten the wording without changing the meaning. Cut up to 20 percent, keep the voice. Return only the text.".to_string(),
+            ),
+            (
+                "structure".to_string(),
+                "Add structure for readability only. Keep every sentence, just break into paragraphs and use a numbered list where the text already lists things. Return only the text.".to_string(),
+            ),
+        ]
+    }
+
     /// The output worker outlives one settings save; the listener replaces the
     /// shared runtime in place so the next rewrite uses the saved endpoint.
     #[test]
@@ -978,8 +1075,11 @@ mod tests {
             "\"structured prompt\"",
         ] {
             assert_eq!(
-                match_reply(reply, &snippets()).as_deref(),
-                Some("Turn it into a prompt."),
+                match_reply(reply, &snippets()),
+                Some((
+                    "structured prompt".to_string(),
+                    "Turn it into a prompt.".to_string()
+                )),
                 "{reply}"
             );
         }
@@ -1095,5 +1195,103 @@ mod tests {
                 "{instruction}"
             );
         }
+    }
+
+    #[test]
+    fn the_match_call_carries_each_snippets_instruction_text() {
+        let snippets = anthonys_snippets();
+        let messages = match_messages("make this a structured prompt", &snippets);
+        let user = &messages.last().unwrap().content;
+        for (name, prompt) in &snippets {
+            assert!(
+                user.contains(&format!("- {name}: {prompt}")),
+                "missing {name}: {user}"
+            );
+        }
+        assert!(messages[0].content.contains("the instruction it performs"));
+        assert!(user.contains("Request: make this a structured prompt"));
+        assert!(user.ends_with("Answer:"));
+    }
+
+    #[test]
+    fn the_match_log_names_the_snippet_it_matched() {
+        use std::sync::{Arc, Mutex};
+
+        #[derive(Clone, Default)]
+        struct Buffer(Arc<Mutex<Vec<u8>>>);
+
+        impl std::io::Write for Buffer {
+            fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+                self.0.lock().unwrap().extend_from_slice(bytes);
+                Ok(bytes.len())
+            }
+
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+
+        impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for Buffer {
+            type Writer = Buffer;
+
+            fn make_writer(&'a self) -> Self::Writer {
+                self.clone()
+            }
+        }
+
+        let buffer = Buffer::default();
+        let subscriber = tracing_subscriber::fmt()
+            .with_writer(buffer.clone())
+            .with_ansi(false)
+            .finish();
+        let replied = tracing::subscriber::with_default(subscriber, || {
+            apply_match(
+                "make this a structured prompt".to_string(),
+                Some(("prompt".to_string(), "Turn it into a prompt.".to_string())),
+            )
+        });
+        assert_eq!(replied, "Turn it into a prompt.");
+        let logged = String::from_utf8(buffer.0.lock().unwrap().clone()).unwrap();
+        assert!(
+            logged.contains("layer two matched a saved snippet"),
+            "{logged}"
+        );
+        assert!(logged.contains("snippet=prompt"), "{logged}");
+    }
+
+    /// The live half of the intent fix: the local model behind the rewrite
+    /// endpoint has to pick by what each snippet does, not by name similarity.
+    /// Ignored like the Silero tests; run it with a server on 8081:
+    /// `cargo test rewrite -- --ignored --nocapture`.
+    #[test]
+    #[ignore = "requires a running local model server; set HEX_LOCAL_MATCH_URL (default http://127.0.0.1:8081/v1) and HEX_LOCAL_MATCH_MODEL (default local)"]
+    fn the_local_model_matches_anthonys_snippets_by_intent() {
+        let endpoint = std::env::var("HEX_LOCAL_MATCH_URL")
+            .unwrap_or_else(|_| "http://127.0.0.1:8081/v1".to_string());
+        let model = std::env::var("HEX_LOCAL_MATCH_MODEL").unwrap_or_else(|_| "local".to_string());
+        let remote = remote(&endpoint, &model);
+        let snippets = anthonys_snippets();
+
+        let prompt = layer_two(
+            "make this a structured prompt".to_string(),
+            &snippets,
+            &remote,
+            true,
+        );
+        assert_eq!(
+            prompt, snippets[0].1,
+            "structured prompt should pick prompt"
+        );
+
+        let structure = layer_two(
+            "add structure for readability".to_string(),
+            &snippets,
+            &remote,
+            true,
+        );
+        assert_eq!(
+            structure, snippets[3].1,
+            "readability should pick structure"
+        );
     }
 }
