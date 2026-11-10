@@ -151,6 +151,34 @@ fn schedule(model: &mut IndicatorModel, start: Instant) -> Vec<DotFrame> {
         .collect()
 }
 
+/// A dots → bars → dots transition at 60 fps for the render review: two
+/// seconds of silence, one and a half of steady speech, then two of silence.
+/// Select it with `HEX_HUD_TRANSITION=1`.
+fn transition_schedule(model: &mut IndicatorModel, start: Instant) -> Vec<DotFrame> {
+    let mut started = false;
+    (0..330)
+        .map(|n| {
+            let t = n as f32 / 60.0;
+            let now = start + Duration::from_secs_f32(t);
+            if !started {
+                model.handle(HudEvent::Started, now, false);
+                started = true;
+            }
+            let db = if (2.0..3.5).contains(&t) { -30.0 } else { -70.0 };
+            let rms = 10_f32.powf(db / 20.0);
+            model.handle(
+                HudEvent::Meter {
+                    average: rms,
+                    peak: (rms * 3.0).min(1.0),
+                },
+                now,
+                false,
+            );
+            model.step(now, 1.0 / 60.0, false)
+        })
+        .collect()
+}
+
 /// A 1512 × 982 point 14-inch MacBook Pro: a 32 pt notch 185 pt wide.
 fn macbook() -> crate::rune_hud::hud_placement::Screen {
     crate::rune_hud::hud_placement::Screen {
@@ -250,6 +278,8 @@ fn backdrop(
 /// MacBook Pro, or with `HEX_HUD_SCREEN=studio` on a Studio Display (no
 /// notch); `HEX_HUD_EARS=1` draws Labs' notch indicator; `HEX_HUD_THEME=light` draws over a light desktop. `HEX_HUD_DUMP=<file>` also writes
 /// every frame's shader inputs, for rendering the same frames elsewhere.
+/// `HEX_HUD_TRANSITION=1` draws a dots → bars → dots transition instead of
+/// the scheduled dictation.
 #[test]
 #[ignore = "writes frames for a review clip"]
 fn rune_hud_frames() {
@@ -275,7 +305,11 @@ fn rune_hud_frames() {
     let backdrop = backdrop(&screen, &placed);
     let mut model = IndicatorModel::new(tuning, start);
     model.set_island(layout.island);
-    let frames = schedule(&mut model, start);
+    let frames = if std::env::var("HEX_HUD_TRANSITION").as_deref() == Ok("1") {
+        transition_schedule(&mut model, start)
+    } else {
+        schedule(&mut model, start)
+    };
 
     let instance =
         wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle_from_env());
