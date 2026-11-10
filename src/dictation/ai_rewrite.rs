@@ -115,9 +115,27 @@ struct Content {
     content: String,
 }
 
-/// Cleans `text` with the model `source` names. `Err` means "keep the text as
-/// it is"; the caller records why.
-pub(crate) fn clean(source: &ModelSource, port: u16, text: &str) -> Result<String> {
+/// The instruction the model receives: the saved prompt, or the shipped
+/// wording when the saved one is empty.
+fn system_instruction(saved: &str) -> &str {
+    let saved = saved.trim();
+    if saved.is_empty() {
+        SYSTEM_PROMPT
+    } else {
+        saved
+    }
+}
+
+/// Cleans `text` with the model `source` names. `instruction` is the saved AI
+/// cleanup prompt; empty uses [`SYSTEM_PROMPT`], so clearing the box never
+/// degrades silently. `Err` means "keep the text as it is"; the caller
+/// records why.
+pub(crate) fn clean(
+    source: &ModelSource,
+    port: u16,
+    instruction: &str,
+    text: &str,
+) -> Result<String> {
     // A snippet cue is a command, not prose: answer it here, before the model
     // can reword it into a miss, and so a cue costs no model call. The final
     // `snippets` step still covers everything this misses.
@@ -136,6 +154,7 @@ pub(crate) fn clean(source: &ModelSource, port: u16, text: &str) -> Result<Strin
         "local model"
     };
     let url = source.chat_url(port);
+    let system = system_instruction(instruction);
     let body = Request {
         model: source
             .is_remote()
@@ -143,7 +162,7 @@ pub(crate) fn clean(source: &ModelSource, port: u16, text: &str) -> Result<Strin
         messages: vec![
             Message {
                 role: "system",
-                content: SYSTEM_PROMPT.to_string(),
+                content: system.to_string(),
             },
             Message {
                 role: "user",
@@ -320,7 +339,7 @@ mod tests {
         };
         // A remote source with nothing set would fail, so an Ok here proves the
         // length gate ran before the request was built.
-        assert_eq!(clean(&source, 9, "too short").unwrap(), "too short");
+        assert_eq!(clean(&source, 9, "", "too short").unwrap(), "too short");
     }
 
     #[test]
@@ -328,6 +347,7 @@ mod tests {
         let error = clean(
             &ModelSource::default(),
             9,
+            "",
             "a dictation long enough to send",
         )
         .unwrap_err();
@@ -340,8 +360,16 @@ mod tests {
             source: crate::app_settings::AiSource::Remote,
             ..ModelSource::default()
         };
-        let error = clean(&source, 9, "a dictation long enough to send").unwrap_err();
+        let error = clean(&source, 9, "", "a dictation long enough to send").unwrap_err();
         assert!(error.to_string().contains("endpoint address is empty"));
+    }
+
+    #[test]
+    fn cleanup_uses_the_saved_prompt_and_falls_back_when_empty() {
+        assert_eq!(system_instruction("Fix the words."), "Fix the words.");
+        assert_eq!(system_instruction("  Fix the words.  "), "Fix the words.");
+        assert_eq!(system_instruction(""), SYSTEM_PROMPT);
+        assert_eq!(system_instruction("   "), SYSTEM_PROMPT);
     }
 
     #[test]

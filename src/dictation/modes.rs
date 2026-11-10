@@ -27,6 +27,11 @@ pub struct ModeRuntime {
     /// Where dictation cleanup's model call goes, and the local server's port.
     ai_source: crate::app_settings::ModelSource,
     llm_port: u16,
+    /// Whether the `ai-rewrite` step runs at all.
+    ai_cleanup_enabled: bool,
+    /// The instruction the model receives; empty falls back in
+    /// [`crate::dictation::ai_rewrite::clean`].
+    ai_cleanup_prompt: String,
     modes: Vec<DictationMode>,
     reads_page: bool,
 }
@@ -52,6 +57,8 @@ impl ModeRuntime {
             wrap_code_terms: processing.wrap_code_terms,
             ai_source: settings.dictation_rewrite.clone(),
             llm_port: settings.llm.port,
+            ai_cleanup_enabled: settings.ai_cleanup.enabled,
+            ai_cleanup_prompt: settings.ai_cleanup.prompt.clone(),
             modes: processing.modes.clone(),
             reads_page: uses_page(processing),
         }
@@ -100,23 +107,33 @@ impl ModeRuntime {
         let mut processed =
             Profiles::new(profile).process_cancellable(&text, language, context, cancelled, source);
         let ids = processed.transformations.clone();
-        match ids
-            .iter()
-            .position(|id| id == crate::dictation::ai_rewrite::TRANSFORMATION_ID)
-        {
-            None => {
-                processed.apply_transformations(transformations, context, cancelled, source);
-            }
-            Some(index) => {
-                // The model step sits mid-list: the rules decided from the raw
-                // words (bullets, orphans) run before it, and the rules applied
-                // to its output (paragraphs, colon cues, snippets) after.
-                processed.transformations = ids[..index].to_vec();
-                processed.apply_transformations(transformations, context, cancelled, source);
-                self.run_ai(&mut processed, cancelled);
-                processed.transformations = ids[index + 1..].to_vec();
-                processed.apply_transformations(transformations, context, cancelled, source);
-                processed.transformations = ids;
+        if !self.ai_cleanup_enabled {
+            // Off drops the step from the ordering entirely: the rules on
+            // either side run back to back, with no model call and no gap.
+            processed.transformations = ids
+                .into_iter()
+                .filter(|id| id != crate::dictation::ai_rewrite::TRANSFORMATION_ID)
+                .collect();
+            processed.apply_transformations(transformations, context, cancelled, source);
+        } else {
+            match ids
+                .iter()
+                .position(|id| id == crate::dictation::ai_rewrite::TRANSFORMATION_ID)
+            {
+                None => {
+                    processed.apply_transformations(transformations, context, cancelled, source);
+                }
+                Some(index) => {
+                    // The model step sits mid-list: the rules decided from the raw
+                    // words (bullets, orphans) run before it, and the rules applied
+                    // to its output (paragraphs, colon cues, snippets) after.
+                    processed.transformations = ids[..index].to_vec();
+                    processed.apply_transformations(transformations, context, cancelled, source);
+                    self.run_ai(&mut processed, cancelled);
+                    processed.transformations = ids[index + 1..].to_vec();
+                    processed.apply_transformations(transformations, context, cancelled, source);
+                    processed.transformations = ids;
+                }
             }
         }
         // After the rewrite: the model may lowercase or drop a backtick it saw
@@ -136,8 +153,12 @@ impl ModeRuntime {
             return;
         }
         let started = std::time::Instant::now();
-        let result =
-            crate::dictation::ai_rewrite::clean(&self.ai_source, self.llm_port, &processed.text);
+        let result = crate::dictation::ai_rewrite::clean(
+            &self.ai_source,
+            self.llm_port,
+            &self.ai_cleanup_prompt,
+            &processed.text,
+        );
         let observation = processed.observation.get_or_insert_with(|| {
             crate::dictation::processor::ProcessingObservation {
                 profile: "Custom transformations".into(),
@@ -546,7 +567,7 @@ mod tests {
     }
 
     #[test]
-    fn the_ai_step_runs_between_the_rules_before_and_after_it() {
+    fn cleanup_on_runs_the_model_step_between_the_rules() {
         // Port 9 answers nothing, so the model step fails and keeps the text:
         // what the test checks is where it sat, not what it said.
         let runtime = runtime(|settings| {
@@ -587,6 +608,51 @@ mod tests {
                 "no-trailing-punctuation".to_string()
             ]
         );
+    }
+
+    #[test]
+    fn cleanup_off_skips_the_model_step_and_keeps_the_rule_order() {
+        let build = |enabled: bool| {
+            runtime(|settings| {
+                settings.llm.port = 9;
+                settings.ai_cleanup.enabled = enabled;
+                settings.dictation_processing.default_mode.transformations = vec![
+                    "lowercase".into(),
+                    crate::dictation::ai_rewrite::TRANSFORMATION_ID.into(),
+                    "no-trailing-punctuation".into(),
+                ];
+            })
+        };
+        let absent = runtime(|settings| {
+            settings.dictation_processing.default_mode.transformations =
+                vec!["lowercase".into(), "no-trailing-punctuation".into()];
+        });
+        let transformations = crate::personal_commands::TransformationClient::default();
+        let context = crate::dictation::context::ContextSnapshot::default();
+        let run = |runtime: &ModeRuntime| {
+            runtime.process(
+                "Keep OpenCode Exact!",
+                "en",
+                &context,
+                &transformations,
+                crate::dictation::processor::Source::Dictation,
+            )
+        };
+
+        let off = run(&build(false));
+        let without = run(&absent);
+
+        // The rules on either side ran back to back; no model call happened.
+        assert_eq!(off.text, "keep opencode exact");
+        assert!(
+            off.observation
+                .as_ref()
+                .is_none_or(|observation| observation.fallback.is_none()),
+            "{:?}",
+            off.observation
+        );
+        assert_eq!(off.text, without.text);
+        assert_eq!(off.transformations, without.transformations);
     }
 
     #[test]
