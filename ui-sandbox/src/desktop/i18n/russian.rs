@@ -24,7 +24,6 @@ const TRANSLATIONS: &[(&str, &str)] = &[
     ("Runs on the local model server when it is running.", "Работает на локальном сервере модели, когда он запущен."),
     ("Runs on the local model server.", "Работает на локальном сервере модели."),
     ("Runs on the remote endpoint.", "Работает на удалённой точке доступа."),
-    ("Runs on the remote endpoint Dictation names.", "Работает на удалённой точке доступа, указанной в «Диктовке»."),
     ("The instruction the model follows", "Инструкция, которой следует модель"),
     ("The instruction the model follows for every dictation. Leave it empty to use the shipped wording.", "Инструкция, которой следует модель для каждой диктовки. Оставьте пустой, чтобы использовать встроенный текст."),
     ("Hex picks a fast model", "Hex выбирает быструю модель"),
