@@ -32,6 +32,22 @@ const RING_BIRTH: f32 = 0.15;
 /// How long Sweep's beam takes to fade where it is once done begins, s.
 const BEAM_FADE: f32 = 0.14;
 
+/// The voice bars' rise and fall time constants, s: the approved in-speech
+/// motion (90 ms rise, 220 ms fall).
+const BAR_RISE: f32 = 0.09;
+const BAR_FALL: f32 = 0.22;
+/// The fall constant inside the settle band, s. The last part of a fall is a
+/// longer glide, so the row settles into the dots instead of snapping there
+/// the moment the voice stops.
+const DOT_SETTLE: f32 = 0.6;
+/// The rise constant while a bar is still a dot, s: the first width change
+/// after silence eases in instead of spiking. Above the track threshold the
+/// approved [`BAR_RISE`] takes over.
+const DOT_EASE: f32 = 0.35;
+/// The settle band's top, as a multiple of the track threshold. Below it the
+/// fall uses [`DOT_SETTLE`]; above it the approved [`BAR_FALL`] is untouched.
+const DOT_BAND: f32 = 2.0;
+
 /// HUD Lab's synthetic voice: phrases of syllables at about 4.5 a second
 /// with breaths between, as a 0–1 level.
 pub fn demo_level(time: f32) -> f32 {
@@ -204,6 +220,15 @@ impl Trace {
         let b = (a + HISTORY - 1) % HISTORY;
         self.history[a * 5 + channel] * (1.0 - k) + self.history[b * 5 + channel] * k
     }
+}
+
+/// The bar value at or under which the shader draws only the track dot:
+/// `max(reach * value, track)` equals `track`. Mirrors `voice_bars` in
+/// `rune_hud.wgsl`.
+fn dot_threshold(tuning: &Tuning) -> f32 {
+    let track = (tuning.bar_width * 0.5).max(1.0);
+    let reach = (tuning.height * 0.5 - 6.5).max(track);
+    track / reach
 }
 
 fn smoothstep(a: f32, b: f32, x: f32) -> f32 {
@@ -926,6 +951,8 @@ impl Scope {
             // voice's first level.
             let birth = smoothstep(0.0, 0.16, self.bar_age);
             let count = bars as f32;
+            let dots_at = dot_threshold(&self.tuning);
+            let settle_top = dots_at * DOT_BAND;
             for (index, dot) in self.dots.iter_mut().take(bars).enumerate() {
                 // Two slow sines at different rates and offsets: every bar
                 // moves at its own pace, so the row never shares one peak or
@@ -942,9 +969,15 @@ impl Scope {
                 // Each bar follows on its own time constant, so a syllable
                 // glides instead of flickering up and down at frame rate.
                 let follow = if target > self.bar_levels[index] {
-                    0.09
+                    if self.bar_levels[index] <= dots_at {
+                        DOT_EASE
+                    } else {
+                        BAR_RISE
+                    }
+                } else if self.bar_levels[index] <= settle_top {
+                    DOT_SETTLE
                 } else {
-                    0.22
+                    BAR_FALL
                 };
                 let value = &mut self.bar_levels[index];
                 *value += (target - *value) * (1.0 - (-hb / follow).exp());
@@ -1386,6 +1419,93 @@ mod tests {
     }
 
     #[test]
+    fn the_bars_settle_into_the_dots_over_the_longer_period() {
+        let tuning = Tuning::default();
+        let bars = tuning.bars as usize;
+        let threshold = dot_threshold(&tuning);
+        let frame = |db: f32| Frame {
+            loudness: db,
+            ..recording(0.0)
+        };
+        let mut scope = Scope::new(tuning);
+        run(&mut scope, 2.0, frame(-30.0));
+        assert!(
+            scope.dots()[..bars].iter().all(|dot| dot[0] > threshold),
+            "steady speech is a row of bars"
+        );
+
+        let mut entries = vec![None; bars];
+        let mut all_dots_at = None;
+        for i in 0..90 {
+            scope.advance(1.0 / 60.0, frame(-70.0));
+            let t = (i + 1) as f32 / 60.0;
+            for (index, dot) in scope.dots()[..bars].iter().enumerate() {
+                if entries[index].is_none() && dot[0] <= threshold {
+                    entries[index] = Some(t);
+                }
+            }
+            if all_dots_at.is_none() && entries.iter().all(Option::is_some) {
+                all_dots_at = Some(t);
+            }
+        }
+
+        let first = entries.iter().flatten().copied().fold(f32::MAX, f32::min);
+        let last = entries.iter().flatten().copied().fold(0.0, f32::max);
+        assert!(
+            first >= 0.50,
+            "no bar reaches the dots before the longer period: {first}"
+        );
+        assert!(last <= 0.80, "every bar is a dot by 0.80 s: {last}");
+        assert!(
+            all_dots_at.is_some_and(|t| t <= 0.80),
+            "the whole row settles: {all_dots_at:?}"
+        );
+    }
+
+    #[test]
+    fn the_first_bar_after_silence_eases_in() {
+        let tuning = Tuning::default();
+        let bars = tuning.bars as usize;
+        let threshold = dot_threshold(&tuning);
+        let frame = |db: f32| Frame {
+            loudness: db,
+            ..recording(0.0)
+        };
+        let mut scope = Scope::new(tuning);
+        run(&mut scope, 2.0, frame(-30.0));
+        run(&mut scope, 3.0, frame(-70.0));
+        assert!(
+            scope.dots()[..bars].iter().all(|dot| dot[0] <= threshold),
+            "silence rests in the dots"
+        );
+
+        let mut first_above = None;
+        for i in 0..60 {
+            scope.advance(1.0 / 60.0, frame(-30.0));
+            let t = (i + 1) as f32 / 60.0;
+            if scope.dots()[..bars].iter().any(|dot| dot[0] > threshold) {
+                first_above = Some(t);
+                break;
+            }
+        }
+        let first = first_above.expect("the bars leave the dots");
+        assert!(
+            (0.12..=0.22).contains(&first),
+            "the first width change eases in: {first}"
+        );
+
+        run(&mut scope, 0.15, frame(-30.0));
+        let high = scope.dots()[..bars]
+            .iter()
+            .map(|dot| dot[0])
+            .fold(0.0, f32::max);
+        assert!(
+            high > 0.45,
+            "the in-speech rise stays quick after the dot: {high}"
+        );
+    }
+
+    #[test]
     fn a_full_voice_keeps_the_bars_varied_and_unpinned() {
         let bars_tuning = |auto_level| Tuning {
             auto_level,
@@ -1487,6 +1607,50 @@ mod tests {
             (first - second).abs() < 0.12,
             "the second capture reads like the first: {first} then {second}"
         );
+    }
+
+    #[test]
+    #[ignore = "D1 measurement; run with --ignored --nocapture"]
+    fn measure_the_dot_regime_transitions() {
+        let tuning = Tuning::default();
+        let track = (tuning.bar_width * 0.5).max(1.0);
+        let reach = (tuning.height * 0.5 - 6.5).max(track);
+        let threshold = track / reach;
+        let bars = tuning.bars as usize;
+        let frame = |db: f32| Frame {
+            stage: Stage::Recording,
+            visible: true,
+            loudness: db,
+            reduce_motion: false,
+        };
+        let log_frame = |label: &str, t: f32, scope: &Scope| {
+            let values = &scope.dots()[..bars];
+            let dot_count = values.iter().filter(|dot| dot[0] <= threshold).count();
+            let row = values
+                .iter()
+                .map(|dot| format!("{:.4}", dot[0]))
+                .collect::<Vec<_>>()
+                .join(",");
+            println!("{label},{t:.4},{:.4},{dot_count},{row}", scope.level());
+        };
+        println!("track_radius={track} reach={reach} threshold={threshold:.4} bars={bars}");
+        println!("transition,t,level,dot_count,bars");
+
+        let mut scope = Scope::new(tuning);
+        run(&mut scope, 1.0, frame(-30.0));
+        for i in 0..60 {
+            log_frame("steady-speech", i as f32 / 60.0, &scope);
+            scope.advance(1.0 / 60.0, frame(-30.0));
+        }
+        for i in 0..=120 {
+            log_frame("speech-to-silence", i as f32 / 60.0, &scope);
+            scope.advance(1.0 / 60.0, frame(-70.0));
+        }
+        run(&mut scope, 1.0, frame(-70.0));
+        for i in 0..=90 {
+            log_frame("silence-to-speech", i as f32 / 60.0, &scope);
+            scope.advance(1.0 / 60.0, frame(-30.0));
+        }
     }
 
     #[test]
