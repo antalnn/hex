@@ -31,9 +31,9 @@ const FIELD_WIDTH: f32 = 280.0;
 const ROW_HEIGHT: f32 = 36.0;
 const PADDING: f32 = 18.0;
 const MODAL_WIDTH: f32 = 640.0;
-/// What the local server serves and the switch that turns it on, said on its
-/// card. The card above it carries the AI cleanup switch and prompt.
-const LOCAL_MODEL_PURPOSE: &str = "The model server the AI cleanup card uses when Dictation is set to Local. Hex starts it with the app.";
+/// What the local server is for, said on its card. The card above it holds
+/// the AI cleanup switch, prompt and Local choice, with the server controls.
+const LOCAL_MODEL_PURPOSE: &str = "The model server AI cleanup uses when it runs on Local. Its controls sit with that choice above.";
 
 /// The endpoint, model and key of one feature's remote call.
 #[derive(Default)]
@@ -245,22 +245,18 @@ pub(super) fn pane(ui: &Ui, p: Paint, layer: &mut Vec<El>) -> (Vec<El>, El) {
     )
 }
 
-/// AI cleanup's switch, the prompt it follows, and where it runs. The card
-/// sits directly above the local model card, so the switch, the prompt and
-/// the server that serves the Local choice read together.
+/// AI cleanup's switch, prompt, and where it runs: Local on the server Hex
+/// owns, or Remote on the endpoint the fields below name.
 fn ai_cleanup_card(ui: &Ui, p: Paint) -> El {
     let enabled = ui.settings.ai_cleanup.enabled;
-    let local = ui.settings.dictation_rewrite.source == AiSource::Local;
-    let running = ui
-        .view
-        .as_ref()
-        .and_then(|view| view.local_model.as_ref())
-        .is_some_and(|snapshot| {
-            matches!(
-                snapshot.state,
-                crate::local_model::State::Ready | crate::local_model::State::External
-            )
-        });
+    let source = ui.settings.dictation_rewrite.source;
+    let local = source == AiSource::Local;
+    let snapshot = ui.view.as_ref().and_then(|view| view.local_model.as_ref());
+    let (state, start) = local_model_copy(snapshot.map(|snapshot| snapshot.state));
+    let running = matches!(
+        snapshot.map(|snapshot| snapshot.state),
+        Some(crate::local_model::State::Ready | crate::local_model::State::External)
+    );
     let where_it_runs = if !enabled {
         tr("Off: each dictation is pasted as transcribed, with no model step.")
     } else if local && running {
@@ -268,9 +264,9 @@ fn ai_cleanup_card(ui: &Ui, p: Paint) -> El {
     } else if local {
         tr("Runs on the local model server when it is running.")
     } else {
-        tr("Runs on the remote endpoint Dictation names.")
+        tr("Runs on the remote endpoint.")
     };
-    let rows = vec![
+    let mut rows = vec![
         toggle_row(
             p,
             "ai-cleanup-enabled",
@@ -294,17 +290,59 @@ fn ai_cleanup_card(ui: &Ui, p: Paint) -> El {
                 |ui: &mut Ui, _| open_cleanup_prompt(ui),
             ),
         ),
-        note("ai-cleanup-runs", where_it_runs, p.muted()),
+        source_row(p, "ai-cleanup", source, |ui: &mut Ui, source| {
+            ui.update(|settings| settings.dictation_rewrite.source = source);
+        }),
     ];
+    if local {
+        rows.push(toggle_row(
+            p,
+            "local-model-auto-start",
+            tr("Start with Hex"),
+            Some(tr(
+                "Start the local model server when Hex opens, and stop it when Hex quits",
+            )),
+            ui.settings.llm.enabled,
+            |ui: &mut Ui| {
+                ui.update(|settings| settings.llm.enabled = !settings.llm.enabled);
+            },
+        ));
+        rows.push(described_row(
+            p,
+            "local-model-state",
+            &state,
+            Some((format!("127.0.0.1:{}", ui.settings.llm.port), p.muted())),
+            local_model_control(p, start),
+        ));
+    } else {
+        let fields = &ui.model_sources.dictation;
+        rows.push(endpoint_row(
+            p,
+            "dictation",
+            &fields.endpoint,
+            |ui: &mut Ui| &mut ui.model_sources.dictation.endpoint,
+        ));
+        rows.push(model_row(p, "dictation", &fields.model, |ui: &mut Ui| {
+            &mut ui.model_sources.dictation.model
+        }));
+        rows.push(api_key_row(p, "dictation", &fields.key, |ui: &mut Ui| {
+            &mut ui.model_sources.dictation.key
+        }));
+        if ui.settings.dictation_rewrite.missing().is_some() {
+            rows.push(note(
+                "dictation-incomplete",
+                tr("Remote needs an endpoint that starts with http:// or https:// and a model name"),
+                p.warning(),
+            ));
+        }
+    }
+    rows.push(note("ai-cleanup-runs", where_it_runs, p.muted()));
     super::controls::section(p, "ai-cleanup-section", tr("AI cleanup"), rows)
 }
 
-/// The llama.cpp server Hex owns, with its state and a start or stop button.
-fn local_model_card(ui: &Ui, p: Paint) -> El {
-    let snapshot = ui.view.as_ref().and_then(|view| view.local_model.as_ref());
-    let (title, start) = local_model_copy(snapshot.map(|snapshot| snapshot.state));
-    let detail = format!("127.0.0.1:{}", ui.settings.llm.port);
-    let control = button(
+/// The llama.cpp server's Start or Stop, sent to the host that owns it.
+fn local_model_control(p: Paint, start: bool) -> El {
+    button(
         p,
         if start {
             "local-model-start"
@@ -324,31 +362,18 @@ fn local_model_card(ui: &Ui, p: Paint) -> El {
                 DesktopAction::StopLocalModel
             }));
         },
-    );
+    )
+}
+
+/// The llama.cpp server Hex owns: what it serves and its files. Start/Stop
+/// and the auto-start switch sit with the Local choice in the AI cleanup card
+/// above, where the server is chosen.
+fn local_model_card(_ui: &Ui, p: Paint) -> El {
     super::controls::section(
         p,
         "local-model-section",
         tr("Local model"),
         vec![
-            toggle_row(
-                p,
-                "local-model-auto-start",
-                tr("Start with Hex"),
-                Some(tr(
-                    "Start the local model server when Hex opens, and stop it when Hex quits",
-                )),
-                ui.settings.llm.enabled,
-                |ui: &mut Ui| {
-                    ui.update(|settings| settings.llm.enabled = !settings.llm.enabled);
-                },
-            ),
-            described_row(
-                p,
-                "local-model-state",
-                &title,
-                Some((detail, p.muted())),
-                control,
-            ),
             note("local-model-purpose", tr(LOCAL_MODEL_PURPOSE), p.muted()),
             described_row(
                 p,
@@ -388,39 +413,9 @@ fn local_model_copy(state: Option<crate::local_model::State>) -> (&'static str, 
 }
 
 fn dictation_card(ui: &Ui, p: Paint, layer: &mut Vec<El>) -> El {
-    let source = ui.settings.dictation_rewrite.source;
-    let fields = &ui.model_sources.dictation;
-    let mut rows = vec![source_row(p, "dictation", source, |ui, source| {
-        ui.update(|settings| settings.dictation_rewrite.source = source);
-    })];
-    // The speech model is the local transcriber's, so it belongs beside the
-    // Local choice; the language applies whichever source cleans the text.
-    if source == AiSource::Local {
-        rows.push(super::general::speech_model_row(ui, p));
-    }
+    let mut rows = vec![super::general::speech_model_row(ui, p)];
     if let Some(row) = super::general::language_row(ui, p, layer) {
         rows.push(row);
-    }
-    if source == AiSource::Remote {
-        rows.push(endpoint_row(
-            p,
-            "dictation",
-            &fields.endpoint,
-            |ui: &mut Ui| &mut ui.model_sources.dictation.endpoint,
-        ));
-        rows.push(model_row(p, "dictation", &fields.model, |ui: &mut Ui| {
-            &mut ui.model_sources.dictation.model
-        }));
-        rows.push(api_key_row(p, "dictation", &fields.key, |ui: &mut Ui| {
-            &mut ui.model_sources.dictation.key
-        }));
-        if ui.settings.dictation_rewrite.missing().is_some() {
-            rows.push(note(
-                "dictation-incomplete",
-                tr("Remote needs an endpoint that starts with http:// or https:// and a model name"),
-                p.warning(),
-            ));
-        }
     }
     super::controls::section(p, "dictation-model", tr("Dictation"), rows)
 }
@@ -868,9 +863,9 @@ mod tests {
 
     #[test]
     fn the_local_card_says_it_serves_the_ai_cleanup() {
-        assert!(LOCAL_MODEL_PURPOSE.contains("AI cleanup card"));
-        assert!(LOCAL_MODEL_PURPOSE.contains("Dictation is set to Local"));
-        assert!(LOCAL_MODEL_PURPOSE.contains("starts it with the app"));
+        assert!(LOCAL_MODEL_PURPOSE.contains("AI cleanup"));
+        assert!(LOCAL_MODEL_PURPOSE.contains("Local"));
+        assert!(LOCAL_MODEL_PURPOSE.contains("controls sit with that choice"));
         // The Modes pane is hidden (`Pane::Modes` is never shown), so naming
         // it sent people to a surface that is not in the app.
         assert!(!LOCAL_MODEL_PURPOSE.contains("Modes"));
@@ -950,7 +945,7 @@ mod tests {
         open_prompts(&mut ui);
         assert!(prompts_modal(&ui, p).is_some());
 
-        // The Dictation card showing its remote fields builds too.
+        // The AI cleanup card showing its remote fields builds too.
         ui.settings.dictation_rewrite.source = AiSource::Remote;
         let mut layer = Vec::new();
         let _ = pane(&ui, p, &mut layer);

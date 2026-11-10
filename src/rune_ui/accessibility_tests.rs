@@ -367,11 +367,14 @@ fn models_reads_the_features_then_the_server() {
             .unwrap_or_else(|| panic!("{key} is missing"))
     };
     let order = [
-        "dictation-source",
         "rewrite-endpoint-field",
         "ai-cleanup-enabled",
         "ai-cleanup-prompt",
+        "ai-cleanup-run-on",
+        "ai-cleanup-source",
+        "local-model-auto-start",
         "local-model-state",
+        "local-model-files",
     ];
     let indices: Vec<usize> = order.iter().map(|key| index(key)).collect();
     assert!(
@@ -426,14 +429,15 @@ fn ai_cleanup_reads_its_switch_prompt_and_server() {
 }
 
 /// Rewrite selection always calls a remote endpoint: the Models pane shows its
-/// address fields and no Local choice, while Dictation keeps its own choice.
+/// address fields and no Local choice, while AI cleanup keeps the one Run on
+/// choice the dictation cleanup reads.
 #[test]
 fn rewrite_selection_calls_a_remote_endpoint_only() {
     let mut rt = runtime("portal");
     open_models(&mut rt);
     assert!(
-        rt.find("dictation-source").is_some(),
-        "Dictation keeps Local or Remote"
+        rt.find("ai-cleanup-source").is_some(),
+        "AI cleanup carries the Local or Remote choice"
     );
     assert!(
         rt.find("rewrite-source").is_none(),
@@ -447,11 +451,35 @@ fn rewrite_selection_calls_a_remote_endpoint_only() {
     assert!(rt.find("rewrite-key-field").is_some());
     assert!(
         rt.find("dictation-endpoint-field").is_none(),
-        "Dictation starts on Local"
+        "AI cleanup starts on Local"
     );
 }
 
-/// The speech model follows the Local choice; the language shows either way;
+/// The AI cleanup card's Run on controls read `dictation_rewrite.source`, the
+/// setting the dictation cleanup already uses: Remote swaps the local server
+/// controls for the endpoint, model and key rows.
+#[test]
+fn the_ai_cleanup_card_reads_the_reused_source_setting() {
+    let mut rt = runtime("portal");
+    open_models(&mut rt);
+    assert!(rt.find("ai-cleanup-run-on").is_some());
+    assert!(rt.find("local-model-auto-start").is_some());
+    assert!(rt.find("local-model-state").is_some());
+
+    rt.state.settings.dictation_rewrite.source = crate::app_settings::AiSource::Remote;
+    settle(&mut rt);
+    assert!(rt.find("dictation-endpoint-field").is_some());
+    assert!(rt.find("dictation-model-field").is_some());
+    assert!(rt.find("dictation-key-field").is_some());
+    assert!(
+        rt.find("local-model-auto-start").is_none(),
+        "the local controls hide while Remote runs"
+    );
+    assert!(rt.find("local-model-state").is_none());
+}
+
+/// The speech model and language stay on Dictation whichever source cleans
+/// the text, because the model transcribes and the source only cleans;
 /// General keeps neither row.
 #[test]
 fn the_dictation_card_holds_the_speech_model_and_language() {
@@ -471,8 +499,8 @@ fn the_dictation_card_holds_the_speech_model_and_language() {
     rt.settle_all();
     rt.frame(0.0);
     assert!(
-        rt.find("transcription-control").is_none(),
-        "Remote hides the speech model"
+        rt.find("transcription-control").is_some(),
+        "the speech model transcribes whichever source cleans"
     );
     assert!(language_row(&rt), "Language shows for Remote too");
 

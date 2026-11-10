@@ -23,6 +23,7 @@ const TRANSLATIONS: &[(&str, &str)] = &[
     ("Prompt", "Invite"),
     ("Runs on the local model server when it is running.", "S'exécute sur le serveur de modèle local lorsqu'il est en marche."),
     ("Runs on the local model server.", "S'exécute sur le serveur de modèle local."),
+    ("Runs on the remote endpoint.", "S'exécute sur le point de terminaison distant."),
     ("Runs on the remote endpoint Dictation names.", "S'exécute sur le point de terminaison distant indiqué par Dictée."),
     ("The instruction the model follows", "L'instruction que suit le modèle"),
     ("The instruction the model follows for every dictation. Leave it empty to use the shipped wording.", "L'instruction que suit le modèle pour chaque dictée. Laissez vide pour utiliser le texte fourni."),
