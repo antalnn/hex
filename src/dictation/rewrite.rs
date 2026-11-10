@@ -20,25 +20,33 @@ use serde::{Deserialize, Serialize};
 
 use crate::app_settings::{AppSettings, RemoteModel};
 
-/// How long one attempt may take. The same 30 s the plan fixed; a rewrite of a
-/// selection is one pass, so a server this slow is not going to answer.
-const TIMEOUT: Duration = Duration::from_secs(30);
+/// How long one attempt may take. A reasoning model spends a minute or more
+/// thinking before it writes: the goal prompt took 70 s for one short
+/// selection. 180 s leaves room for a longer selection, and a timeout is not
+/// retried, so a slow model costs one wait rather than two.
+const TIMEOUT: Duration = Duration::from_secs(180);
 /// Transport failures get one more attempt: the server may be between a
-/// restart and its first answer.
+/// restart and its first answer. A timeout is not a transport failure, so it
+/// returns at once.
 const RETRIES: usize = 1;
 /// The line that frames the selected text in the user message.
 const SENTINEL: &str = "-----";
 /// The reply budget for a remote endpoint. It has to cover reasoning as well as
-/// the text: a reasoning model such as Muse Spark spends its first 1,500 tokens
-/// thinking and returns nothing when that is the whole budget (measured
-/// 2026-11-08, 1,498 of 1,500 on reasoning with an empty reply).
-const REMOTE_MAX_TOKENS: u32 = 4_096;
+/// the text: a reasoning model can spend the whole budget thinking and return
+/// nothing. The goal prompt measured 4,095 reasoning tokens and 299 answer
+/// tokens for a two-sentence selection, so 16,384 leaves room for the plan and
+/// the verbatim source of a longer selection.
+const REMOTE_MAX_TOKENS: u32 = 16_384;
 /// The snippet match answers with one name, but a reasoning model still spends
 /// tokens thinking first, as it does for a rewrite.
-const MATCH_MAX_TOKENS: u32 = 1_024;
+const MATCH_MAX_TOKENS: u32 = 8_192;
 /// The match runs ahead of the rewrite, so it gets a shorter deadline than the
 /// rewrite itself: a slow match is worth less than the instruction as spoken.
-const MATCH_TIMEOUT: Duration = Duration::from_secs(12);
+const MATCH_TIMEOUT: Duration = Duration::from_secs(45);
+/// Characters of each saved instruction the match sees. A prompt can be
+/// thousands of characters long, and the classifier only needs its intent; a
+/// long catalogue made every match slower and more fragile.
+const MATCH_PROMPT_CHARS: usize = 240;
 /// A recording shorter than this is a fragment, not an instruction the model
 /// can classify.
 const MATCH_MIN_WORDS: usize = 3;
@@ -322,6 +330,12 @@ fn chat(
                     return Err(eyre!(
                         "the model did not answer: {}",
                         crate::net::model_reason(&error)
+                    ));
+                }
+                if matches!(&error, ureq::Error::Timeout(_)) {
+                    return Err(eyre!(
+                        "the model did not answer within {} s",
+                        timeout.as_secs()
                     ));
                 }
                 last = Some(error);
@@ -655,7 +669,7 @@ fn match_snippet(
 fn match_messages(instruction: &str, snippets: &[(String, String)]) -> Vec<Message> {
     let catalogue = snippets
         .iter()
-        .map(|(name, prompt)| format!("- {name}: {prompt}"))
+        .map(|(name, prompt)| format!("- {name}: {}", excerpt(prompt)))
         .collect::<Vec<_>>()
         .join("\n");
     let examples = MATCH_EXAMPLES
@@ -688,6 +702,17 @@ fn match_messages(instruction: &str, snippets: &[(String, String)]) -> Vec<Messa
         ),
     });
     messages
+}
+
+/// The start of a saved instruction, bounded for the match call.
+fn excerpt(prompt: &str) -> String {
+    let prompt = prompt.trim();
+    if prompt.chars().count() <= MATCH_PROMPT_CHARS {
+        return prompt.to_string();
+    }
+    let mut excerpt: String = prompt.chars().take(MATCH_PROMPT_CHARS).collect();
+    excerpt.push('…');
+    excerpt
 }
 
 /// The name and prompt a match reply names, or nothing. Only a reply that is a
@@ -739,6 +764,14 @@ mod tests {
         let reply = r#"{"choices":[{"message":{"role":"assistant","content":null}}]}"#;
         let parsed: Response = serde_json::from_str(reply).unwrap();
         assert_eq!(parsed.choices[0].message.content, "");
+    }
+
+    #[test]
+    fn a_long_snippet_instruction_is_excerpted() {
+        let long = "word ".repeat(200);
+        let short = excerpt(&long);
+        assert!(short.chars().count() <= MATCH_PROMPT_CHARS + 1);
+        assert!(short.ends_with('…'));
     }
 
     #[test]
@@ -1228,13 +1261,13 @@ mod tests {
     }
 
     #[test]
-    fn the_match_call_carries_each_snippets_instruction_text() {
+    fn the_match_call_carries_each_snippets_instruction() {
         let snippets = anthonys_snippets();
         let messages = match_messages("make this a structured prompt", &snippets);
         let user = &messages.last().unwrap().content;
         for (name, prompt) in &snippets {
             assert!(
-                user.contains(&format!("- {name}: {prompt}")),
+                user.contains(&format!("- {name}: {}", excerpt(prompt))),
                 "missing {name}: {user}"
             );
         }

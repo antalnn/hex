@@ -44,7 +44,7 @@ pub(crate) const DEFAULT_TIMEOUT: Duration = Duration::from_secs(20);
 const MAX_TOKENS: u32 = 1_500;
 /// The reply budget for a remote endpoint, which covers reasoning as well as
 /// the text; [`crate::dictation::rewrite`] explains the measurement.
-const REMOTE_MAX_TOKENS: u32 = 4_096;
+const REMOTE_MAX_TOKENS: u32 = 16_384;
 /// Shorter than this is not worth a model call.
 const MIN_CHARS: usize = 12;
 
