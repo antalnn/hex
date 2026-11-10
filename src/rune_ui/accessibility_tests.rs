@@ -413,6 +413,16 @@ fn ai_cleanup_reads_its_switch_prompt_and_server() {
     settle(&mut rt);
     assert!(!rt.state.settings.ai_cleanup.enabled);
     assert!(!states(&node(&rt, "ai-cleanup-enabled")).contains(&"checked"));
+
+    assert!(rt.accessibility_action("open-ai-cleanup-prompt", Action::Click, None));
+    settle(&mut rt);
+    let warning = node(&rt, "ai-cleanup-model-limit");
+    assert!(
+        warning["children"][0]["name"]
+            .as_str()
+            .is_some_and(|name| name.contains("Results depend on the local model")),
+        "{warning}"
+    );
 }
 
 /// Rewrite selection always calls a remote endpoint: the Models pane shows its

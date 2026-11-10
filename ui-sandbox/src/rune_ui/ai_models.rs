@@ -770,6 +770,13 @@ pub(super) fn cleanup_modal(ui: &Ui, p: Paint) -> Option<[El; 2]> {
         .border(p.hair, c.border_weak)
         .on_press(|_: &mut Ui| {})
         .child(heading)
+        .child(note(
+            "ai-cleanup-model-limit",
+            tr(
+                "Results depend on the local model you installed and how large it is. A small model made only for cleaning up English cannot be expected to reliably fix grammar, false starts or abandoned clauses, and it loses a detailed instruction on long text.",
+            ),
+            p.warning(),
+        ))
         .child(prompt)
         .child(footer);
     for shadow in &p.k.elevation.overlay {
