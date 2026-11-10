@@ -112,7 +112,10 @@ struct Choice {
 
 #[derive(Deserialize)]
 struct Content {
-    #[serde(default)]
+    #[serde(
+        default,
+        deserialize_with = "crate::dictation::rewrite::content_or_empty"
+    )]
     content: String,
 }
 
@@ -205,15 +208,25 @@ pub(crate) fn clean(
             request = request.header(name, &value);
         }
     }
-    let mut response = request
-        .send(&json)
-        .map_err(|error| eyre!("the {who} did not answer: {}", crate::net::reason(&error)))?;
+    let mut response = request.send(&json).map_err(|error| {
+        eyre!(
+            "the {who} did not answer: {}",
+            crate::net::model_reason(&error)
+        )
+    })?;
     let reply = response
         .body_mut()
         .read_to_string()
         .map_err(|error| eyre!("the {who}'s reply could not be read: {error}"))?;
-    let parsed: Response = serde_json::from_str(&reply)
-        .map_err(|error| eyre!("the {who}'s reply was not JSON: {error}"))?;
+    let parsed: Response = serde_json::from_str(&reply).map_err(|error| {
+        tracing::warn!(
+            who,
+            reply = %reply,
+            %error,
+            "the model's reply did not match the expected shape"
+        );
+        eyre!("the {who}'s reply did not match the expected shape: {error}")
+    })?;
     let output = parsed
         .choices
         .first()
@@ -343,6 +356,13 @@ mod tests {
         assert!(SYSTEM_PROMPT.contains("You clean up dictated speech. You are not an editor."));
         assert!(SYSTEM_PROMPT.contains("Paragraphs: break where the topic shifts"));
         assert!(SYSTEM_PROMPT.contains("Reply with the corrected text only"));
+    }
+
+    #[test]
+    fn a_null_content_reads_as_an_empty_reply() {
+        let reply = r#"{"choices":[{"message":{"role":"assistant","content":null}}]}"#;
+        let parsed: Response = serde_json::from_str(reply).unwrap();
+        assert_eq!(parsed.choices[0].message.content, "");
     }
 
     #[test]

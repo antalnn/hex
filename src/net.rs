@@ -106,6 +106,17 @@ pub fn reason(error: &ureq::Error) -> String {
     }
 }
 
+/// Why a model request failed, in a person's words. A 429 is the provider's
+/// rate limit, so the person needs to know to wait rather than retry at once.
+pub fn model_reason(error: &ureq::Error) -> String {
+    match error {
+        ureq::Error::StatusCode(429) => {
+            "the model is rate-limited (HTTP 429); wait a moment and try again".into()
+        }
+        other => reason(other),
+    }
+}
+
 /// A certificate or TLS failure: on a managed network, usually a firewall
 /// inspecting TLS whose root certificate this computer doesn't trust.
 fn tls(detail: impl std::fmt::Display) -> String {
@@ -133,4 +144,16 @@ pub fn unreachable(url: &str, error: &ureq::Error) -> String {
         .map(|proxy| format!(" through the proxy {}:{}", proxy.host(), proxy.port()))
         .unwrap_or_default();
     format!("Couldn't reach {}{via}: {}", host(url), reason(error))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_rate_limit_names_the_wait() {
+        let reason = model_reason(&ureq::Error::StatusCode(429));
+        assert!(reason.contains("rate-limited"), "{reason}");
+        assert!(reason.contains("429"), "{reason}");
+    }
 }

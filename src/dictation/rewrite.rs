@@ -151,8 +151,19 @@ struct Choice {
 
 #[derive(Deserialize)]
 struct Content {
-    #[serde(default)]
+    #[serde(default, deserialize_with = "content_or_empty")]
     content: String,
+}
+
+/// Reads a chat message's `content`. OpenAI-compatible servers send `null`
+/// when the assistant wrote no text, which a reasoning model does when it
+/// spends the whole reply budget thinking. A null is an empty reply, so the
+/// guards can name that instead of a JSON type error.
+pub(crate) fn content_or_empty<'de, D>(deserializer: D) -> Result<String, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    Ok(Option::<String>::deserialize(deserializer)?.unwrap_or_default())
 }
 
 /// The messages for one rewrite: the system prompt, then the instruction and
@@ -292,8 +303,14 @@ fn chat(
                     .body_mut()
                     .read_to_string()
                     .map_err(|error| eyre!("the model's reply could not be read: {error}"))?;
-                let parsed: Response = serde_json::from_str(&text)
-                    .map_err(|error| eyre!("the model's reply was not JSON: {error}"))?;
+                let parsed: Response = serde_json::from_str(&text).map_err(|error| {
+                    tracing::warn!(
+                        reply = %text,
+                        %error,
+                        "the model's reply did not match the expected shape"
+                    );
+                    eyre!("the model's reply did not match the expected shape: {error}")
+                })?;
                 return Ok(parsed
                     .choices
                     .first()
@@ -301,6 +318,12 @@ fn chat(
                     .unwrap_or_default());
             }
             Err(error) => {
+                if matches!(&error, ureq::Error::StatusCode(429)) {
+                    return Err(eyre!(
+                        "the model did not answer: {}",
+                        crate::net::model_reason(&error)
+                    ));
+                }
                 last = Some(error);
                 if attempt < RETRIES {
                     tracing::debug!(attempt, "the model did not answer; retrying once");
@@ -310,7 +333,7 @@ fn chat(
     }
     let reason = last.map_or_else(
         || "no reply".to_string(),
-        |error| crate::net::reason(&error),
+        |error| crate::net::model_reason(&error),
     );
     Err(eyre!("the model did not answer: {reason}"))
 }
@@ -709,6 +732,13 @@ mod tests {
     fn an_empty_result_is_refused() {
         let error = accept("   \n", "make this shorter").unwrap_err();
         assert_eq!(error.to_string(), "the model returned nothing");
+    }
+
+    #[test]
+    fn a_null_content_reads_as_an_empty_reply() {
+        let reply = r#"{"choices":[{"message":{"role":"assistant","content":null}}]}"#;
+        let parsed: Response = serde_json::from_str(reply).unwrap();
+        assert_eq!(parsed.choices[0].message.content, "");
     }
 
     #[test]
