@@ -954,7 +954,7 @@ const TRANSLATIONS: &[(&str, [&str; 6])] = &[
     ("Custom transformations", ["Własne transformacje", "自定义转换", "カスタム変換", "Eigene Transformationen", "Transformaciones personalizadas", "Власні перетворення"]),
     ("Custom transformations are unavailable.", ["Własne transformacje są niedostępne.", "自定义转换不可用。", "カスタム変換を利用できません。", "Eigene Transformationen sind nicht verfügbar.", "Las transformaciones personalizadas no están disponibles.", "Власні перетворення недоступні."]),
     ("Deadline", ["Limit czasu", "期限", "期限", "Zeitlimit", "Plazo", "Ліміт часу"]),
-    ("Clean up deadline/timeout", ["Limit czasu czyszczenia", "清理截止时间", "クリーンアップの期限", "Bereinigungsfrist", "Plazo de la limpieza", "Термін очищення"]),
+    ("Clean up time limit", ["Limit czasu czyszczenia", "清理时间限制", "クリーンアップの制限時間", "Zeitlimit für die Bereinigung", "Límite de tiempo de la limpieza", "Ліміт часу очищення"]),
     ("Delete mode", ["Usuń tryb", "删除模式", "モードを削除", "Modus löschen", "Eliminar modo", "Видалити режим"]),
     ("Describe how OpenCode should rewrite your dictation…", ["Opisz, jak OpenCode ma przepisać twoje dyktowanie…", "描述 OpenCode 应如何改写你的听写内容…", "OpenCode が音声入力をどう書き直すか説明してください…", "Beschreibe, wie OpenCode dein Diktat umschreiben soll…", "Describe cómo debe reescribir OpenCode tu dictado…", "Опишіть, як OpenCode має переписувати продиктований текст…"]),
     ("Disable", ["Wyłącz", "停用", "無効にする", "Deaktivieren", "Desactivar", "Вимкнути"]),

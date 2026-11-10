@@ -330,10 +330,10 @@ fn ai_cleanup_card(ui: &Ui, p: Paint) -> El {
         setting_row(
             p,
             "ai-cleanup-deadline",
-            tr("Clean up deadline/timeout"),
+            tr("Clean up time limit"),
             Some(tr("Seconds")),
             TextInput::new(&ui.model_sources.cleanup_deadline)
-                .label(tr("Clean up deadline/timeout"))
+                .label(tr("Clean up time limit"))
                 .placeholder("20")
                 .width(Some(96.0))
                 .on_edit(|ui: &mut Ui| &mut ui.model_sources.cleanup_deadline)

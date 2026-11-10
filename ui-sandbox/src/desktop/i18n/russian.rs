@@ -610,7 +610,7 @@ const TRANSLATIONS: &[(&str, &str)] = &[
     ("Custom transformations", "Свои преобразования"),
     ("Custom transformations are unavailable.", "Свои преобразования недоступны."),
     ("Deadline", "Срок"),
-    ("Clean up deadline/timeout", "Clean up deadline/timeout"),
+    ("Clean up time limit", "Clean up time limit"),
     ("Delete mode", "Удалить режим"),
     ("Describe how OpenCode should rewrite your dictation…", "Опишите, как OpenCode должен переписывать вашу диктовку…"),
     ("Disable", "Отключить"),
