@@ -545,7 +545,11 @@ impl WindowsDesktopHost {
         let modes_changed = previous.dictation_processing != current.dictation_processing
             // The vocabulary's spellings are corrections now, so a term or a
             // "sounds like" change reaches the next dictation the same way.
-            || previous.vocabulary != current.vocabulary;
+            || previous.vocabulary != current.vocabulary
+            // AI cleanup's switch and prompt live in the mode runtime too, so
+            // toggling or editing them must reach the next dictation without a
+            // restart.
+            || previous.ai_cleanup != current.ai_cleanup;
         if modes_changed {
             *self
                 .mode_runtime

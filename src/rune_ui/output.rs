@@ -187,6 +187,12 @@ fn steps(ui: &Ui, mode: &DictationMode) -> Vec<Step> {
         });
     }
     for id in &mode.transformations {
+        // Off drops the native AI cleanup step from the ordering, so the
+        // Output list must not print a step the next dictation does not run.
+        if id == crate::dictation::ai_rewrite::TRANSFORMATION_ID && !ui.settings.ai_cleanup.enabled
+        {
+            continue;
+        }
         steps.push(match builtin(id) {
             Some((title, detail)) => Step {
                 title: title.into(),
@@ -930,7 +936,37 @@ pub(super) fn trust_fixture(ui: &mut Ui) {
 
 #[cfg(test)]
 mod tests {
+    use super::super::Service;
     use super::*;
+    use crate::app_settings::AppSettings;
+
+    #[test]
+    fn the_output_hides_ai_cleanup_when_the_switch_is_off() {
+        let mut ui = Ui::with(AppSettings::default(), Service::Fixture(Vec::new()));
+        let mode = DictationMode {
+            transformations: vec![
+                "lowercase".into(),
+                crate::dictation::ai_rewrite::TRANSFORMATION_ID.into(),
+            ],
+            ..DictationMode::default()
+        };
+        let titles = |ui: &Ui| {
+            steps(ui, &mode)
+                .into_iter()
+                .map(|step| step.title)
+                .collect::<Vec<_>>()
+        };
+        assert!(
+            titles(&ui).iter().any(|title| title == "AI cleanup"),
+            "the step shows while the switch is on"
+        );
+        ui.settings.ai_cleanup.enabled = false;
+        assert!(
+            !titles(&ui).iter().any(|title| title == "AI cleanup"),
+            "the step is gone while the switch is off"
+        );
+        assert!(titles(&ui).iter().any(|title| title == "Lowercase"));
+    }
 
     #[test]
     fn the_preview_runs_corrections_then_built_in_steps_in_order() {
