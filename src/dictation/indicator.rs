@@ -657,18 +657,18 @@ mod tests {
         let mut model = IndicatorModel::new(Tuning::default(), start);
         model.handle(DictationIndicatorEvent::Started, start, false);
         model.handle(DictationIndicatorEvent::DemoVoice, start, false);
-        let frames = run(&mut model, start, 0.0, 1.0);
+        let frames = run(&mut model, start, 0.0, 1.6);
         let frame = frames.last().unwrap();
         assert_eq!(frame.dots.len(), frame.columns * frame.rows);
         // The bars carry the voice into the plate; quiet syllables sit a
         // little lower, so this checks the loud ones light it, not a bound
         // on the shaping. The floor is coarse on purpose: the heard curve is
         // steep now, so a naturally spoken level lands near a fifth of full
-        // scale rather than over a third.
-        let loudest = frame
-            .dots
+        // scale rather than over a third. The max is taken over the first
+        // phrase, past the first rise's 0.35 s ease-in.
+        let loudest = frames
             .iter()
-            .map(|[power, _]| *power)
+            .flat_map(|frame| frame.dots.iter().map(|[power, _]| *power))
             .max()
             .unwrap_or(0);
         assert!(loudest > 8_000, "loudest bar {loudest}");
@@ -677,19 +677,19 @@ mod tests {
         // A fast transcription: the job finishes as soon as it is submitted.
         model.handle(
             DictationIndicatorEvent::Submitted { job_id: 1 },
-            at(start, 1.0),
+            at(start, 1.6),
             false,
         );
         model.handle(
             DictationIndicatorEvent::JobCompleted { job_id: 1 },
-            at(start, 1.0),
+            at(start, 1.6),
             false,
         );
-        run(&mut model, start, 1.0, 0.15);
+        run(&mut model, start, 1.6, 0.15);
         assert_eq!(model.stage, Stage::Processing, "processing shows briefly");
-        run(&mut model, start, 1.15, 0.1);
+        run(&mut model, start, 1.75, 0.1);
         assert_eq!(model.stage, Stage::Done);
-        run(&mut model, start, 1.25, 2.0);
+        run(&mut model, start, 1.85, 2.0);
         assert!(!model.active(), "settled out of sight");
     }
 

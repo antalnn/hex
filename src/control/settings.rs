@@ -331,6 +331,16 @@ const KEYS: &[Key] = &[
         "The bearer token the dictation cleanup sends to its remote endpoint, if it wants one",
     ),
     key(
+        "ai_cleanup.enabled",
+        Kind::Bool,
+        "Run AI cleanup on each dictation; off skips the model step from the next dictation",
+    ),
+    key(
+        "ai_cleanup.prompt",
+        Kind::Text,
+        "The instruction AI cleanup gives the model; empty uses the shipped wording",
+    ),
+    key(
         "shortcuts.excluded_processes",
         Kind::Json,
         "Apps in which Hex's shortcuts do nothing, by executable name such as cs2, \

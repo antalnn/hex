@@ -8,9 +8,9 @@ crates/capture/src/render.rs 1764
 crates/router/src/routing/jev.rs 2256
 crates/router/src/routing/router.rs 2337
 ios/HEXShared/DotScope.swift 1632
-src/app_settings.rs 1569
+src/app_settings.rs 1574
 src/capture_host.rs 3099
-src/control/settings.rs 1534
+src/control/settings.rs 1544
 src/desktop/i18n.rs 1566
 src/meeting/query.rs 2403
 src/meeting/transcript.rs 2195

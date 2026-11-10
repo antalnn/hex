@@ -16,6 +16,7 @@ use crate::dictation::vocabulary::{VocabularyEntry, serialize_saved};
 use crate::transcription::models::{TranscriptionModelId, TranscriptionSelection};
 
 mod ai;
+mod ai_cleanup;
 #[cfg(hex_capture)]
 mod capture;
 mod dictation_processing;
@@ -34,6 +35,7 @@ mod shortcut_guard;
 mod shortcut_repair;
 
 pub use ai::*;
+pub use ai_cleanup::*;
 #[cfg(hex_capture)]
 pub use capture::*;
 pub use dictation_processing::{
@@ -334,6 +336,8 @@ pub struct AppSettings {
     pub rewrite: RewriteSettings,
     /// Where the dictation cleanup's model call goes (`crate::dictation::ai_rewrite`).
     pub dictation_rewrite: ModelSource,
+    /// Whether AI cleanup runs, and the instruction it gives the model.
+    pub ai_cleanup: AiCleanupSettings,
     /// The apps in which Hex's shortcuts do nothing.
     pub shortcuts: ShortcutGuard,
     /// Labs › Screenshots' shortcut and folder (macOS).
@@ -472,6 +476,7 @@ impl Default for AppSettings {
             llm: LlmSettings::default(),
             rewrite: RewriteSettings::default(),
             dictation_rewrite: ModelSource::default(),
+            ai_cleanup: AiCleanupSettings::default(),
             shortcuts: ShortcutGuard::default(),
             screenshots: ScreenshotSettings::default(),
             enable_on_launch: true,
