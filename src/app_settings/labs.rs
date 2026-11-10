@@ -28,6 +28,34 @@ impl CapsLockLight {
     }
 }
 
+/// The main window's appearance: the OS's, or one forced on it (Labs ›
+/// Appearance).
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AppearanceTheme {
+    /// Follow the OS.
+    #[default]
+    System,
+    /// Always light, whatever the OS shows.
+    Light,
+    /// Always dark, whatever the OS shows.
+    Dark,
+}
+
+impl AppearanceTheme {
+    /// Every choice, in the order the window shows them.
+    pub const ALL: [Self; 3] = [Self::System, Self::Light, Self::Dark];
+
+    /// The English label the window shows.
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::System => "System",
+            Self::Light => "Light mode",
+            Self::Dark => "Dark mode",
+        }
+    }
+}
+
 /// The `labs` switches (`crate::labs`), each off by default; older Labs features keep their own keys, and retired switches (`labs.enabled`, `labs.collapsible_meeting_sections`, `labs.meeting_platform_icons`) are ignored.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(default)]
@@ -52,6 +80,9 @@ pub struct LabsSettings {
     pub keep_on_clipboard: bool,
     /// A dictation is put on the clipboard and never pasted (macOS and Windows, issue 629).
     pub copy_only: bool,
+    /// A dictation pastes into the app its capture started in, bringing it
+    /// back to the front if another app came forward meanwhile (macOS).
+    pub return_to_app: bool,
     /// Spoken "new line", "new paragraph", and "open/close quote" become line breaks and quotes (issue 630).
     pub spoken_formatting: bool,
     /// Filler words such as "um" and "uh" are removed from dictations (issue 631).
@@ -73,6 +104,9 @@ pub struct LabsSettings {
     pub sided_modifier_chords: bool,
     /// In Toggle mode, a press held past the hold threshold dictates until it lifts (macOS, issue 711).
     pub tap_or_hold: bool,
+    /// Double-tap-only accepts a dictation shortcut without a key: one or
+    /// more modifiers, such as Option, Globe, or ⌃⌥ (macOS).
+    pub double_tap_modifiers: bool,
     /// The picker shows each model's raw error rate, benchmark, source, and conditions (issue 647).
     pub benchmark_details: bool,
     /// Parakeet Ultra joins the Local transcription picker (issue 648).
@@ -109,6 +143,11 @@ pub struct LabsSettings {
     /// Whether that light stays solid or blinks slowly while recording
     /// (macOS).
     pub caps_lock_light: CapsLockLight,
+    /// The main window is forced light or dark instead of following the OS
+    /// (Labs › Appearance).
+    pub appearance: bool,
+    /// Which appearance the window shows while `appearance` is on.
+    pub appearance_theme: AppearanceTheme,
     pub movable_meeting_capsules: bool,
     /// A paste restores the clipboard through a running XWayland on Wayland desktops without data-control, such as GNOME (Linux, issue 1111).
     pub gnome_clipboard_restore: bool,
@@ -148,6 +187,12 @@ pub struct LabsSettings {
     /// for Modes rewriting and the Modes model picker when no Windows
     /// service answers (Windows).
     pub opencode_in_wsl: bool,
+    /// `hex transcribe <file>` turns a WAV recording into text with the
+    /// dictation model.
+    pub transcribe_files: bool,
+    /// The local API's `process=global` returns transcripts after Global
+    /// mode's output processing.
+    pub api_processing: bool,
     /// Settings › Labs' groups opened or closed by hand, by `labs::Group`
     /// id; a group not here is open while it holds a lab that's on.
     #[serde(skip_serializing_if = "std::collections::BTreeMap::is_empty")]
@@ -171,6 +216,7 @@ impl Default for LabsSettings {
             restore_shortcut_default: false,
             keep_on_clipboard: false,
             copy_only: false,
+            return_to_app: false,
             spoken_formatting: false,
             filler_words: false,
             subtitle_export: false,
@@ -181,6 +227,7 @@ impl Default for LabsSettings {
             picker_sort_filter: false,
             sided_modifier_chords: false,
             tap_or_hold: false,
+            double_tap_modifiers: false,
             benchmark_details: false,
             parakeet_ultra: false,
             standalone_special_keys: false,
@@ -200,6 +247,8 @@ impl Default for LabsSettings {
             quit_closes_window: false,
             caps_lock_dictation: false,
             caps_lock_light: CapsLockLight::Steady,
+            appearance: false,
+            appearance_theme: AppearanceTheme::System,
             movable_meeting_capsules: false,
             gnome_clipboard_restore: false,
             typed_text: false,
@@ -210,6 +259,8 @@ impl Default for LabsSettings {
             annotate_replay: false,
             more_call_apps: false,
             opencode_in_wsl: false,
+            transcribe_files: false,
+            api_processing: false,
             gnome_meeting_capsules: false,
             gnome_annotate: false,
             screenshots: false,

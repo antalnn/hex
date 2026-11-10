@@ -446,13 +446,22 @@ pub(crate) fn run(
     crate::transcription::local_transcriber::initialize_backends();
     let (control_calls, control_receiver) = mpsc::sync_channel(8);
     let (dictation_controls, dictations) = mpsc::sync_channel(8);
+    let processing = crate::dictation::modes::ProcessingState::from_settings(&launch.settings);
     let local_api = crate::local_api::LocalApi::start_for_app(
         &event_path,
         control_calls,
         Some(dictation_controls),
+        Some(crate::local_api::Processing::installed(
+            crate::local_api::processing::dictation_processor(processing.clone()),
+        )),
     );
     let enable_on_launch = launch.settings.enable_on_launch;
-    let mut host = LinuxDesktopHost::new(event_path, launch, crate::updater::Updater::start());
+    let mut host = LinuxDesktopHost::new(
+        event_path,
+        launch,
+        crate::updater::Updater::start(),
+        processing,
+    );
     host.dictations = dictations.into();
     if enable_on_launch {
         host.start();
@@ -586,6 +595,7 @@ impl LinuxDesktopHost {
         event_path: PathBuf,
         launch: crate::app_settings::LaunchLoad,
         updater: crate::updater::Updater,
+        processing: crate::dictation::modes::ProcessingState,
     ) -> Self {
         let crate::app_settings::LaunchLoad { settings, note } = launch;
         let failed = matches!(note, Some(crate::app_settings::LaunchNote::Failed(_)));
@@ -601,7 +611,8 @@ impl LinuxDesktopHost {
                 .inspect_err(|error| tracing::warn!(%error, "could not open retained history"))
                 .ok()
         };
-        let output = crate::linux::dictation::DictationOutput::from_settings(&settings, history);
+        let output = crate::linux::dictation::DictationOutput::from_settings(&settings, history)
+            .sharing(processing);
         // Known before the first poll, so launching keeps the saved model
         // instead of applying the current layout's mapping.
         let keyboard_switcher = crate::transcription::keyboard_model_switching::Switcher::new(
@@ -1467,6 +1478,16 @@ mod tests {
         ModelPreparationStage, TranscriptionModelId, TranscriptionSelection,
     };
 
+    fn test_host(launch: crate::app_settings::LaunchLoad) -> LinuxDesktopHost {
+        let processing = crate::dictation::modes::ProcessingState::from_settings(&launch.settings);
+        LinuxDesktopHost::new(
+            PathBuf::new(),
+            launch,
+            crate::updater::Updater::idle(),
+            processing,
+        )
+    }
+
     fn host_for_edit(running: bool) -> LinuxDesktopHost {
         let settings = AppSettings {
             transcription: TranscriptionSelection {
@@ -1476,14 +1497,10 @@ mod tests {
             },
             ..Default::default()
         };
-        let mut host = LinuxDesktopHost::new(
-            PathBuf::new(),
-            crate::app_settings::LaunchLoad {
-                settings,
-                note: None,
-            },
-            crate::updater::Updater::idle(),
-        );
+        let mut host = test_host(crate::app_settings::LaunchLoad {
+            settings,
+            note: None,
+        });
         if running {
             host.listener = Some(Listener {
                 worker: std::thread::spawn(|| Ok(())),
@@ -1594,8 +1611,7 @@ mod tests {
 
     #[test]
     fn a_settings_parse_note_does_not_block_capture() {
-        let mut host = LinuxDesktopHost::new(
-            PathBuf::new(),
+        let mut host = test_host(
             // A model never installed on Linux keeps `start` from opening a
             // real microphone while still proving the validity gate passed.
             crate::app_settings::LaunchLoad {
@@ -1604,7 +1620,6 @@ mod tests {
                     "Hex couldn't read settings.json and started with defaults.".into(),
                 )),
             },
-            crate::updater::Updater::idle(),
         );
         assert!(host.settings_valid);
         assert!(host.settings_error.is_some());
@@ -1616,8 +1631,7 @@ mod tests {
 
     #[test]
     fn malformed_settings_cannot_start_even_after_dismissing_the_error() {
-        let mut host = LinuxDesktopHost::new(
-            PathBuf::new(),
+        let mut host = test_host(
             // A model never installed on Linux, so the resumed start below
             // cannot open the microphone where the real model is installed.
             crate::app_settings::LaunchLoad {
@@ -1626,7 +1640,6 @@ mod tests {
                     "Could not load Linux settings: invalid JSON".into(),
                 )),
             },
-            crate::updater::Updater::idle(),
         );
         host.start();
         assert!(!host.is_running());
@@ -1978,14 +1991,10 @@ mod tests {
             },
             ..Default::default()
         };
-        let mut host = LinuxDesktopHost::new(
-            PathBuf::new(),
-            crate::app_settings::LaunchLoad {
-                settings,
-                note: None,
-            },
-            crate::updater::Updater::idle(),
-        );
+        let mut host = test_host(crate::app_settings::LaunchLoad {
+            settings,
+            note: None,
+        });
         host.transcription_preparation = Some(TranscriptionPreparation {
             canceled: Arc::new(AtomicBool::new(false)),
             model: TranscriptionModelId::default(),

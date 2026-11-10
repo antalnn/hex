@@ -38,6 +38,11 @@ can be reordered so rules that read the raw words run before the model and
 rules that shape its output run after. Output lists the steps that run; Edit
 with agent changes them.
 
+The upstream app installs with Homebrew (`brew install --cask anomalyco/tap/hex`),
+the AUR (`yay -S hex-bin`), the Linux install script
+(`curl -fsSL https://anoma.ly/hex/install-linux.sh | sh`), or Nix
+(`nix profile add github:anomalyco/hex`).
+
 ## Local model
 
 The local model is the dictation cleanup's model call, served by a llama.cpp

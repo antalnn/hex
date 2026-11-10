@@ -408,6 +408,7 @@ fn contributed_options_are_labs_toggles_off_by_default() {
         "lab-pause-browser",
         "lab-keep-on-clipboard",
         "lab-copy-only",
+        "lab-return-to-app",
         "lab-spoken-formatting",
         "lab-filler-words",
         "lab-spoken-symbols",
@@ -434,6 +435,9 @@ fn contributed_options_are_labs_toggles_off_by_default() {
     assert!(!rt.state.settings.labs.copy_only);
     tap(&mut rt, "lab-copy-only");
     assert!(rt.state.settings.labs.copy_only);
+    assert!(!rt.state.settings.labs.return_to_app);
+    tap(&mut rt, "lab-return-to-app");
+    assert!(rt.state.settings.labs.return_to_app);
     assert!(!rt.state.settings.labs.caps_lock_dictation);
     tap(&mut rt, "lab-caps-lock-dictation");
     assert!(rt.state.settings.labs.caps_lock_dictation);
@@ -2057,6 +2061,7 @@ fn labs_lists_every_toggle_off_by_default() {
         ("lab-playground", settings.labs.playground),
         ("lab-live-text", settings.labs.live_text),
         ("lab-live-chapters", settings.labs.live_chapters),
+        ("lab-return-to-app", settings.labs.return_to_app),
     ] {
         assert!(rt.find(row).is_some(), "Labs lacks {row}");
         assert!(!on, "{row} is on");
@@ -2079,6 +2084,7 @@ fn labs_lists_every_toggle_off_by_default() {
     let mut rt = runtime("windows-settings", true, (980.0, 2000.0));
     assert!(rt.find("terminal-paste").is_none());
     open_labs(&mut rt);
+    assert!(rt.find("lab-return-to-app").is_none(), "macOS only");
     tap(&mut rt, "lab-terminal-paste");
     assert!(rt.state.settings.paste_with_shift);
     assert!(
@@ -2202,6 +2208,50 @@ fn caps_lock_light_shows_its_choices_on_its_card_while_on() {
     tap(&mut rt, "lab-caps-lock-dictation");
     assert!(rt.state.settings.labs.caps_lock_dictation);
     assert!(rt.find("caps-lock-light").is_some());
+}
+
+#[test]
+fn appearance_shows_its_theme_on_its_card_while_on() {
+    let mut rt = runtime("mac-labs", true, (980.0, 4000.0));
+    rt.update(|ui, _| ui.lab_store.group = Some(crate::labs::Feature::Appearance.group()));
+    settle(&mut rt);
+    assert!(rt.find("appearance-theme").is_none(), "hidden while off");
+    assert_eq!(
+        rt.state.settings.labs.appearance_theme,
+        crate::app_settings::AppearanceTheme::System
+    );
+    tap(&mut rt, "lab-appearance");
+    assert!(rt.state.settings.labs.appearance);
+    assert!(rt.find("appearance-theme").is_some());
+    tap(&mut rt, "segment2");
+    assert_eq!(
+        rt.state.settings.labs.appearance_theme,
+        crate::app_settings::AppearanceTheme::Dark
+    );
+}
+
+#[test]
+fn the_main_window_paints_the_forced_appearance_not_the_os() {
+    use crate::app_settings::AppearanceTheme;
+    let mut rt = runtime("mac-settings", false, (980.0, 4000.0));
+    let fill = |rt: &Runtime<Ui>| {
+        rt.elements()
+            .into_iter()
+            .find(|element| element.key.as_deref() == Some("window"))
+            .expect("the window paints its background")
+            .fill
+    };
+    assert_eq!(fill(&rt), rune_theme_opencode::kit(false).c.bg_deep);
+    rt.update(|ui, _| {
+        ui.settings.labs.appearance = true;
+        ui.settings.labs.appearance_theme = AppearanceTheme::Dark;
+    });
+    refresh(&mut rt);
+    assert_eq!(
+        fill(&rt),
+        rune_theme_opencode::kit(true).c.bg_deep,
+        "the OS is light, so only the lab's Dark paints the window dark"
+    );
 }
 
 #[test]

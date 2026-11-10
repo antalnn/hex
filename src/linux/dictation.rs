@@ -183,6 +183,15 @@ impl DictationOutput {
         }
     }
 
+    /// Reuses the mode runtime and transformation client the local API's
+    /// `process=global` reads, so both see the same settings and personal
+    /// commands host.
+    pub(crate) fn sharing(mut self, processing: crate::dictation::modes::ProcessingState) -> Self {
+        self.modes = processing.modes;
+        self.transformations = processing.transformations;
+        self
+    }
+
     /// Processes (unless raw) and pastes one transcript, or only
     /// processes it when there is no paster (a printing stop), then records
     /// it.
@@ -771,7 +780,7 @@ pub(crate) fn run(
                     .is_some_and(|host| host.recording_since(&timeline).is_some());
             match service.control(control, busy, now) {
                 Effect::None => {}
-                Effect::Start if audio_ready && clock.at(now).is_some() => {
+                Effect::Start if audio_ready && input.is_open() && clock.at(now).is_some() => {
                     start_service_capture(
                         &mut capture,
                         &mut service,

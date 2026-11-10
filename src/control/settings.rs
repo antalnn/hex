@@ -251,6 +251,13 @@ const KEYS: &[Key] = &[
          press space to pick a window (macOS, with labs.screenshots)",
     ),
     optional(
+        "screenshots.record_hotkey",
+        Kind::Shortcut(HotkeySlot::ScreenshotRecord),
+        "Labs: records an area or a window, picked like a screenshot, and press it again \
+         to stop; none (the default) turns it off (macOS, with labs.screenshots and \
+         capture.enabled)",
+    ),
+    optional(
         "screenshots.folder",
         Kind::Path,
         "Labs: folder screenshots are saved to; none uses the Desktop (macOS)",
@@ -425,6 +432,11 @@ const KEYS: &[Key] = &[
         "Labs: put the dictation on the clipboard instead of pasting it (macOS and Windows)",
     ),
     key(
+        "labs.return_to_app",
+        Kind::Bool,
+        "Labs: switch back to the app a dictation started in before pasting (macOS)",
+    ),
+    key(
         "labs.spoken_formatting",
         Kind::Bool,
         "Labs: turn spoken \"new line\", \"new paragraph\", and \"open/close quote\" into line breaks and quotation marks",
@@ -482,6 +494,12 @@ const KEYS: &[Key] = &[
         "Labs: in Toggle mode, a press held past the hold threshold dictates until it lifts; a short tap still starts and stops (macOS)",
     ),
     key(
+        "labs.double_tap_modifiers",
+        Kind::Bool,
+        "Labs: Double-tap shortcut mode accepts a shortcut without a key, one or more \
+         modifiers such as Option, Globe, or ⌃⌥ (macOS)",
+    ),
+    key(
         "labs.benchmark_details",
         Kind::Bool,
         "Labs: the Local transcription picker shows each model's raw error rate (WER or CER), benchmark, source, and conditions",
@@ -535,6 +553,16 @@ const KEYS: &[Key] = &[
         "labs.caps_lock_light",
         Kind::Choice(&["steady", "slow_blink"]),
         "Labs: whether the Caps Lock light stays solid or blinks slowly while recording (macOS)",
+    ),
+    key(
+        "labs.appearance",
+        Kind::Bool,
+        "Labs: force the main window to light or dark instead of following the system appearance",
+    ),
+    key(
+        "labs.appearance_theme",
+        Kind::Choice(&["system", "light", "dark"]),
+        "Labs: the appearance the main window uses while Labs › Appearance is on",
     ),
     key(
         "labs.notch_indicator",
@@ -645,6 +673,17 @@ const KEYS: &[Key] = &[
         "labs.picker_downloaded",
         Kind::Bool,
         "Labs: the speech model picker's All speech models view offers Only downloaded models, with the space they take",
+    ),
+    key(
+        "labs.transcribe_files",
+        Kind::Bool,
+        "Labs: hex transcribe <file> turns a WAV recording into text with the selected dictation model",
+    ),
+    key(
+        "labs.api_processing",
+        Kind::Bool,
+        "Labs: apps using Hex's local API can ask for transcripts with Global mode's corrections, \
+         rewrite, and transformations applied (process=global)",
     ),
     key(
         "meetings.enabled",
@@ -1186,14 +1225,25 @@ pub fn apply(
         }
         "double_tap_lock" if !candidate.double_tap_lock => candidate.double_tap_only = false,
         "double_tap_only" if candidate.double_tap_only => {
-            if !candidate.double_tap_lock || candidate.dictation_hotkey.key.is_none() {
+            if !candidate.double_tap_lock
+                || (candidate.dictation_hotkey.key.is_none()
+                    && !candidate.double_tap_modifiers_allowed())
+            {
+                let modifier_only = if cfg!(target_os = "macos") {
+                    ", or with Labs › Double-tap on a lone modifier on, a shortcut without a key"
+                } else {
+                    ""
+                };
                 return Err(invalid(
                     name,
-                    "a double-tap-only start needs double_tap_lock on and a dictation shortcut \
-                     with a key, such as option+space",
+                    &format!(
+                        "a double-tap-only start needs double_tap_lock on and a dictation \
+                         shortcut with a key, such as option+space{modifier_only}"
+                    ),
                 ));
             }
         }
+        "labs.double_tap_modifiers" => candidate.normalize_double_tap_settings(),
         "dictation_hotkey"
         | "paste_last_hotkey"
         | "raw_dictation_hotkey"
@@ -1203,6 +1253,7 @@ pub fn apply(
         | "terminal_paste_hotkey"
         | "cancel_hotkey"
         | "screenshots.hotkey"
+        | "screenshots.record_hotkey"
         | "capture.hotkey"
         | "capture.replay_hotkey" => {
             let Kind::Shortcut(slot) = key.kind else {
@@ -1218,6 +1269,7 @@ pub fn apply(
                 HotkeySlot::TerminalPaste => candidate.terminal_paste_hotkey.as_ref(),
                 HotkeySlot::Cancel => Some(&candidate.cancel_hotkey),
                 HotkeySlot::Screenshot => Some(&candidate.screenshots.hotkey),
+                HotkeySlot::ScreenshotRecord => candidate.screenshots.record_hotkey.as_ref(),
                 #[cfg(hex_capture)]
                 HotkeySlot::Capture => Some(&candidate.capture.hotkey),
                 #[cfg(hex_capture)]
@@ -1247,7 +1299,8 @@ pub fn apply(
                     ));
                 }
             }
-            if candidate.dictation_hotkey.key.is_none() {
+            if candidate.dictation_hotkey.key.is_none() && !candidate.double_tap_modifiers_allowed()
+            {
                 candidate.double_tap_only = false;
             }
         }
@@ -1769,6 +1822,7 @@ mod tests {
             ("meetings.calendar.lead_minutes", "3"),
             ("meetings.output_folder", "relative/path"),
             ("labs.caps_lock_light", "fast"),
+            ("labs.appearance_theme", "sepia"),
             ("dictation_processing.modes", "[{"),
         ] {
             assert_eq!(
@@ -1802,6 +1856,15 @@ mod tests {
         assert_eq!(
             get(&change.settings, "labs.caps_lock_light").unwrap()[0].value,
             Value::String("slow_blink".into())
+        );
+        let change = apply(&settings, "labs.appearance_theme", "dark", &rules()).unwrap();
+        assert_eq!(
+            change.settings.labs.appearance_theme,
+            crate::app_settings::AppearanceTheme::Dark
+        );
+        assert_eq!(
+            get(&change.settings, "labs.appearance_theme").unwrap()[0].value,
+            Value::String("dark".into())
         );
         let change = apply(&settings, "ui_language", "none", &rules()).unwrap();
         assert_eq!(change.settings.ui_language, None);
@@ -2076,6 +2139,38 @@ mod tests {
         assert!(change.settings.double_tap_only);
         let change = apply(&change.settings, "double_tap_lock", "off", &rules()).unwrap();
         assert!(!change.settings.double_tap_only);
+    }
+
+    #[test]
+    fn double_tap_only_takes_a_lone_modifier_with_the_lab() {
+        let settings = AppSettings {
+            dictation_hotkey: parse_hotkey("option", rules().key_named).unwrap(),
+            ..AppSettings::default()
+        };
+        let refused = apply(&settings, "double_tap_only", "on", &rules()).unwrap_err();
+        assert_eq!(refused.code, "invalid-value");
+        // Only macOS has the lab, so only there does the refusal name it.
+        assert_eq!(
+            refused
+                .message
+                .contains("Labs › Double-tap on a lone modifier"),
+            cfg!(target_os = "macos"),
+            "{}",
+            refused.message
+        );
+        let mut with_lab = settings.clone();
+        with_lab.labs.double_tap_modifiers = true;
+        if with_lab.double_tap_modifiers_allowed() {
+            let change = apply(&with_lab, "double_tap_only", "on", &rules()).unwrap();
+            assert!(change.settings.double_tap_only);
+        } else {
+            assert!(apply(&with_lab, "double_tap_only", "on", &rules()).is_err());
+        }
+        // Turning the lab off clears a modifier-only double-tap-only start.
+        with_lab.double_tap_only = true;
+        let change = apply(&with_lab, "labs.double_tap_modifiers", "off", &rules()).unwrap();
+        assert!(!change.settings.double_tap_only);
+        assert!(change.settings.double_tap_lock);
     }
 
     #[test]

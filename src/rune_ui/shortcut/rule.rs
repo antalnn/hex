@@ -23,6 +23,8 @@ pub(crate) fn shortcut_rule(slot: HotkeySlot, binding: &HotkeyBinding) -> Result
         HotkeySlot::SecondDictation => ShortcutTarget::SecondDictation,
         #[cfg(target_os = "macos")]
         HotkeySlot::Screenshot => ShortcutTarget::Screenshot,
+        #[cfg(target_os = "macos")]
+        HotkeySlot::ScreenshotRecord => ShortcutTarget::ScreenshotRecord,
         // Transform typed text is Linux-only. A saved binding meets the
         // dictation shortcut's rules everywhere else, including macOS, where
         // it is never registered.
@@ -30,7 +32,9 @@ pub(crate) fn shortcut_rule(slot: HotkeySlot, binding: &HotkeyBinding) -> Result
         // Labs › Second dictation shortcut and Screenshots are macOS-only;
         // elsewhere a saved one meets the dictation shortcut's rules.
         #[cfg(not(target_os = "macos"))]
-        HotkeySlot::SecondDictation | HotkeySlot::Screenshot => ShortcutTarget::Dictation,
+        HotkeySlot::SecondDictation | HotkeySlot::Screenshot | HotkeySlot::ScreenshotRecord => {
+            ShortcutTarget::Dictation
+        }
         // Labs › Terminal paste shortcut: its own hook rules where it exists,
         // and the dictation shortcut's everywhere else, where it never runs.
         #[cfg(target_os = "macos")]

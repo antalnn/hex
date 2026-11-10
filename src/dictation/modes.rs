@@ -74,28 +74,48 @@ impl ModeRuntime {
         transformations: &crate::personal_commands::TransformationClient,
         source: crate::dictation::processor::Source,
     ) -> Processed {
+        self.process_cancellable(
+            raw_text,
+            language,
+            context,
+            transformations,
+            &AtomicBool::new(false),
+            source,
+        )
+    }
+
+    /// [`Self::process`] with a cancellation flag the stages check, for work
+    /// that ends early when Hex quits.
+    pub fn process_cancellable(
+        &self,
+        raw_text: &str,
+        language: &str,
+        context: &crate::dictation::context::ContextSnapshot,
+        transformations: &crate::personal_commands::TransformationClient,
+        cancelled: &AtomicBool,
+        source: crate::dictation::processor::Source,
+    ) -> Processed {
         let text = self.replacements.replace(raw_text);
         let profile = self.profile(context);
-        let cancelled = AtomicBool::new(false);
-        let mut processed = Profiles::new(profile)
-            .process_cancellable(&text, language, context, &cancelled, source);
+        let mut processed =
+            Profiles::new(profile).process_cancellable(&text, language, context, cancelled, source);
         let ids = processed.transformations.clone();
         match ids
             .iter()
             .position(|id| id == crate::dictation::ai_rewrite::TRANSFORMATION_ID)
         {
             None => {
-                processed.apply_transformations(transformations, context, &cancelled, source);
+                processed.apply_transformations(transformations, context, cancelled, source);
             }
             Some(index) => {
                 // The model step sits mid-list: the rules decided from the raw
                 // words (bullets, orphans) run before it, and the rules applied
                 // to its output (paragraphs, colon cues, snippets) after.
                 processed.transformations = ids[..index].to_vec();
-                processed.apply_transformations(transformations, context, &cancelled, source);
-                self.run_ai(&mut processed, &cancelled);
+                processed.apply_transformations(transformations, context, cancelled, source);
+                self.run_ai(&mut processed, cancelled);
                 processed.transformations = ids[index + 1..].to_vec();
-                processed.apply_transformations(transformations, context, &cancelled, source);
+                processed.apply_transformations(transformations, context, cancelled, source);
                 processed.transformations = ids;
             }
         }
@@ -158,6 +178,31 @@ impl ModeRuntime {
             },
             Profile::from_mode,
         )
+    }
+}
+
+/// The live mode runtime and transformation client a listener shares with
+/// the local API's `process=global` processor, so saved settings and the
+/// personal-commands host apply to both.
+#[cfg(any(target_os = "linux", target_os = "windows"))]
+#[derive(Clone)]
+pub struct ProcessingState {
+    pub modes: std::sync::Arc<std::sync::RwLock<ModeRuntime>>,
+    pub transformations: std::sync::Arc<crate::personal_commands::TransformationClient>,
+}
+
+#[cfg(any(target_os = "linux", target_os = "windows"))]
+impl ProcessingState {
+    /// Reads `settings` once; a listener replaces `modes` as settings change.
+    pub fn from_settings(settings: &AppSettings) -> Self {
+        Self {
+            modes: std::sync::Arc::new(std::sync::RwLock::new(ModeRuntime::from_settings(
+                settings,
+            ))),
+            transformations: std::sync::Arc::new(
+                crate::personal_commands::TransformationClient::default(),
+            ),
+        }
     }
 }
 

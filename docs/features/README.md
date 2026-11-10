@@ -41,7 +41,11 @@ default) shows each model's raw WER or CER with its language, dataset, source,
 and conditions (#647); its Settings search toggle (off by default) puts a
 search field at the top of General that filters its rows; its Release notes
 link toggle (off by default) puts a link to this build's release notes in the
-sidebar footer.
+sidebar footer; its Appearance toggle (off by default) forces the main window
+light or dark instead of following the OS, while the HUD and other overlays
+keep following it; its Transcribe files toggle (off by default) adds
+`hex transcribe <file>`, which prints a saved WAV recording's transcript from
+the selected model ([control-cli.md](control-cli.md)).
 General › Advanced › Interface language offers Português (Brasil), and Hex
 uses it for any Portuguese system language (#867); it also offers Français,
 used for any French system language (#892), and Русский, used for any
@@ -76,7 +80,8 @@ Download Hex                              // setup.download-recovery
 │   ├── Linux -> copyable `curl … install-linux.sh | sh` + Arch/glibc requirement
 │   ├── Phone -> Send yourself the link
 │   └── Other platforms -> every build, Homebrew, the GitHub release
-├── Website, README, installers, apps, feeds, appcast -> anoma.ly/hex/files -> R2 bytes (Worker hex-production-site)
+├── Website, README, installers, apps, feeds, appcast -> anoma.ly/hex/files (Worker hex-production-site):
+│   installers and appcast from the site build, dev notes from the dev-notes branch, frozen feeds and artifacts from R2
 ├── Releases up to 2.3.1 -> downloads.hex.kitlangton.dev (Kit's frozen bucket) -> the same bytes
 ├── GitHub v<version> (app-v through 2.3.1) -> identical DMG, Setup.exe, and Linux bytes
 └── Older app cannot reach its update feed -> manually install the DMG
@@ -690,7 +695,9 @@ Saved shortcut                           // dictation; Option by default; Window
 
 General > Shortcut mode -> Hold or double-tap (default), Hold, Tap, Double-tap
   -> Modal: each choice with its keys and a looping key/recording timeline
-  -> Double-tap needs a key binding; with a lone modifier it says so
+  -> Double-tap needs a key binding; with a shortcut that has no key (one or
+     more modifiers) it says so, unless Labs > Double-tap on a lone modifier
+     is on (macOS)
 
 Labs > Second dictation shortcut (macOS, off)   // labs.md; issue 627
   -> General shows "Second dictation shortcut" under Shortcut (unbound, clearable)
@@ -792,8 +799,9 @@ latency measurement.
 
 ```ts
 Sidebar                                  // settings.nav
-├── General, Output, History, then each feature that is on: Meetings and
-│   Voice Filter (Labs toggles), Annotate, Playground (Labs, an item)
+├── General, Output, History, then each feature that is on: Captures
+│   (Labs › Screenshots, macOS), Meetings and Voice Filter (Labs toggles),
+│   Annotate, Playground (Labs, an item)
 └── Labs -> a store of unfinished features, each off by default: search, categories, cards with their own settings inline; hex://labs/<feature> opens its group (labs.md)
     // Command-1…9 follow the panes' order (labs::order)
 
@@ -1382,7 +1390,8 @@ Menu bar and Settings                    // maintenance
 │   ├── Meetings on or a meeting under way: Recording · <title> · 12:34 (opens
 │   │   the Meetings pane), Stop & Transcribe, Copy Section ▸; idle: Record Meeting
 │   ├── Paste Last Dictation ⌥⇧V (saved binding), Copy Recent Dictation ▸ (Labs),
-│   │   Copy Last Meeting Transcript (Meetings on), Speech Model ▸
+│   │   Copy Last Meeting Transcript (Meetings on), Restore Last Capture (Labs ›
+│   │   Screenshots on; dimmed until a capture card was closed), Speech Model ▸
 │   ├── Settings… ⌘, · Check for Updates… · Quit Hex ⌘Q
 │   │   └── Labs > ⌘Q closes Settings (off, #1473) -> ⌘Q closes the Settings
 │   │       window instead; dictation keeps running, the menu bar icon quits (labs.md)
@@ -2268,7 +2277,8 @@ TypeScript SDK + local service             // macOS, Linux, Windows
 ├── Caller streams audio -> Running app's /streams -> Partials, segments, final
 │   └── Dictation first; uses the loaded model only (docs/streams.md)
 ├── Running app's /transcriptions -> Listener's engine when it holds the model
-│   └── Otherwise the service's own copy of the requested model
+│   ├── Otherwise the service's own copy of the requested model
+│   └── ?process=global -> Global mode's output processing (Labs › Process API transcripts)
 ├── Running desktop capture API -> Separate microphone ownership protocol
 │   ├── No silence gate                  // model output, unlike hotkey dictation;
 │   │                                     // only recognition-hint echoes are dropped
@@ -2315,6 +2325,16 @@ dictation ends; it is provisional, and `/finish` returns the transcript.
 `/capabilities` reports `dictationPartials`. Checked live on Windows x64
 (start, partials subscription, finish, a silent room's empty transcript);
 not run on Linux.
+
+`process=global` (Labs › Process API transcripts, off by default) lets a host
+ask the running app for the text after its Global mode's output processing, on
+`POST /transcriptions` and `POST /streams/{id}/finish`
+([streams.md](../streams.md#post-streamsidfinish),
+[labs.md](labs.md)). The response keeps its fields and adds `processed`; off,
+or without the parameter, responses are unchanged raw transcripts, and the
+embedded helper installs no processor (`409 processing-unavailable`, even
+with the lab off). Processing runs one at a time (`429 queue-full`).
+`/capabilities` always includes `outputProcessing`.
 
 The [SDK guide](../../sdk/typescript/README.md),
 [service contract](../specs/local-transcription-service.md), and

@@ -406,8 +406,8 @@ pub fn listen(
     indicator: Option<DictationIndicatorSender>,
     history: Option<crate::history::History>,
     controls: Option<Receiver<RecognitionControl>>,
+    transformations: Arc<crate::personal_commands::TransformationClient>,
 ) -> Result<()> {
-    let transformations = Arc::new(crate::personal_commands::TransformationClient::default());
     shutdown.store(false, Ordering::Relaxed);
     // Feedback admission is advisory: a cold audio stack can exceed the
     // preload timeout, and missing tones must not stop desktop recognition.
@@ -1440,6 +1440,9 @@ fn handle_hotkey_action(
             if !dictation.start(action_at)? {
                 return Ok(false);
             }
+            // Labs › Return to app: this paste goes back to the app in front
+            // now, even if another one comes forward while the person talks.
+            worker.remember_return_to_app();
             // The press started a capture, but it may still be provisional:
             // no page is read until the capture is held past its threshold.
             context.begin();
@@ -1451,6 +1454,8 @@ fn handle_hotkey_action(
                 feedback::play_provisional_start();
             }
             worker.prepare_paste();
+            #[cfg(hex_capture)]
+            crate::screenshots::narration::started();
             events.dictation(DictationPhase::Started, "")?;
             indicator.send(DictationIndicatorEvent::Started);
             emit_state(events, true, device)
@@ -1476,6 +1481,8 @@ fn handle_hotkey_action(
         HotkeyAction::Discard(_) | HotkeyAction::Cancel | HotkeyAction::CancelShortcut => {
             context.cancel();
             feedback::retract_start();
+            #[cfg(hex_capture)]
+            crate::screenshots::narration::ended();
             if action == HotkeyAction::CancelShortcut {
                 feedback::play(Tone::Cancel);
             }
@@ -1528,6 +1535,9 @@ fn finish_hotkey_dictation(
     if dictation.become_intentional(action_at)? && release_while_idle {
         feedback::play(Tone::DictationStart);
     }
+    // A dictation over a screenshot lands its words there, never pasted.
+    #[cfg(hex_capture)]
+    let print = print.or_else(crate::screenshots::narration::claim);
     let finished = match print {
         None => finish_dictation(
             dictation,

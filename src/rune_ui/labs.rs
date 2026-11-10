@@ -15,7 +15,9 @@ use rune::{El, Icon, TextEdit, Tx, row, text};
 
 pub(super) use self::store::{page, search_field, tabs};
 use super::controls::{self, Paint};
-use super::icons::{BOOK, CAMERA, CLOCK, GLOBE, KEYBOARD, MOUSE, SPARKLES, TERMINAL, TIMER, WAVE};
+use super::icons::{
+    BOOK, CAMERA, CLOCK, GLOBE, KEYBOARD, MOUSE, PANEL, SPARKLES, TERMINAL, TIMER, WAVE,
+};
 use super::list_detail::SEARCH_ICON;
 use super::sidebar::{NAV_ROW_GAP, NAV_ROW_HEIGHT, VOICE_FILTER_ICON};
 use super::{Pane, Ui};
@@ -34,7 +36,12 @@ pub(super) static LABS_ICON: Icon = Icon {
 pub(super) fn main_panes(ui: &Ui) -> Vec<Pane> {
     let mut panes = vec![Pane::General, Pane::Models, Pane::Output, Pane::History];
     #[cfg(hex_capture)]
-    let optional = [Pane::Meetings, Pane::Annotate, Pane::VoiceFilter];
+    let optional = [
+        Pane::Captures,
+        Pane::Meetings,
+        Pane::Annotate,
+        Pane::VoiceFilter,
+    ];
     #[cfg(not(hex_capture))]
     let optional = [Pane::Meetings, Pane::VoiceFilter];
     panes.extend(optional.into_iter().filter(|pane| pane.shown(ui)));
@@ -379,6 +386,12 @@ fn rows(ui: &Ui) -> Vec<Row> {
         tr("Find any setting in General with a search field"),
     ));
     rows.push(row(
+        Feature::Appearance,
+        Some(&PANEL),
+        tr("Appearance"),
+        tr("Use light or dark for the main window instead of the system's"),
+    ));
+    rows.push(row(
         Feature::RewriteSnippetMatch,
         Some(&KEYBOARD),
         tr("Rewrite semantic match"),
@@ -489,6 +502,24 @@ fn rows(ui: &Ui) -> Vec<Row> {
             None,
             tr("Copy dictation only"),
             tr("Put the dictation on the clipboard instead of pasting it"),
+        ));
+    }
+    // macOS's paster can bring the app a capture started in back to the front.
+    if caps.os == super::platform::Os::Macos {
+        rows.push(row(
+            Feature::ReturnToApp,
+            Some(&PANEL),
+            tr("Return to app"),
+            tr("If another app comes to the front while you dictate, Hex switches back to the app you started in before pasting. If it can't, nothing is pasted and Paste last dictation has the text."),
+        ));
+    }
+    // macOS's shortcut machine takes a shortcut without a key.
+    if caps.os == super::platform::Os::Macos {
+        rows.push(row(
+            Feature::DoubleTapModifiers,
+            Some(&KEYBOARD),
+            tr("Double-tap on a lone modifier"),
+            tr("Let Double-tap shortcut mode work when the shortcut has no key, such as Option, Globe, or ⌃⌥"),
         ));
     }
     if caps.os == super::platform::Os::Macos {
@@ -720,6 +751,18 @@ fn rows(ui: &Ui) -> Vec<Row> {
         tr("Downloaded models only"),
         tr("Show only downloaded speech models in the picker, with the space they take"),
     ));
+    rows.push(row(
+        Feature::TranscribeFiles,
+        None,
+        tr("Transcribe files"),
+        tr("Adds hex transcribe <file> to turn a WAV recording into text with your dictation model."),
+    ));
+    rows.push(row(
+        Feature::ApiProcessing,
+        None,
+        tr("Process API transcripts"),
+        tr("Apps can ask Hex's local API for transcripts with Global mode's processing applied."),
+    ));
     let ultra_locked = Feature::ParakeetUltra.managed().is_none()
         && Feature::ParakeetUltra.off_refusal(&ui.settings).is_some();
     let ultra = row(Feature::ParakeetUltra, None, tr("Parakeet Ultra"), "");
@@ -810,6 +853,7 @@ fn row_key(lab: Lab) -> &'static str {
         Feature::RestoreShortcutDefault => "lab-restore-shortcut-default",
         Feature::KeepOnClipboard => "lab-keep-on-clipboard",
         Feature::CopyOnly => "lab-copy-only",
+        Feature::ReturnToApp => "lab-return-to-app",
         Feature::SpokenFormatting => "lab-spoken-formatting",
         Feature::FillerWords => "lab-filler-words",
         Feature::SubtitleExport => "lab-subtitle-export",
@@ -820,6 +864,7 @@ fn row_key(lab: Lab) -> &'static str {
         Feature::PickerSortFilter => "lab-picker-sort-filter",
         Feature::SidedChords => "lab-sided-modifier-chords",
         Feature::TapOrHold => "lab-tap-or-hold",
+        Feature::DoubleTapModifiers => "lab-double-tap-modifiers",
         Feature::BenchmarkDetails => "lab-benchmark-details",
         Feature::ParakeetUltra => "lab-parakeet-ultra",
         Feature::StandaloneSpecialKeys => "lab-special-keys",
@@ -834,6 +879,7 @@ fn row_key(lab: Lab) -> &'static str {
         Feature::SectionKeyAlone => "lab-section-key",
         Feature::KeepRecordings => "lab-keep-recordings",
         Feature::SettingsSearch => "lab-settings-search",
+        Feature::Appearance => "lab-appearance",
         Feature::ReleaseNotesLink => "lab-release-notes-link",
         Feature::HideMenuBarIcon => "lab-hide-menu-bar-icon",
         Feature::QuitClosesWindow => "lab-quit-closes-window",
@@ -855,6 +901,8 @@ fn row_key(lab: Lab) -> &'static str {
         Feature::ExpireMeetingAudio => "lab-expire-meeting-audio",
         Feature::RewriteSnippetMatch => "lab-rewrite-snippet-match",
         Feature::OpenCodeInWsl => "lab-opencode-in-wsl",
+        Feature::TranscribeFiles => "lab-transcribe-files",
+        Feature::ApiProcessing => "lab-api-processing",
     }
 }
 
@@ -931,6 +979,20 @@ fn extras(ui: &Ui, p: Paint, entry: &Row) -> Option<El> {
                 )
                 .child(caps_lock_light(ui, p)),
         ),
+        Lab::Feature(Feature::Appearance) => Some(
+            row()
+                .key("appearance-theme-row")
+                .gap(8.0)
+                .center_y()
+                .flex_wrap()
+                .child(
+                    text(tr("Theme"))
+                        .key("label")
+                        .font(controls::DESCRIPTION)
+                        .color(p.muted()),
+                )
+                .child(appearance_theme(ui, p)),
+        ),
         #[cfg(all(target_os = "macos", hex_capture))]
         Lab::Feature(Feature::Screenshots) => Some(screenshots::body(
             ui,
@@ -955,6 +1017,23 @@ fn caps_lock_light(ui: &Ui, p: Paint) -> El {
     controls::segmented(p, "caps-lock-light", &labels, selected, |ui, index| {
         let light = CapsLockLight::ALL[index];
         ui.update(|settings| settings.labs.caps_lock_light = light);
+    })
+}
+
+/// Which appearance the main window shows instead of the system's.
+fn appearance_theme(ui: &Ui, p: Paint) -> El {
+    use crate::app_settings::AppearanceTheme;
+    let labels: Vec<&str> = AppearanceTheme::ALL
+        .iter()
+        .map(|theme| tr(theme.name()))
+        .collect();
+    let selected = AppearanceTheme::ALL
+        .iter()
+        .position(|theme| *theme == ui.settings.labs.appearance_theme)
+        .unwrap_or(0);
+    controls::segmented(p, "appearance-theme", &labels, selected, |ui, index| {
+        let theme = AppearanceTheme::ALL[index];
+        ui.update(|settings| settings.labs.appearance_theme = theme);
     })
 }
 
