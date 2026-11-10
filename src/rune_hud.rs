@@ -973,7 +973,11 @@ impl Compositor<Hud> for HudCompositor {
     /// clears the target.
     fn render(&mut self, f: &mut Frame<'_, Hud>) {
         let reduce = f.rt.reduced_motion;
-        let target = Target::whole(f.size, f.rt.env.scale, f.rt.env.system_dark);
+        let target = Target::whole(
+            f.size,
+            f.rt.env.scale,
+            crate::labs::window_dark_state(f.rt.env.system_dark),
+        );
         let hud = &mut f.rt.state;
         hud.reduce = reduce;
         if hud.model.active() {

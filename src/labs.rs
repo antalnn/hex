@@ -22,7 +22,7 @@
 //! Gate a feature where its work starts (the worker, thread, or capture
 //! that does it), not only where its UI shows.
 
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU8, AtomicU64, Ordering};
 
 use crate::app_settings::{AppSettings, AppearanceTheme, CapsLockLight, LabsSettings};
 
@@ -942,6 +942,10 @@ const REWRITE_SNIPPET_MATCH: u64 = RETURN_TO_APP << 1;
 /// first read.
 static STATE: AtomicU64 = AtomicU64::new(0);
 
+/// The forced appearance for the overlays, which read no settings: 0 follows
+/// the system, 1 light, 2 dark. Kept in step by [`apply`].
+static APPEARANCE: AtomicU8 = AtomicU8::new(0);
+
 fn on(bit: u64) -> bool {
     state() & bit != 0
 }
@@ -1272,22 +1276,41 @@ pub fn unload_idle() -> Option<std::time::Duration> {
 
 /// Whether the main window draws dark: the OS's appearance, unless Labs ›
 /// Appearance is on and names one. Resolved for each view, so System keeps
-/// following the OS live. Overlay windows (the HUD, capsules, live text) keep
-/// following the OS themselves.
+/// following the OS live.
 pub fn window_dark(labs: &LabsSettings, system_dark: bool) -> bool {
+    resolve_window_dark(appearance_code(labs), system_dark)
+}
+
+/// The same resolution for an overlay that reads no settings, such as the HUD
+/// compositor: the forced appearance kept by [`apply`], or the system's.
+pub fn window_dark_state(system_dark: bool) -> bool {
+    resolve_window_dark(APPEARANCE.load(Ordering::Acquire), system_dark)
+}
+
+/// What [`apply`] stores: the Labs feature's shipped switch, and its theme.
+fn appearance_code(labs: &LabsSettings) -> u8 {
     if !Feature::Appearance.shipped() || !labs.appearance {
-        return system_dark;
+        return 0;
     }
     match labs.appearance_theme {
-        AppearanceTheme::System => system_dark,
-        AppearanceTheme::Light => false,
-        AppearanceTheme::Dark => true,
+        AppearanceTheme::System => 0,
+        AppearanceTheme::Light => 1,
+        AppearanceTheme::Dark => 2,
+    }
+}
+
+fn resolve_window_dark(code: u8, system_dark: bool) -> bool {
+    match code {
+        1 => false,
+        2 => true,
+        _ => system_dark,
     }
 }
 
 /// Records the switches the loaded or saved settings hold.
 pub(crate) fn apply(settings: &LabsSettings) {
     STATE.store(encode(settings), Ordering::Release);
+    APPEARANCE.store(appearance_code(settings), Ordering::Release);
 }
 
 fn encode(settings: &LabsSettings) -> u64 {
@@ -1643,6 +1666,17 @@ mod tests {
         assert!(!window_dark(&appearance(AppearanceTheme::System), false));
         assert!(!window_dark(&appearance(AppearanceTheme::Light), true));
         assert!(window_dark(&appearance(AppearanceTheme::Dark), false));
+        // The same resolver the HUD reads through the process-wide state.
+        assert!(!resolve_window_dark(
+            appearance_code(&appearance(AppearanceTheme::Light)),
+            true
+        ));
+        assert!(resolve_window_dark(
+            appearance_code(&appearance(AppearanceTheme::Dark)),
+            false
+        ));
+        assert!(resolve_window_dark(appearance_code(&labs), true));
+        assert!(!resolve_window_dark(appearance_code(&labs), false));
     }
 
     #[test]
