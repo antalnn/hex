@@ -164,7 +164,11 @@ fn transition_schedule(model: &mut IndicatorModel, start: Instant) -> Vec<DotFra
                 model.handle(HudEvent::Started, now, false);
                 started = true;
             }
-            let db = if (2.0..3.5).contains(&t) { -30.0 } else { -70.0 };
+            let db = if (2.0..3.5).contains(&t) {
+                -30.0
+            } else {
+                -70.0
+            };
             let rms = 10_f32.powf(db / 20.0);
             model.handle(
                 HudEvent::Meter {
