@@ -14,11 +14,11 @@
 //! prompt, edited like the Vocabulary sheet and saved when typing pauses.
 
 use rune::{El, TextEdit, col, row, text};
-use rune_kit::{ControlSize, TextInput};
+use rune_kit::{ControlSize, TextArea, TextInput};
 
 use super::controls::{
     ButtonKind, DESCRIPTION, METRICS, Paint, button, described_row, note, page, segmented,
-    setting_row,
+    setting_row, toggle_row,
 };
 use super::lists::remove_button;
 use super::{Request, Ui};
@@ -31,10 +31,9 @@ const FIELD_WIDTH: f32 = 280.0;
 const ROW_HEIGHT: f32 = 36.0;
 const PADDING: f32 = 18.0;
 const MODAL_WIDTH: f32 = 640.0;
-/// What the local server serves and the two switches that turn it on, said on
-/// its card.
-const LOCAL_MODEL_PURPOSE: &str =
-    "AI cleanup runs on this server when Dictation is set to Local. Hex starts it with the app.";
+/// What the local server serves and the switch that turns it on, said on its
+/// card. The card above it carries the AI cleanup switch and prompt.
+const LOCAL_MODEL_PURPOSE: &str = "The model server the AI cleanup card uses when Dictation is set to Local. Hex starts it with the app.";
 
 /// The endpoint, model and key of one feature's remote call.
 #[derive(Default)]
@@ -80,6 +79,9 @@ pub(super) struct ModelSources {
     /// What an edit for a removed snippet lands in; never saved.
     detached: TextEdit,
     pub(super) prompts_open: bool,
+    /// The AI cleanup prompt sheet and its text.
+    cleanup_prompt: TextEdit,
+    pub(super) cleanup_open: bool,
 }
 
 impl ModelSources {
@@ -94,6 +96,7 @@ impl ModelSources {
         self.dictation = SourceFields::new(&settings.dictation_rewrite.remote);
         self.rewrite = SourceFields::new(&settings.rewrite.remote);
         self.default_prompt = TextEdit::new(settings.rewrite.default_prompt.clone());
+        self.cleanup_prompt = TextEdit::new(settings.ai_cleanup.prompt.clone());
         self.snippets = settings
             .rewrite
             .snippets
@@ -122,6 +125,7 @@ impl ModelSources {
             .project(&mut settings.dictation_rewrite.remote);
         self.rewrite.project(&mut settings.rewrite.remote);
         settings.rewrite.default_prompt = self.default_prompt.text.trim().to_string();
+        settings.ai_cleanup.prompt = self.cleanup_prompt.text.trim().to_string();
         settings.rewrite.snippets = self
             .snippets
             .iter()
@@ -160,6 +164,7 @@ pub(super) fn open_prompts(ui: &mut Ui) {
     super::explainer::close(ui);
     super::sound_sets::close(ui);
     ui.model_sources.prompts_open = true;
+    ui.model_sources.cleanup_open = false;
     if ui.model_sources.snippets.is_empty() {
         add_snippet(ui);
     }
@@ -171,6 +176,25 @@ pub(super) fn close_prompts(ui: &mut Ui) {
         return;
     }
     ui.model_sources.prompts_open = false;
+    ui.flush_drafts();
+}
+
+/// Opens the AI cleanup prompt sheet, closing the other Models sheet.
+pub(super) fn open_cleanup_prompt(ui: &mut Ui) {
+    super::settings::cancel_capture(ui);
+    super::picker::close(ui);
+    super::explainer::close(ui);
+    super::sound_sets::close(ui);
+    ui.model_sources.prompts_open = false;
+    ui.model_sources.cleanup_open = true;
+}
+
+/// Saves what was typed and closes the AI cleanup prompt sheet.
+pub(super) fn close_cleanup_prompt(ui: &mut Ui) {
+    if !ui.model_sources.cleanup_open {
+        return;
+    }
+    ui.model_sources.cleanup_open = false;
     ui.flush_drafts();
 }
 
@@ -213,11 +237,66 @@ pub(super) fn pane(ui: &Ui, p: Paint, layer: &mut Vec<El>) -> (Vec<El>, El) {
     let content = page("content")
         .child(dictation_card(ui, p, layer))
         .child(rewrite_card(ui, p))
+        .child(ai_cleanup_card(ui, p))
         .child(local_model_card(ui, p));
     (
         Vec::new(),
         super::scroll_body(p.k, "models-scroll", content),
     )
+}
+
+/// AI cleanup's switch, the prompt it follows, and where it runs. The card
+/// sits directly above the local model card, so the switch, the prompt and
+/// the server that serves the Local choice read together.
+fn ai_cleanup_card(ui: &Ui, p: Paint) -> El {
+    let enabled = ui.settings.ai_cleanup.enabled;
+    let local = ui.settings.dictation_rewrite.source == AiSource::Local;
+    let running = ui
+        .view
+        .as_ref()
+        .and_then(|view| view.local_model.as_ref())
+        .is_some_and(|snapshot| {
+            matches!(
+                snapshot.state,
+                crate::local_model::State::Ready | crate::local_model::State::External
+            )
+        });
+    let where_it_runs = if !enabled {
+        tr("Off: each dictation is pasted as transcribed, with no model step.")
+    } else if local && running {
+        tr("Runs on the local model server.")
+    } else if local {
+        tr("Runs on the local model server when it is running.")
+    } else {
+        tr("Runs on the remote endpoint Dictation names.")
+    };
+    let rows = vec![
+        toggle_row(
+            p,
+            "ai-cleanup-enabled",
+            tr("AI cleanup"),
+            Some(tr("Fix grammar, punctuation and paragraphs with a model")),
+            enabled,
+            |ui: &mut Ui| {
+                ui.update(|settings| settings.ai_cleanup.enabled = !settings.ai_cleanup.enabled);
+            },
+        ),
+        setting_row(
+            p,
+            "ai-cleanup-prompt",
+            tr("Prompt"),
+            Some(tr("The instruction the model follows")),
+            button(
+                p,
+                "open-ai-cleanup-prompt",
+                tr("Edit"),
+                ButtonKind::Secondary,
+                |ui: &mut Ui, _| open_cleanup_prompt(ui),
+            ),
+        ),
+        note("ai-cleanup-runs", where_it_runs, p.muted()),
+    ];
+    super::controls::section(p, "ai-cleanup-section", tr("AI cleanup"), rows)
 }
 
 /// The llama.cpp server Hex owns, with its state and a start or stop button.
@@ -617,6 +696,93 @@ pub(super) fn prompts_modal(ui: &Ui, p: Paint) -> Option<[El; 2]> {
     ])
 }
 
+/// The AI cleanup prompt sheet: one multiline instruction, saved when Done
+/// closes it. An empty box is saved as empty and falls back to the shipped
+/// wording in the model call.
+pub(super) fn cleanup_modal(ui: &Ui, p: Paint) -> Option<[El; 2]> {
+    if !ui.model_sources.cleanup_open {
+        return None;
+    }
+    let c = &p.k.c;
+    let heading = col()
+        .key("heading")
+        .gap(4.0)
+        .child(
+            text(tr("AI cleanup prompt"))
+                .key("title")
+                .font(p.k.ty.body_medium)
+                .color(p.text()),
+        )
+        .child(
+            text(tr(
+                "The instruction the model follows for every dictation. Leave it empty to use the shipped wording.",
+            ))
+            .key("description")
+            .font(DESCRIPTION)
+            .color(p.muted())
+            .wrap(),
+        );
+    let prompt = TextArea::new(&ui.model_sources.cleanup_prompt)
+        .placeholder(tr("Describe how AI cleanup should fix the dictation…"))
+        .rows(8)
+        .width(None)
+        .on_edit(|ui: &mut Ui| &mut ui.model_sources.cleanup_prompt)
+        .build(p.k)
+        .key("ai-cleanup-prompt-field");
+    let footer = row()
+        .key("footer")
+        .gap(12.0)
+        .center_y()
+        .child(rune::el().key("spacer").grow(1.0))
+        .child(
+            button(
+                p,
+                "close-ai-cleanup-prompt",
+                tr("Done"),
+                ButtonKind::Secondary,
+                |ui: &mut Ui, _| close_cleanup_prompt(ui),
+            )
+            .default_button(),
+        );
+    let mut panel = col()
+        .key("ai-cleanup-prompt")
+        .role("dialog")
+        .label(tr("AI cleanup prompt"))
+        .w(MODAL_WIDTH)
+        .pt(PADDING)
+        .px(PADDING)
+        .pb(14.0)
+        .gap(12.0)
+        .radius(p.k.radius.xl)
+        .fill(c.bg_base)
+        .border(p.hair, c.border_weak)
+        .on_press(|_: &mut Ui| {})
+        .child(heading)
+        .child(prompt)
+        .child(footer);
+    for shadow in &p.k.elevation.overlay {
+        panel = panel.box_shadow(*shadow);
+    }
+    let layer = |key: &str| {
+        rune::el()
+            .key(key)
+            .role("none")
+            .absolute(0.0, 0.0)
+            .w_full()
+            .h_full()
+    };
+    Some([
+        layer("ai-cleanup-scrim")
+            .fill(c.scrim)
+            .on_press(close_cleanup_prompt)
+            .transition(super::controls::modal_scrim_transition(p)),
+        layer("ai-cleanup-layer")
+            .center()
+            .transition(super::controls::modal_transition(p))
+            .child(panel.modal(true, close_cleanup_prompt)),
+    ])
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -683,7 +849,7 @@ mod tests {
 
     #[test]
     fn the_local_card_says_it_serves_the_ai_cleanup() {
-        assert!(LOCAL_MODEL_PURPOSE.contains("AI cleanup"));
+        assert!(LOCAL_MODEL_PURPOSE.contains("AI cleanup card"));
         assert!(LOCAL_MODEL_PURPOSE.contains("Dictation is set to Local"));
         assert!(LOCAL_MODEL_PURPOSE.contains("starts it with the app"));
         // The Modes pane is hidden (`Pane::Modes` is never shown), so naming
@@ -707,6 +873,21 @@ mod tests {
             "Turn it into a prompt."
         );
         assert_eq!(ui.settings.rewrite.default_prompt, "Tighten it.");
+    }
+
+    #[test]
+    fn the_cleanup_prompt_sheet_projects_the_saved_prompt() {
+        let mut ui = ui();
+        open_cleanup_prompt(&mut ui);
+        assert!(ui.model_sources.cleanup_open);
+        ui.model_sources.cleanup_prompt = TextEdit::new("  Fix the words.  ");
+        close_cleanup_prompt(&mut ui);
+        assert_eq!(ui.settings.ai_cleanup.prompt, "Fix the words.");
+
+        open_cleanup_prompt(&mut ui);
+        ui.model_sources.cleanup_prompt = TextEdit::new("   ");
+        close_cleanup_prompt(&mut ui);
+        assert_eq!(ui.settings.ai_cleanup.prompt, "");
     }
 
     #[test]

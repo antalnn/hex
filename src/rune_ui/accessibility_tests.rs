@@ -369,6 +369,8 @@ fn models_reads_the_features_then_the_server() {
     let order = [
         "dictation-source",
         "rewrite-endpoint-field",
+        "ai-cleanup-enabled",
+        "ai-cleanup-prompt",
         "local-model-state",
     ];
     let indices: Vec<usize> = order.iter().map(|key| index(key)).collect();
@@ -376,6 +378,36 @@ fn models_reads_the_features_then_the_server() {
         indices.windows(2).all(|pair| pair[0] < pair[1]),
         "Models reads out of order: {order:?} at {indices:?}"
     );
+}
+
+/// AI cleanup reads as its own card: a switch that flips through
+/// accessibility, the prompt row that opens its sheet, and where it runs,
+/// all between Rewrite selection and the local model server.
+#[test]
+fn ai_cleanup_reads_its_switch_prompt_and_server() {
+    let mut rt = runtime("portal");
+    open_models(&mut rt);
+    let switch = node(&rt, "ai-cleanup-enabled");
+    assert_eq!(switch["role"], "switch");
+    assert_eq!(name(&switch), "AI cleanup");
+    assert!(states(&switch).contains(&"checked"));
+    assert!(
+        switch["description"]
+            .as_str()
+            .is_some_and(|d| !d.is_empty()),
+        "{switch}"
+    );
+    assert!(rt.find("ai-cleanup-prompt").is_some());
+    assert!(
+        rt.find("open-ai-cleanup-prompt").is_some(),
+        "the prompt opens its own sheet"
+    );
+    assert!(rt.find("ai-cleanup-runs").is_some());
+
+    assert!(rt.accessibility_action("ai-cleanup-enabled", Action::Click, None));
+    settle(&mut rt);
+    assert!(!rt.state.settings.ai_cleanup.enabled);
+    assert!(!states(&node(&rt, "ai-cleanup-enabled")).contains(&"checked"));
 }
 
 /// Rewrite selection always calls a remote endpoint: the Models pane shows its

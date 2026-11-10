@@ -1487,6 +1487,9 @@ fn view(ui: &Ui, cx: &mut Cx<Ui>) -> El {
     if let Some(modal) = ai_models::prompts_modal(ui, p) {
         layer.extend(modal);
     }
+    if let Some(modal) = ai_models::cleanup_modal(ui, p) {
+        layer.extend(modal);
+    }
     if let Some(first_run) = onboarding_kit::live::overlay(ui, p, cx.is_reduced_motion()) {
         layer.push(first_run);
     }
