@@ -15,6 +15,7 @@ pub(super) fn table() -> &'static HashMap<&'static str, &'static str> {
 
 #[rustfmt::skip]
 const TRANSLATIONS: &[(&str, &str)] = &[
+    ("AI cleanup is Hex's own transformation. The OpenCode transformation below is the older rewrite, with its own prompt and deadline.", "Le nettoyage IA est une transformation propre à Hex. La transformation OpenCode ci-dessous est la réécriture plus ancienne, avec son propre prompt et son délai."),
     ("AI cleanup prompt", "Invite de nettoyage IA"),
     ("Describe how AI cleanup should fix the dictation…", "Décrivez comment le nettoyage IA doit corriger la dictée…"),
     ("Results depend on the local model you installed and how large it is. A small model made only for cleaning up English cannot be expected to reliably fix grammar, false starts or abandoned clauses, and it loses a detailed instruction on long text.", "Le résultat dépend du modèle local installé et de sa taille. Un petit modèle conçu seulement pour nettoyer l'anglais ne corrigera pas de façon fiable la grammaire, les faux départs ou les clauses abandonnées, et il perd une instruction détaillée sur un texte long."),

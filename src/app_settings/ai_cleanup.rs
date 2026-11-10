@@ -17,6 +17,9 @@ pub struct AiCleanupSettings {
     /// The instruction the model receives. Empty uses the shipped wording, so
     /// clearing the box never degrades silently.
     pub prompt: String,
+    /// How long one model call may wait before the step gives up and keeps
+    /// the text. One second is the floor.
+    pub deadline_seconds: u64,
 }
 
 impl Default for AiCleanupSettings {
@@ -24,6 +27,7 @@ impl Default for AiCleanupSettings {
         Self {
             enabled: true,
             prompt: crate::dictation::ai_rewrite::SYSTEM_PROMPT.to_string(),
+            deadline_seconds: crate::dictation::ai_rewrite::DEFAULT_TIMEOUT.as_secs(),
         }
     }
 }
@@ -84,5 +88,16 @@ mod tests {
             decoded.instruction(),
             crate::dictation::ai_rewrite::SYSTEM_PROMPT
         );
+        assert_eq!(
+            decoded.deadline_seconds,
+            crate::dictation::ai_rewrite::DEFAULT_TIMEOUT.as_secs()
+        );
+    }
+
+    #[test]
+    fn a_saved_deadline_replaces_the_default() {
+        let decoded: AiCleanupSettings =
+            serde_json::from_str(r#"{"deadline_seconds":45}"#).unwrap();
+        assert_eq!(decoded.deadline_seconds, 45);
     }
 }

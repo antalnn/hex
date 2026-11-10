@@ -1087,7 +1087,13 @@ fn processing(
     let reason = (!can_toggle)
         .then(|| models::unavailable_reason(ui, OpenCodeFeature::Transformation))
         .flatten();
-    let mut rows = Vec::new();
+    let mut rows = vec![note(
+        "processing-rewrites",
+        tr(
+            "AI cleanup is Hex's own transformation. The OpenCode transformation below is the older rewrite, with its own prompt and deadline.",
+        ),
+        p.muted(),
+    )];
     // The native AI cleanup is a transformation, not the OpenCode rewrite: it
     // gets its own switch so turning one on never turns the other off.
     if !crate::policy::Policy::current().locks(crate::policy::Lock::Transforms) {

@@ -36,8 +36,9 @@ pub const NAME: &str = "AI cleanup";
 pub const DESCRIPTION: &str =
     "Clean up dictation with a model: the local one, or the remote endpoint the settings name";
 
-/// How long one call may take, the script's own budget.
-const TIMEOUT: Duration = Duration::from_secs(20);
+/// How long one call may take by default, the script's own budget. The saved
+/// `ai_cleanup.deadline_seconds` replaces it.
+pub(crate) const DEFAULT_TIMEOUT: Duration = Duration::from_secs(20);
 /// The reply budget for the local server, which runs with a 4,096-token
 /// context: a long dictation plus this cap must still fit inside it.
 const MAX_TOKENS: u32 = 1_500;
@@ -128,11 +129,12 @@ fn system_instruction(saved: &str) -> &str {
 
 /// Cleans `text` with the model `source` names. `instruction` is the saved AI
 /// cleanup prompt; empty uses [`SYSTEM_PROMPT`], so clearing the box never
-/// degrades silently. `Err` means "keep the text as it is"; the caller
-/// records why.
+/// degrades silently. `deadline` is how long the call may wait. `Err` means
+/// "keep the text as it is"; the caller records why.
 pub(crate) fn clean(
     source: &ModelSource,
     port: u16,
+    deadline: Duration,
     instruction: &str,
     text: &str,
 ) -> Result<String> {
@@ -178,9 +180,9 @@ pub(crate) fn clean(
         stream: false,
     };
     let agent = if source.is_remote() {
-        crate::net::agent(&url, |settings| settings.timeout_global(Some(TIMEOUT)))
+        crate::net::agent(&url, |settings| settings.timeout_global(Some(deadline)))
     } else {
-        crate::net::loopback_agent(|settings| settings.timeout_global(Some(TIMEOUT)))
+        crate::net::loopback_agent(|settings| settings.timeout_global(Some(deadline)))
     };
     let json = serde_json::to_string(&body)
         .map_err(|error| eyre!("the cleanup request could not be built: {error}"))?;
@@ -339,7 +341,10 @@ mod tests {
         };
         // A remote source with nothing set would fail, so an Ok here proves the
         // length gate ran before the request was built.
-        assert_eq!(clean(&source, 9, "", "too short").unwrap(), "too short");
+        assert_eq!(
+            clean(&source, 9, DEFAULT_TIMEOUT, "", "too short").unwrap(),
+            "too short"
+        );
     }
 
     #[test]
@@ -347,6 +352,7 @@ mod tests {
         let error = clean(
             &ModelSource::default(),
             9,
+            DEFAULT_TIMEOUT,
             "",
             "a dictation long enough to send",
         )
@@ -360,7 +366,14 @@ mod tests {
             source: crate::app_settings::AiSource::Remote,
             ..ModelSource::default()
         };
-        let error = clean(&source, 9, "", "a dictation long enough to send").unwrap_err();
+        let error = clean(
+            &source,
+            9,
+            DEFAULT_TIMEOUT,
+            "",
+            "a dictation long enough to send",
+        )
+        .unwrap_err();
         assert!(error.to_string().contains("endpoint address is empty"));
     }
 

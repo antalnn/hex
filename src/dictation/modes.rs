@@ -4,6 +4,7 @@
 //! `dictation_processor` order. macOS selects modes through `config`.
 
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::Duration;
 
 use url::Url;
 
@@ -32,6 +33,8 @@ pub struct ModeRuntime {
     /// The instruction the model receives; empty falls back in
     /// [`crate::dictation::ai_rewrite::clean`].
     ai_cleanup_prompt: String,
+    /// How long the cleanup call may wait before it gives up.
+    ai_deadline: Duration,
     modes: Vec<DictationMode>,
     reads_page: bool,
 }
@@ -59,6 +62,7 @@ impl ModeRuntime {
             llm_port: settings.llm.port,
             ai_cleanup_enabled: settings.ai_cleanup.enabled,
             ai_cleanup_prompt: settings.ai_cleanup.prompt.clone(),
+            ai_deadline: Duration::from_secs(settings.ai_cleanup.deadline_seconds.max(1)),
             modes: processing.modes.clone(),
             reads_page: uses_page(processing),
         }
@@ -156,6 +160,7 @@ impl ModeRuntime {
         let result = crate::dictation::ai_rewrite::clean(
             &self.ai_source,
             self.llm_port,
+            self.ai_deadline,
             &self.ai_cleanup_prompt,
             &processed.text,
         );
@@ -653,6 +658,15 @@ mod tests {
         );
         assert_eq!(off.text, without.text);
         assert_eq!(off.transformations, without.transformations);
+    }
+
+    #[test]
+    fn cleanup_applies_its_saved_deadline_with_a_one_second_floor() {
+        let saved = runtime(|settings| settings.ai_cleanup.deadline_seconds = 45);
+        assert_eq!(saved.ai_deadline, Duration::from_secs(45));
+
+        let floored = runtime(|settings| settings.ai_cleanup.deadline_seconds = 0);
+        assert_eq!(floored.ai_deadline, Duration::from_secs(1));
     }
 
     #[test]

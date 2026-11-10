@@ -341,6 +341,11 @@ const KEYS: &[Key] = &[
         "The instruction AI cleanup gives the model; empty uses the shipped wording",
     ),
     key(
+        "ai_cleanup.deadline_seconds",
+        Kind::Integer { min: 1, max: 3600 },
+        "Seconds AI cleanup waits for its model before it gives up",
+    ),
+    key(
         "shortcuts.excluded_processes",
         Kind::Json,
         "Apps in which Hex's shortcuts do nothing, by executable name such as cs2, \
