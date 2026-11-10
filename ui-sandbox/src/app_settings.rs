@@ -306,12 +306,16 @@ pub struct DictationProcessing {
 /// The local model server (`llm`), fixture only.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct LlmSettings {
+    pub enabled: bool,
     pub port: u16,
 }
 
 impl Default for LlmSettings {
     fn default() -> Self {
-        Self { port: 8081 }
+        Self {
+            enabled: true,
+            port: 8081,
+        }
     }
 }
 

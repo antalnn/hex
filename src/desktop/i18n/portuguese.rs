@@ -502,6 +502,8 @@ const TRANSLATIONS: &[(&str, &str)] = &[
     ("Say \"comma\", \"hashtag\", \"underscore\", or \"slash\" to insert the symbol joined to its words", "Diga “comma”, “hashtag”, “underscore” ou “slash” para inserir o símbolo junto às palavras"),
     ("See the message below", "Veja a mensagem abaixo"),
     ("Start server", "Iniciar servidor"),
+    ("Start the local model server when Hex opens, and stop it when Hex quits", "Inicia o servidor do modelo local quando o Hex abre e o para quando o Hex fecha"),
+    ("Start with Hex", "Iniciar com o Hex"),
     ("Started by Hex", "Iniciado pelo Hex"),
     ("Started outside Hex and left running", "Iniciado fora do Hex e mantido em execução"),
     ("Stop server", "Parar servidor"),

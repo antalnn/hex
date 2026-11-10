@@ -404,6 +404,11 @@ fn ai_cleanup_reads_its_switch_prompt_and_server() {
     );
     assert!(rt.find("ai-cleanup-runs").is_some());
 
+    let auto_start = node(&rt, "local-model-auto-start");
+    assert_eq!(auto_start["role"], "switch");
+    assert_eq!(name(&auto_start), "Start with Hex");
+    assert!(states(&auto_start).contains(&"checked"));
+
     assert!(rt.accessibility_action("ai-cleanup-enabled", Action::Click, None));
     settle(&mut rt);
     assert!(!rt.state.settings.ai_cleanup.enabled);

@@ -330,6 +330,18 @@ fn local_model_card(ui: &Ui, p: Paint) -> El {
         "local-model-section",
         tr("Local model"),
         vec![
+            toggle_row(
+                p,
+                "local-model-auto-start",
+                tr("Start with Hex"),
+                Some(tr(
+                    "Start the local model server when Hex opens, and stop it when Hex quits",
+                )),
+                ui.settings.llm.enabled,
+                |ui: &mut Ui| {
+                    ui.update(|settings| settings.llm.enabled = !settings.llm.enabled);
+                },
+            ),
             described_row(
                 p,
                 "local-model-state",
