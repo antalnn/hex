@@ -953,7 +953,7 @@ impl Ui {
     fn save_drafts(&mut self, now: Instant) -> bool {
         let candidate = self.drafted();
         self.model_sources
-            .settle_cleanup(candidate.ai_cleanup.deadline_seconds);
+            .settle_cleanup(candidate.ai_cleanup.deadline_seconds, false);
         if candidate == self.settings {
             self.draft_since = None;
             return false;
@@ -969,7 +969,7 @@ impl Ui {
     fn flush_drafts(&mut self) {
         let candidate = self.drafted();
         self.model_sources
-            .settle_cleanup(candidate.ai_cleanup.deadline_seconds);
+            .settle_cleanup(candidate.ai_cleanup.deadline_seconds, true);
         if candidate != self.settings {
             self.commit(candidate);
         }
@@ -1140,7 +1140,8 @@ impl Ui {
             }
             if !drafts.model_sources
                 && (service.dictation_rewrite != self.settings.dictation_rewrite
-                    || service.rewrite != self.settings.rewrite)
+                    || service.rewrite != self.settings.rewrite
+                    || service.ai_cleanup != self.settings.ai_cleanup)
             {
                 self.model_sources.reload(&service);
             }

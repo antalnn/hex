@@ -204,7 +204,7 @@ impl Ui {
         let mut candidate = self.settings.clone();
         self.model_sources.project(&mut candidate);
         self.model_sources
-            .settle_cleanup(candidate.ai_cleanup.deadline_seconds);
+            .settle_cleanup(candidate.ai_cleanup.deadline_seconds, true);
         if candidate != self.settings {
             self.settings = candidate;
             self.saved += 1;

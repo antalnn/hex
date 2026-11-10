@@ -85,7 +85,7 @@ pub(super) struct ModelSources {
     /// The AI cleanup prompt sheet and its text.
     pub(super) cleanup_prompt: TextEdit,
     /// The AI cleanup deadline's seconds, edited in the card.
-    cleanup_deadline: TextEdit,
+    pub(super) cleanup_deadline: TextEdit,
     pub(super) cleanup_open: bool,
 }
 
@@ -160,14 +160,17 @@ impl ModelSources {
 
     /// Rewrites the deadline field when what was typed is outside the saved
     /// range, so "-1" and "0" become the one second they were saved as
-    /// instead of sitting there looking accepted. Text that is not a number
-    /// keeps the old value and is left alone while it is typed.
-    pub(super) fn settle_cleanup(&mut self, saved: u64) {
+    /// instead of sitting there looking accepted. A partial number is left
+    /// alone while it is typed; `finalize` (leaving the pane) rewrites text
+    /// that is not a number too.
+    pub(super) fn settle_cleanup(&mut self, saved: u64, finalize: bool) {
         let typed = self.cleanup_deadline.text.trim();
-        if typed
-            .parse::<i64>()
-            .is_ok_and(|seconds| seconds != saved as i64)
-        {
+        if typed.is_empty() {
+            return;
+        }
+        let parsed = typed.parse::<i64>().ok();
+        let matches = parsed.is_some_and(|seconds| seconds == saved as i64);
+        if !matches && (finalize || parsed.is_some()) {
             self.cleanup_deadline = TextEdit::new(saved.to_string());
         }
     }
@@ -965,6 +968,10 @@ mod tests {
         ui.model_sources.cleanup_deadline = TextEdit::new("nonsense");
         ui.flush_drafts();
         assert_eq!(ui.settings.ai_cleanup.deadline_seconds, 45);
+        assert_eq!(
+            ui.model_sources.cleanup_deadline.text, "45",
+            "leaving the field shows the value it kept"
+        );
 
         ui.model_sources.cleanup_deadline = TextEdit::new("0");
         ui.flush_drafts();

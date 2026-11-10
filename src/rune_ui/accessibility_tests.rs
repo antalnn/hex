@@ -526,6 +526,23 @@ fn an_ai_cleanup_prompt_draft_survives_a_publish() {
     );
 }
 
+/// An external write that changes only the AI cleanup settings reloads the
+/// card's prompt and deadline, the same as any other adopted setting.
+#[test]
+fn an_external_cleanup_change_reloads_the_card() {
+    let mut rt = runtime("portal");
+    open_models(&mut rt);
+    let mut changed = rt.state.settings.clone();
+    changed.ai_cleanup.prompt = "Fix only: grammar.".into();
+    changed.ai_cleanup.deadline_seconds = 45;
+    rt.state.adopt(changed);
+    assert_eq!(
+        rt.state.model_sources.cleanup_prompt.text,
+        "Fix only: grammar."
+    );
+    assert_eq!(rt.state.model_sources.cleanup_deadline.text, "45");
+}
+
 /// The Output list's AI cleanup row carries an Edit button that opens the
 /// same prompt sheet Models › Prompt uses.
 #[test]
