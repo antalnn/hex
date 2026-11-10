@@ -548,8 +548,11 @@ impl WindowsDesktopHost {
             || previous.vocabulary != current.vocabulary
             // AI cleanup's switch and prompt live in the mode runtime too, so
             // toggling or editing them must reach the next dictation without a
-            // restart.
-            || previous.ai_cleanup != current.ai_cleanup;
+            // restart. The source and the local port are the other inputs it
+            // copies, so a Local/Remote switch reaches the next job too.
+            || previous.ai_cleanup != current.ai_cleanup
+            || previous.dictation_rewrite != current.dictation_rewrite
+            || previous.llm.port != current.llm.port;
         if modes_changed {
             *self
                 .mode_runtime
