@@ -446,6 +446,12 @@ fn rows(ui: &Ui) -> Vec<Row> {
             tr("Rename exported meeting Markdown to the meeting's title once notes or a rename provide one, keeping the date and time"),
         ));
         rows.push(row(
+            Feature::MeetingNotesFile,
+            None,
+            tr("Separate notes file"),
+            tr("Write the meeting's notes to their own file next to the transcript, sharing its name, with a link back to the transcript"),
+        ));
+        rows.push(row(
             Feature::MeetingFinishedEvent,
             Some(&GLOBE),
             tr("Meeting finished event"),
@@ -484,6 +490,14 @@ fn rows(ui: &Ui) -> Vec<Row> {
             Some(&KEYBOARD),
             tr("Switch model with keyboard language"),
             tr("Changing input source selects its mapped model and language; manual choices still work"),
+        ));
+    }
+    if caps.app_model_switching {
+        rows.push(row(
+            Feature::AppModelSwitching,
+            Some(&KEYBOARD),
+            tr("Switch model with app"),
+            tr("Each mode can pick a speech model; Hex switches to it when you change apps"),
         ));
     }
     // macOS's and Windows' pasters can leave a dictation on the clipboard.
@@ -543,11 +557,12 @@ fn rows(ui: &Ui) -> Vec<Row> {
         ));
         // macOS's listener only, so Linux renders of macOS scenes leave it out.
         if cfg!(target_os = "macos") {
+            // Up to four more, each with its own activation mode.
             rows.push(row(
-                Feature::SecondDictationShortcut,
+                Feature::MoreDictationShortcuts,
                 Some(&KEYBOARD),
-                tr("Second dictation shortcut"),
-                tr("Another shortcut that dictates like the main one, such as a key on an external keyboard"),
+                tr("More dictation shortcuts"),
+                tr("Up to four more shortcuts that each dictate like the main one, each with its own mode"),
             ));
             // Reads the text before the cursor through macOS Accessibility.
             rows.push(row(
@@ -583,6 +598,14 @@ fn rows(ui: &Ui) -> Vec<Row> {
                 None,
                 tr("Hide menu bar icon"),
                 tr("Hide Hex's icon from the menu bar. Shortcuts keep working; open Hex again from Finder or Spotlight for Settings"),
+            ));
+            // macOS's status item offers Pause Hex while its keyboard
+            // listener stays up.
+            rows.push(row(
+                Feature::PauseMenu,
+                None,
+                tr("Pause from menu bar"),
+                tr("Add Pause Hex to the menu bar. While paused, Hex ignores its shortcuts so other apps get the keys"),
             ));
             // macOS's app menu Quit Hex closes the window instead.
             rows.push(row(
@@ -763,6 +786,18 @@ fn rows(ui: &Ui) -> Vec<Row> {
         tr("Process API transcripts"),
         tr("Apps can ask Hex's local API for transcripts with Global mode's processing applied."),
     ));
+    rows.push(row(
+        Feature::ApiTimestamps,
+        None,
+        tr("Timestamps in API transcripts"),
+        tr("Apps can ask Hex's local API for each segment's or word's start and end times."),
+    ));
+    rows.push(row(
+        Feature::SpeakersOnly,
+        None,
+        tr("Only on speakers"),
+        tr("Apply \"While dictating\" only when sound plays through speakers. Headphones are left alone."),
+    ));
     let ultra_locked = Feature::ParakeetUltra.managed().is_none()
         && Feature::ParakeetUltra.off_refusal(&ui.settings).is_some();
     let ultra = row(Feature::ParakeetUltra, None, tr("Parakeet Ultra"), "");
@@ -802,6 +837,13 @@ fn rows(ui: &Ui) -> Vec<Row> {
             tr("Use an OpenCode service running in your default WSL distribution for Modes rewriting and the Modes model picker. Looking for it can start WSL."),
         ));
     }
+    // Another shortcut dictates exactly like the main one, on every OS (#627).
+    rows.push(row(
+        Feature::SecondDictationShortcut,
+        Some(&KEYBOARD),
+        tr("Second dictation shortcut"),
+        tr("Another shortcut that dictates like the main one, such as a key on an external keyboard"),
+    ));
     if caps.os != super::platform::Os::Macos {
         rows.push(row(
             Feature::TerminalPasteShortcut,
@@ -846,6 +888,7 @@ fn row_key(lab: Lab) -> &'static str {
         Feature::LiveChapters => "lab-live-chapters",
         Feature::TerminalPaste => "lab-terminal-paste",
         Feature::KeyboardModelSwitching => "lab-keyboard-model-switching",
+        Feature::AppModelSwitching => "lab-app-model-switching",
         Feature::MouseShortcuts => "lab-mouse-shortcuts",
         Feature::PauseBrowser => "lab-pause-browser",
         Feature::ShareShortcut => "lab-share-shortcut",
@@ -858,6 +901,7 @@ fn row_key(lab: Lab) -> &'static str {
         Feature::FillerWords => "lab-filler-words",
         Feature::SubtitleExport => "lab-subtitle-export",
         Feature::SecondDictationShortcut => "lab-second-dictation-shortcut",
+        Feature::MoreDictationShortcuts => "lab-more-dictation-shortcuts",
         Feature::TerminalPasteShortcut => "lab-terminal-paste-shortcut",
         Feature::SmartSpacing => "lab-smart-spacing",
         Feature::SpokenSymbols => "lab-spoken-symbols",
@@ -882,6 +926,7 @@ fn row_key(lab: Lab) -> &'static str {
         Feature::Appearance => "lab-appearance",
         Feature::ReleaseNotesLink => "lab-release-notes-link",
         Feature::HideMenuBarIcon => "lab-hide-menu-bar-icon",
+        Feature::PauseMenu => "lab-pause-menu",
         Feature::QuitClosesWindow => "lab-quit-closes-window",
         Feature::CapsLockDictation => "lab-caps-lock-dictation",
         Feature::MovableMeetingCapsules => "lab-movable-meeting-capsules",
@@ -898,11 +943,14 @@ fn row_key(lab: Lab) -> &'static str {
         Feature::AnnotateReplay => "lab-annotate-replay",
         Feature::MeetingImport => "lab-meeting-import",
         Feature::MeetingDescriptiveFilenames => "lab-meeting-descriptive-filenames",
+        Feature::MeetingNotesFile => "lab-meeting-notes-file",
         Feature::ExpireMeetingAudio => "lab-expire-meeting-audio",
         Feature::RewriteSnippetMatch => "lab-rewrite-snippet-match",
         Feature::OpenCodeInWsl => "lab-opencode-in-wsl",
         Feature::TranscribeFiles => "lab-transcribe-files",
         Feature::ApiProcessing => "lab-api-processing",
+        Feature::ApiTimestamps => "lab-api-timestamps",
+        Feature::SpeakersOnly => "lab-speakers-only",
     }
 }
 
@@ -934,6 +982,8 @@ fn flip(ui: &mut Ui, lab: Lab) {
     ui.update(|settings| feature.set(settings, on));
     match feature {
         Feature::KeyboardModelSwitching => ui.open = None,
+        // Its selects live only in the Modes pane, and they close with it.
+        Feature::AppModelSwitching => ui.open = None,
         // A notice already on screen leaves with its lab.
         Feature::FailureNotices if !on => crate::rune_ui::live_text::dismiss_failure(),
         // Hex hears the browser through System Audio Recording.

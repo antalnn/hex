@@ -13,6 +13,7 @@ mod failures;
 mod french;
 mod labs;
 mod meetings;
+mod onboarding;
 mod portuguese;
 mod russian;
 mod text_language;
@@ -339,7 +340,8 @@ fn tables() -> &'static [HashMap<&'static str, &'static str>; 6] {
     })
 }
 
-/// Every translated string: the main, Meetings, Labs, and failure rows.
+/// Every translated string: the main, Meetings, Labs, failure, and first-run
+/// rows.
 pub(super) fn all_translations() -> impl Iterator<Item = &'static (&'static str, [&'static str; 6])>
 {
     TRANSLATIONS
@@ -347,6 +349,7 @@ pub(super) fn all_translations() -> impl Iterator<Item = &'static (&'static str,
         .chain(meetings::TRANSLATIONS)
         .chain(labs::TRANSLATIONS)
         .chain(failures::TRANSLATIONS)
+        .chain(onboarding::TRANSLATIONS)
 }
 
 /// Columns: Polish, Chinese (Simplified), Japanese, German, Spanish, Ukrainian.
@@ -446,8 +449,6 @@ const TRANSLATIONS: &[(&str, [&str; 6])] = &[
     ("Don't switch", ["Nie zmieniaj", "不切换", "切り替えない", "Nicht wechseln", "No cambiar", "Не перемикати"]),
     ("Your desktop assigns this key itself, so Hex can't confirm it", ["Twój pulpit sam przypisuje ten klawisz, więc Hex nie może tego potwierdzić", "你的桌面自行分配此按键，因此 Hex 无法确认", "デスクトップがこのキーを独自に割り当てるため、Hex では確認できません", "Dein Desktop weist diese Taste selbst zu, daher kann Hex sie nicht bestätigen", "Tu escritorio asigna esta tecla por su cuenta, así que Hex no puede confirmarla", "Ваша стільниця сама призначає цю клавішу, тож Hex не може це підтвердити"]),
     ("Not installed", ["Nie zainstalowano", "未安装", "未インストール", "Nicht installiert", "No instalado", "Не встановлено"]),
-    ("Switch model with keyboard language", ["Zmieniaj model z językiem klawiatury", "随键盘语言切换模型", "キーボード言語に合わせてモデルを切り替える", "Modell mit Tastatursprache wechseln", "Cambiar modelo con el idioma del teclado", "Перемикати модель разом із мовою клавіатури"]),
-    ("Changing input source selects its mapped model and language; manual choices still work", ["Zmiana źródła wprowadzania wybiera przypisany model i język; nadal można wybrać je ręcznie", "更改输入源时选择对应的模型和语言；仍可手动选择", "入力ソースを変更すると対応するモデルと言語を選択します。手動でも選択できます", "Ein Wechsel der Eingabequelle wählt das zugeordnete Modell und die Sprache; manuelle Auswahl bleibt möglich", "Cambiar la fuente de entrada selecciona su modelo e idioma; la selección manual sigue disponible", "Зміна джерела введення вибирає призначені йому модель і мову; ручний вибір теж працює"]),
     ("Shortcut side", ["Strona skrótu", "快捷键侧", "ショートカットの左右", "Seite des Kürzels", "Lado del atajo", "Бік комбінації клавіш"]),
     ("Labs", ["Laboratorium", "实验室", "ラボ", "Labs", "Labs", "Лабораторія"]),
     ("Tap or hold", ["Stuknij lub przytrzymaj", "轻点或按住", "タップまたは長押し", "Tippen oder halten", "Toca o mantén", "Торкніться або утримуйте"]),
@@ -1277,32 +1278,6 @@ const TRANSLATIONS: &[(&str, [&str; 6])] = &[
     ("{} ms total", ["łącznie {} ms", "总计 {} 毫秒", "合計 {} ms", "{} ms gesamt", "{} ms en total", "Усього: {} мс"]),
     ("fell back: {}", ["użyto oryginału: {}", "已回退为原文：{}", "元のテキストを使用: {}", "Rohtext verwendet: {}", "se usó el texto original: {}", "використано оригінал: {}"]),
     ("Other", ["Inne", "其他", "その他", "Sonstige", "Otros", "Інше"]),
-    ("Hex starts listening once the speech model has downloaded.", ["Hex zacznie słuchać, gdy model mowy się pobierze.", "语音模型下载完成后，Hex 就会开始聆听。", "音声モデルのダウンロードが終わると、Hex が聞き取りを始めます。", "Hex hört zu, sobald das Sprachmodell geladen ist.", "Hex empezará a escuchar cuando termine de descargarse el modelo de voz.", "Hex почне слухати після завантаження моделі розпізнавання мовлення."]),
-    ("Device Control and Data Access", ["Sterowanie urządzeniem i dostęp do danych", "设备控制与数据访问", "デバイス制御とデータアクセス", "Gerätesteuerung und Datenzugriff", "Control del dispositivo y acceso a datos", "Керування пристроями й доступ до даних"]),
-    ("Allowed", ["Dozwolone", "已允许", "許可済み", "Erlaubt", "Permitido", "Дозволено"]),
-    ("Back", ["Wstecz", "返回", "戻る", "Zurück", "Atrás", "Назад"]),
-    ("Continue", ["Dalej", "继续", "続ける", "Weiter", "Continuar", "Продовжити"]),
-    ("Almost ready", ["Prawie gotowe", "即将就绪", "もうすぐ準備完了", "Fast bereit", "Casi listo", "Майже готово"]),
-    ("Let Hex paste for you", ["Pozwól Hex wklejać za ciebie", "让 Hex 替你粘贴", "Hex に貼り付けを任せる", "Lass Hex für dich einfügen", "Deja que Hex pegue por ti", "Дозвольте Hex вставляти за вас"]),
-    ("Hex needs this to type your words into your apps. Your desktop asks once, and may call it remote desktop.", ["Hex potrzebuje tego, by wpisywać twoje słowa w aplikacjach. Pulpit zapyta raz i może nazwać to zdalnym pulpitem.", "Hex 需要此权限才能把你的话输入到应用中。桌面只会询问一次，可能会称之为“远程桌面”。", "Hex がアプリに言葉を入力するために必要です。デスクトップが一度だけ確認し、「リモートデスクトップ」と表示することがあります。", "Hex braucht das, um deine Worte in deine Apps zu schreiben. Dein Desktop fragt einmal und nennt es vielleicht Fernsteuerung.", "Hex lo necesita para escribir tus palabras en tus apps. Tu escritorio lo pregunta una vez y puede llamarlo escritorio remoto.", "Hex потрібен цей дозвіл, щоб вводити ваші слова в застосунки. Стільниця запитає один раз і може назвати це віддаленою стільницею."]),
-    ("Paste into apps", ["Wklejanie w aplikacjach", "粘贴到应用", "アプリへの貼り付け", "In Apps einfügen", "Pegar en apps", "Вставлення в застосунки"]),
-    ("Hex only sends the paste keystroke. It never sees your screen.", ["Hex wysyła tylko skrót wklejania. Nigdy nie widzi twojego ekranu.", "Hex 只发送粘贴按键，从不查看你的屏幕。", "Hex は貼り付けのキー操作を送るだけで、画面を見ることはありません。", "Hex sendet nur den Einfüge-Tastendruck. Deinen Bildschirm sieht es nie.", "Hex solo envía la tecla de pegar. Nunca ve tu pantalla.", "Hex лише надсилає комбінацію вставлення. Він ніколи не бачить ваш екран."]),
-    ("Without it, Hex copies your words and you press Ctrl+V.", ["Bez tego Hex kopiuje twoje słowa, a ty naciskasz Ctrl+V.", "没有此权限时，Hex 会复制你的话，由你按 Ctrl+V。", "許可しない場合、Hex が言葉をコピーし、あなたが Ctrl+V を押します。", "Ohne das kopiert Hex deine Worte und du drückst Strg+V.", "Sin esto, Hex copia tus palabras y tú pulsas Ctrl+V.", "Без цього Hex копіює ваші слова, а ви натискаєте Ctrl+V."]),
-    ("Ready the moment you press the shortcut. macOS shows the mic in use while Hex runs; you can change that in Settings", ["Gotowy, gdy tylko naciśniesz skrót. macOS pokazuje, że mikrofon jest używany, dopóki działa Hex; możesz to zmienić w Ustawieniach", "按下快捷键即可开始。Hex 运行时，macOS 会显示麦克风正在使用；你可以在设置中更改", "ショートカットを押した瞬間から使えます。Hex の実行中、macOS はマイクを使用中と表示します。設定で変更できます", "Bereit, sobald du das Kürzel drückst. macOS zeigt das Mikrofon als aktiv, solange Hex läuft; das kannst du in den Einstellungen ändern", "Listo en cuanto pulsas el atajo. macOS muestra el micrófono en uso mientras Hex está abierto; puedes cambiarlo en Ajustes", "Готовий, щойно ви натиснете комбінацію клавіш. Поки Hex працює, macOS показує, що мікрофон використовується; це можна змінити в Налаштуваннях"]),
-    ("Ready the moment you press the shortcut", ["Gotowy, gdy tylko naciśniesz skrót", "按下快捷键即可开始", "ショートカットを押した瞬間から使えます", "Bereit, sobald du das Kürzel drückst", "Listo en cuanto pulsas el atajo", "Готовий, щойно ви натиснете комбінацію клавіш"]),
-    ("Opens only while you dictate", ["Otwiera się tylko podczas dyktowania", "只在听写时打开", "音声入力中だけ開きます", "Öffnet sich nur beim Diktieren", "Solo se abre mientras dictas", "Відкривається лише під час диктування"]),
-    ("Let Hex hear you and type for you", ["Pozwól Hex słyszeć cię i pisać za ciebie", "让 Hex 听见你并替你输入", "Hex が聞き取り、入力できるようにする", "Lass Hex zuhören und für dich tippen", "Deja que Hex te escuche y escriba por ti", "Дозвольте Hex слухати вас і друкувати за вас"]),
-    ("Notices the shortcut and pastes your words in any app", ["Rozpoznaje skrót i wkleja słowa w każdej aplikacji", "在所有应用中识别快捷键并粘贴文字", "どのアプリでもショートカットを認識し、言葉を貼り付けます", "Erkennt das Kürzel und fügt deine Worte in jeder App ein", "Detecta el atajo y pega tus palabras en cualquier app", "Помічає сполучення клавіш і вставляє ваші слова в будь-якій програмі"]),
-    ("Quit and reopen Hex to finish setup. macOS applies some permissions only after a restart.", ["Zamknij i ponownie otwórz Hex, aby dokończyć konfigurację. macOS stosuje niektóre uprawnienia dopiero po ponownym uruchomieniu.", "请退出并重新打开 Hex 以完成设置。macOS 的部分权限需要重启后才会生效。", "設定を完了するには Hex を終了して開き直してください。macOS の一部の許可は再起動後に有効になります。", "Beende Hex und öffne es erneut, um die Einrichtung abzuschließen. macOS übernimmt manche Berechtigungen erst nach einem Neustart.", "Cierra y vuelve a abrir Hex para terminar la configuración. macOS aplica algunos permisos solo tras reiniciar.", "Завершіть роботу Hex і відкрийте його знову, щоб завершити налаштування. macOS застосовує деякі дозволи лише після перезапуску."]),
-    ("Reopen Hex", ["Otwórz Hex ponownie", "重新打开 Hex", "Hex を開き直す", "Hex neu öffnen", "Reabrir Hex", "Відкрити Hex знову"]),
-    ("Restart Hex", ["Uruchom Hex ponownie", "重新启动 Hex", "Hex を再起動", "Hex neu starten", "Reiniciar Hex", "Перезапустити Hex"]),
-    ("Turns on when Hex restarts", ["Włączy się po ponownym uruchomieniu Hex", "Hex 重新启动后生效", "Hex の再起動後に有効になります", "Wird nach einem Neustart von Hex aktiv", "Se activa cuando Hex se reinicia", "Увімкнеться після перезапуску Hex"]),
-    ("Skip", ["Pomiń", "跳过", "スキップ", "Überspringen", "Omitir", "Пропустити"]),
-    ("Hex can't dictate until a speech model is installed", ["Hex nie może dyktować, dopóki nie zainstalujesz modelu mowy", "安装语音模型后 Hex 才能听写", "音声モデルをインストールするまで Hex は音声入力できません", "Hex kann erst diktieren, wenn ein Sprachmodell installiert ist", "Hex no puede dictar hasta que se instale un modelo de voz", "Hex не може диктувати, доки не встановлено модель мовлення"]),
-    ("Continue without a model", ["Kontynuuj bez modelu", "不使用模型继续", "モデルなしで続ける", "Ohne Modell fortfahren", "Continuar sin modelo", "Продовжити без моделі"]),
-    ("Dictation won't work until you add a model with Add model file… in Settings.", ["Dyktowanie nie zadziała, dopóki nie dodasz modelu przyciskiem Dodaj plik modelu… w Ustawieniach.", "添加模型前无法听写，可在设置中用“添加模型文件…”添加。", "設定の「モデルファイルを追加…」でモデルを追加するまで、音声入力は使えません。", "Diktieren funktioniert erst, wenn du in den Einstellungen mit „Modelldatei hinzufügen…“ ein Modell hinzufügst.", "El dictado no funcionará hasta que añadas un modelo con Añadir archivo de modelo… en Ajustes.", "Диктування не працюватиме, доки ви не додасте модель через «Додати файл моделі…» у Налаштуваннях."]),
-    ("No speech model installed. Download one or add a model file.", ["Brak zainstalowanego modelu mowy. Pobierz go lub dodaj plik modelu.", "未安装语音模型。请下载一个或添加模型文件。", "音声モデルがインストールされていません。ダウンロードするか、モデルファイルを追加してください。", "Kein Sprachmodell installiert. Lade eines herunter oder füge eine Modelldatei hinzu.", "No hay ningún modelo de voz instalado. Descarga uno o añade un archivo de modelo.", "Модель мовлення не встановлено. Завантажте її або додайте файл моделі."]),
-    ("No speech model installed: {}", ["Brak zainstalowanego modelu mowy: {}", "未安装语音模型：{}", "音声モデルがインストールされていません：{}", "Kein Sprachmodell installiert: {}", "No hay ningún modelo de voz instalado: {}", "Модель мовлення не встановлено: {}"]),
     ("Speech model", ["Model mowy", "语音模型", "音声モデル", "Sprachmodell", "Modelo de voz", "Модель"]),
     ("Language", ["Język", "语言", "言語", "Sprache", "Idioma", "Мова"]),
     ("{model} doesn't support {previous}, so the language changed to {language}", ["{model} nie obsługuje języka: {previous}, więc język zmieniono na: {language}", "{model} 不支持{previous}，因此语言已改为{language}", "{model} は{previous}に対応していないため、言語を{language}に変更しました", "{model} unterstützt {previous} nicht, daher wurde die Sprache auf {language} geändert", "{model} no admite {previous}, así que el idioma cambió a {language}", "{model} не підтримує {previous}, тому мову змінено на {language}"]),
@@ -1437,7 +1412,7 @@ const TRANSLATIONS: &[(&str, [&str; 6])] = &[
     ("You", ["Ty", "你", "あなた", "Du", "Tú", "Ви"]),
     ("Your 5s sample", ["Twoja próbka 5 s", "你的 5 秒录音", "あなたの5秒サンプル", "Deine 5-Sek.-Aufnahme", "Tu muestra de 5 s", "Ваш зразок на 5 с"]),
     ("Your voice", ["Twój głos", "你的声音", "自分の声", "Deine Stimme", "Tu voz", "Ваш голос"]),
-    ("and answer the one that's lit", ["i odpowiedz na podświetloną", "并回复亮起的那条", "して、光っているメッセージに答えます", "und beantworte die hervorgehobene", "y responde al que está iluminado", "і дайте відповідь на підсвічене"]),
+    ("and answer the one that's lit.", ["i odpowiedz na podświetloną.", "并回复亮起的那条。", "して、光っているメッセージに答えます。", "und beantworte die hervorgehobene.", "y responde al que está iluminado.", "і дайте відповідь на підсвічене."]),
     ("and say anything.", ["i powiedz cokolwiek.", "，随便说点什么。", "して、何か話してください。", "und sag irgendetwas.", "y di cualquier cosa.", "і скажіть будь-що."]),
     ("and say it.", ["i to powiedz.", "，说出来。", "して、話してください。", "und sprich es aus.", "y dilo.", "і скажіть це."]),
     ("Answering under pressure, the usual way.", ["Odpowiadanie pod presją, po staremu.", "在压力下回复，用老办法。", "急かされながら、いつもの方法で返信。", "Antworten unter Druck, wie immer.", "Respondiendo bajo presión, como siempre.", "Відповідаєте під тиском, як зазвичай."]),
@@ -1461,7 +1436,7 @@ const TRANSLATIONS: &[(&str, [&str; 6])] = &[
     ("Hold a key and talk. Hex types it wherever your cursor is.", ["Przytrzymaj klawisz i mów. Hex wpisze to tam, gdzie jest kursor.", "按住一个键说话，Hex 会把它打在光标所在的位置。", "キーを押したまま話すと、Hex がカーソルの位置に入力します。", "Halte eine Taste und sprich. Hex tippt es dort, wo dein Cursor ist.", "Mantén una tecla y habla. Hex lo escribe donde esté tu cursor.", "Утримуйте клавішу й говоріть. Hex надрукує це там, де курсор."]),
     ("Hold {} and say a sentence…", ["Przytrzymaj {} i powiedz zdanie…", "按住 {} 说一句话…", "{} を押したまま、ひと言話してください…", "Halte {} und sag einen Satz …", "Mantén {} y di una frase…", "Утримуйте {} і скажіть речення…"]),
     ("Hold the shortcut a little longer while you speak.", ["Przytrzymaj skrót trochę dłużej, gdy mówisz.", "说话时请把快捷键按住久一点。", "話している間、ショートカットをもう少し長く押してください。", "Halte das Kürzel beim Sprechen etwas länger.", "Mantén el atajo un poco más mientras hablas.", "Утримуйте комбінацію трохи довше, поки говорите."]),
-    ("I hereby have completed Hex onboarding.", ["Niniejszym ukończyłem wprowadzenie do Hex.", "我在此确认已完成 Hex 入门。", "私は Hex のオンボーディングを修了したことをここに証します。", "Hiermit habe ich die Einführung in Hex abgeschlossen.", "Por la presente he completado la introducción a Hex.", "Цим я завершив знайомство з Hex."]),
+    ("I hereby certify that I have completed Hex onboarding.", ["Niniejszym ukończyłem wprowadzenie do Hex.", "我在此确认已完成 Hex 入门。", "私は Hex のオンボーディングを修了したことをここに証します。", "Hiermit habe ich die Einführung in Hex abgeschlossen.", "Por la presente he completado la introducción a Hex.", "Цим я завершив знайомство з Hex."]),
     ("It types wherever your cursor is, in any app.", ["Pisze tam, gdzie jest kursor, w każdej aplikacji.", "它会在任何应用中，把字打在光标所在处。", "どのアプリでも、カーソルの位置に入力します。", "Es tippt dort, wo dein Cursor ist, in jeder App.", "Escribe donde esté tu cursor, en cualquier app.", "Він друкує там, де курсор, у будь-якій програмі."]),
     ("Keep playing", ["Graj dalej", "继续玩", "続けて遊ぶ", "Weiterspielen", "Seguir jugando", "Грати далі"]),
     ("macOS asks once. You can change these any time in System Settings.", ["macOS zapyta raz. Możesz to zmienić w każdej chwili w Ustawieniach systemowych.", "macOS 只会询问一次。你可以随时在“系统设置”中更改。", "macOS は一度だけ確認します。システム設定でいつでも変更できます。", "macOS fragt einmal. Du kannst das jederzeit in den Systemeinstellungen ändern.", "macOS pregunta una vez. Puedes cambiarlo cuando quieras en Ajustes del Sistema.", "macOS запитає один раз. Змінити це можна будь-коли в Системних параметрах."]),
@@ -1743,6 +1718,7 @@ mod tests {
         include_str!("../rune_ui/explainer.rs"),
         include_str!("../rune_ui/fun.rs"),
         include_str!("../rune_ui/general.rs"),
+        include_str!("../rune_ui/general/extra_shortcuts.rs"),
         include_str!("../rune_ui/general/search.rs"),
         include_str!("../rune_ui/history.rs"),
         include_str!("../rune_ui/hud_lab.rs"),
@@ -1765,6 +1741,7 @@ mod tests {
         include_str!("../rune_ui/onboarding_kit/first_run.rs"),
         include_str!("../rune_ui/onboarding_kit/flows.rs"),
         include_str!("../rune_ui/onboarding_kit/game.rs"),
+        include_str!("../rune_ui/onboarding_kit/game/certificate.rs"),
         include_str!("../rune_ui/onboarding_kit/landing.rs"),
         include_str!("../rune_ui/onboarding_kit/live.rs"),
         include_str!("../rune_ui/onboarding_kit/permissions.rs"),
@@ -1814,6 +1791,7 @@ mod tests {
         include_str!("../rune_ui/settings.rs"),
         include_str!("../rune_ui/shortcut/mode.rs"),
         include_str!("../rune_ui/sound_sets.rs"),
+        include_str!("../rune_ui/speech_model.rs"),
         include_str!("../rune_ui/vocabulary.rs"),
         include_str!("../rune_ui/shortcut/guard.rs"),
         include_str!("../rune_ui/ai_models.rs"),

@@ -73,6 +73,10 @@ pub enum DictationFlavour {
     /// dictation and never kept in History.
     #[cfg(target_os = "windows")]
     Rewrite,
+    /// Labs › Second dictation shortcut: another key that dictates exactly
+    /// like the dictation shortcut. It is its own owner, so neither
+    /// shortcut finishes or double-taps the other's capture.
+    Second,
 }
 
 #[cfg_attr(not(any(target_os = "windows", target_os = "linux")), allow(dead_code))]

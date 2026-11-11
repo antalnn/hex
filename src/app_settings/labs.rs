@@ -89,8 +89,11 @@ pub struct LabsSettings {
     pub filler_words: bool,
     /// `hex meetings show --srt|--vtt` exports a transcript as timed subtitles (macOS, issue 633).
     pub subtitle_export: bool,
-    /// `second_dictation_hotkey` dictates like the dictation shortcut (macOS, issue 627).
+    /// `second_dictation_hotkey` dictates like the dictation shortcut (issue 627).
     pub second_dictation_shortcut: bool,
+    /// Up to four more dictation shortcuts, each with its own activation
+    /// mode (`extra_dictation_hotkeys`, macOS).
+    pub more_dictation_shortcuts: bool,
     /// `terminal_paste_hotkey` dictates like the dictation shortcut and always pastes
     /// with Ctrl+Shift+V (Windows, Linux).
     pub terminal_paste_shortcut: bool,
@@ -176,6 +179,9 @@ pub struct LabsSettings {
     pub meeting_import: bool,
     /// Notes or a rename rename an exported meeting's Markdown to the meeting's title, keeping its date and time.
     pub meeting_descriptive_filenames: bool,
+    /// A meeting's notes are written to their own file beside the transcript,
+    /// sharing its name and linking back to it.
+    pub meeting_notes_file: bool,
     /// Finished meetings drop their WAV tracks on `meetings.audio_retention`,
     /// keeping their transcripts, notes, and summary.
     pub expire_meeting_audio: bool,
@@ -193,6 +199,18 @@ pub struct LabsSettings {
     /// The local API's `process=global` returns transcripts after Global
     /// mode's output processing.
     pub api_processing: bool,
+    /// The local API's `timestamps=segment|word` returns the speech model's
+    /// own segment and word times.
+    pub api_timestamps: bool,
+    /// "While dictating" applies only while the default output is speakers;
+    /// headphones are left alone.
+    pub speakers_only: bool,
+    /// A dictation mode's speech model and language follow the foreground
+    /// application (macOS and Windows).
+    pub app_model_switching: bool,
+    /// The menu bar offers Pause Hex, which makes every capture shortcut
+    /// inert until Resume (macOS).
+    pub pause_menu: bool,
     /// Settings › Labs' groups opened or closed by hand, by `labs::Group`
     /// id; a group not here is open while it holds a lab that's on.
     #[serde(skip_serializing_if = "std::collections::BTreeMap::is_empty")]
@@ -221,6 +239,7 @@ impl Default for LabsSettings {
             filler_words: false,
             subtitle_export: false,
             second_dictation_shortcut: false,
+            more_dictation_shortcuts: false,
             terminal_paste_shortcut: false,
             smart_spacing: false,
             spoken_symbols: false,
@@ -261,12 +280,17 @@ impl Default for LabsSettings {
             opencode_in_wsl: false,
             transcribe_files: false,
             api_processing: false,
+            api_timestamps: false,
+            speakers_only: false,
+            app_model_switching: false,
+            pause_menu: false,
             gnome_meeting_capsules: false,
             gnome_annotate: false,
             screenshots: false,
             follow_live_transcript: false,
             meeting_import: false,
             meeting_descriptive_filenames: false,
+            meeting_notes_file: false,
             expire_meeting_audio: false,
             groups: std::collections::BTreeMap::new(),
         }

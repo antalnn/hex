@@ -439,6 +439,24 @@ mapping applies it; launching Hex does not reapply it. Wayland has no general
 protocol for the active layout, so there Hex keeps the settings but does not
 observe input-source changes or show these controls.
 
+On macOS and Windows, `labs.app_model_switching` opts into switching the
+shared speech-model picker per dictation mode. Each mode, Global included, may
+carry `speech`, a model and a language it supports, for example
+`{"model":"parakeet_v3","language":"es"}` in
+`dictation_processing.default_mode` or `dictation_processing.modes[]`; omit it
+for "Don't switch". When the app in front changes, Hex matches the mode by
+application, waits 300 ms, then prepares its choice through the same
+installed-only path as a manual pick; it never downloads a model and a
+recording holds a due switch until it is idle. Matching is by application on
+both macOS and Windows, and a mode's website rules are ignored, so a mode
+chosen only by website never switches. Hex's own window, and a moment with no
+app in front, are ignored: they neither schedule nor cancel a switch, so
+enabling the lab while Hex is in front applies nothing until you next focus
+another app. Editing a mode's choice applies when you next focus an app whose
+mode carries it. With keyboard switching also on, the switch that is due
+later wins, and an app switch wins a tie in the same tick. Linux does not
+support this lab.
+
 - Booleans take `on`/`off`, `true`/`false`, `yes`/`no`, or `1`/`0`.
 - Optional settings take `none` to clear them.
 - `microphone` takes a device name exactly as Settings lists it, or
@@ -464,13 +482,22 @@ observe input-source changes or show these controls.
   Off, they are refused with `invalid-value`, and turning the toggle off puts
   a shortcut on one back to its default. Elsewhere one alone still needs a
   modifier.
-- `second_dictation_hotkey` (macOS, unbound by default; `none` clears it) is
-  a second shortcut that dictates exactly as `dictation_hotkey` does, such as
-  a key on an external keyboard. It acts only while
+- `second_dictation_hotkey` (unbound by default; `none` clears it) is a
+  second shortcut that dictates exactly as `dictation_hotkey` does, such as a
+  key on an external keyboard. It acts only while
   `labs.second_dictation_shortcut` is on (`hex labs on
-  second-dictation-shortcut`) and shares no key with another shortcut.
-- `json` settings (modes, meeting providers, excluded calendars) take the JSON
-  value the file stores.
+  second-dictation-shortcut`) and shares no key with another shortcut. Linux
+  and Windows need a key in it, as every shortcut there does.
+- `extra_dictation_hotkeys` (macOS, an empty array by default) holds up to
+  four more dictation shortcuts, each `{"binding": ..., "mode": ...}`. A row
+  acts only while `labs.more_dictation_shortcuts` is on (`hex labs on
+  more-dictation-shortcuts`) and shares no key with another active shortcut.
+  `mode` is `hold_or_double_tap` (the default), `hold`, `tap`, or `double_tap`;
+  `double_tap` needs a binding with a key and otherwise reads as
+  `hold_or_double_tap`, except that Labs › Double-tap on a lone modifier also
+  allows a binding without one. Turning the Lab off keeps the rows saved.
+- `json` settings (modes, extra dictation shortcuts, meeting providers,
+  excluded calendars) take the JSON value the file stores.
 - `ui_language` takes `en`, `pl`, `zh` (Simplified Chinese), `zh-Hant`
   (Traditional Chinese), `ja`, `de`, `es`, `uk`, `pt`, `fr`, `ru`, or `none`
   (follow the system language), the same languages Settings offers. Following
@@ -515,7 +542,8 @@ Writable keys: `release_microphone_while_idle`,
 `sound_effects`, `sound_effect_volume`, `sound_theme`, `microphone`,
 `avoid_bluetooth_microphone`, `recording_audio_behavior`, `recording_duck_volume`, `double_tap_lock`, `double_tap_only`,
 `shortcut_mode`, `dictation_hotkey`, `paste_last_hotkey`, `raw_dictation_hotkey`,
-`second_dictation_hotkey`, `labs.second_dictation_shortcut`, `labs.standalone_special_keys`, `show_dock_icon`, `vocabulary_boost`,
+`second_dictation_hotkey`, `extra_dictation_hotkeys`, `labs.second_dictation_shortcut`,
+`labs.more_dictation_shortcuts`, `labs.standalone_special_keys`, `labs.app_model_switching`, `show_dock_icon`, `vocabulary_boost`,
 `dictation_processing.default_mode`, `dictation_processing.modes`,
 `history_retention`, `meetings.enabled`,
 `meetings.output_folder`, `meetings.summaries`, `meetings.opencode_model`,

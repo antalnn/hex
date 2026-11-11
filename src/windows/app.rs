@@ -79,6 +79,8 @@ pub(crate) struct WindowsDesktopHost {
     personal_commands_checked_at: Instant,
     preparation: TranscriptionPreparation,
     keyboard_switcher: crate::transcription::keyboard_model_switching::Switcher,
+    /// Labs › Switch model with app: the foreground app's mode choice.
+    app_switcher: crate::transcription::app_model_switching::Switcher,
     /// Present only while keyboard model switching is on.
     input_sources: Option<crate::keyboard_input_sources::Watcher>,
     /// The preparation running is a keyboard switch, which a manual choice
@@ -220,6 +222,16 @@ impl WindowsDesktopHost {
         let local_model = crate::local_model::LocalModel::new(
             crate::local_model::Config::from_settings(&settings.llm),
         );
+        // Known before the first poll, so launching keeps the saved model
+        // instead of applying the frontmost app's mode choice.
+        let app_switcher = crate::transcription::app_model_switching::Switcher::new(
+            settings.labs.app_model_switching,
+            settings
+                .labs
+                .app_model_switching
+                .then(|| crate::transcription::app_model_switching::startup_choice(&settings))
+                .flatten(),
+        );
         let mut host = Self {
             event_path,
             event_reader,
@@ -243,6 +255,7 @@ impl WindowsDesktopHost {
             personal_commands_checked_at: Instant::now(),
             preparation: TranscriptionPreparation::default(),
             keyboard_switcher,
+            app_switcher,
             input_sources: None,
             automatic_preparation: false,
             updater: crate::updater::Updater::start(),
@@ -355,6 +368,7 @@ impl WindowsDesktopHost {
                 .source_changed(source, Instant::now());
         }
         self.keyboard_switcher.manual_choice();
+        self.app_switcher.manual_choice();
         if self.automatic_preparation {
             self.preparation.cancel();
             self.automatic_preparation = false;
@@ -405,6 +419,46 @@ impl WindowsDesktopHost {
             self.preparation.cancel();
             self.automatic_preparation = false;
         }
+    }
+
+    /// Follows the foreground app while switching is on, and starts the
+    /// installed-only preparation of a mode's speech choice once it is due.
+    /// Hex's own window and a moment with no window in front name no mode,
+    /// so they leave the last match and any switch it scheduled alone. The
+    /// host cannot see a listener recording, so a due switch is held only
+    /// while the shared engine's dictation streams or finishes run.
+    fn switch_with_app(&mut self) {
+        if !self.settings.labs.app_model_switching {
+            return;
+        }
+        let application = foreground_other_process_stem();
+        let now = Instant::now();
+        if self.app_switcher.observe(
+            crate::transcription::app_model_switching::Observation::frontmost(
+                application.as_deref(),
+            ),
+            |application| {
+                crate::transcription::app_model_switching::mode_choice(&self.settings, application)
+            },
+            now,
+        ) {
+            self.supersede_automatic();
+        }
+        if crate::transcription::engine::dictation_busy() {
+            return;
+        }
+        let Some(choice) = self
+            .app_switcher
+            .take_due(now, &self.settings.transcription)
+        else {
+            return;
+        };
+        let selection = crate::transcription::models::TranscriptionSelection {
+            language: choice.language,
+            ..self.settings.transcription_for_model(choice.model)
+        };
+        self.preparation.start(selection, true);
+        self.automatic_preparation = true;
     }
 
     fn model_ready(&self) -> bool {
@@ -519,6 +573,12 @@ impl WindowsDesktopHost {
             self.supersede_automatic();
         }
         let previous = std::mem::replace(&mut self.settings, settings.clone());
+        if self
+            .app_switcher
+            .configure(settings.labs.app_model_switching)
+        {
+            self.supersede_automatic();
+        }
         let current = settings;
         // A changed server (on/off, program, model, port, flags) restarts it,
         // so the process Hex owns always matches the saved settings.
@@ -637,6 +697,7 @@ impl WindowsDesktopHost {
     pub(crate) fn refresh(&mut self) {
         self.local_model.poll();
         self.switch_with_keyboard();
+        self.switch_with_app();
         if let Some(result) = self.preparation.poll() {
             self.automatic_preparation = false;
             let result = result.and_then(|selection| {
@@ -771,6 +832,30 @@ impl Drop for WindowsDesktopHost {
         if let Some(listener) = self.listener.take() {
             listener.stop_and_join();
         }
+    }
+}
+
+/// The foreground application's executable stem, or `None` when Hex owns the
+/// foreground window or none is focused: Labs › Switch model with app matches
+/// applications only, never Hex's own window.
+pub(crate) fn foreground_other_process_stem() -> Option<String> {
+    use windows_sys::Win32::System::Threading::GetCurrentProcessId;
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        GetForegroundWindow, GetWindowThreadProcessId,
+    };
+    // SAFETY: plain queries; a null window owns no process.
+    unsafe {
+        let window = GetForegroundWindow();
+        if window.is_null() {
+            return None;
+        }
+        let mut process_id = 0;
+        GetWindowThreadProcessId(window, &mut process_id);
+        if process_id == GetCurrentProcessId() {
+            return None;
+        }
+        let path = crate::windows::input::window_process_path(window)?;
+        Some(path.file_stem()?.to_string_lossy().to_lowercase())
     }
 }
 

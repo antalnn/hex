@@ -269,7 +269,8 @@ const PORTAL_READY_TIMEOUT: Duration = Duration::from_secs(65);
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum HotkeyEvent {
     /// `flavour` is the shortcut that started the capture: dictation,
-    /// Dictate without processing, or Labs › Terminal paste.
+    /// Dictate without processing, Labs › Terminal paste, or Labs › Second
+    /// dictation.
     Start {
         flavour: DictationFlavour,
     },
@@ -338,6 +339,9 @@ pub(crate) struct HotkeyOptions {
     pub(crate) typed_text: Option<LinuxHotkey>,
     /// Labs › Terminal paste shortcut, while the lab is on and it is bound.
     pub(crate) terminal_paste: Option<LinuxHotkey>,
+    /// Labs › Second dictation shortcut, while the lab is on and it is bound:
+    /// another key that dictates exactly like the dictation shortcut.
+    pub(crate) second_dictation: Option<LinuxHotkey>,
     /// Annotate's one key, while Annotate is on: tap to start and stop,
     /// hold to draw.
     pub(crate) capture: Option<LinuxHotkey>,
@@ -524,6 +528,19 @@ fn portal_shortcut_id(base: &str, trigger: &str, desktop_assigns: bool) -> Strin
     format!("{base}-{}", trigger.replace('+', "-"))
 }
 
+/// The name Hex 3.3 and earlier gave `shortcut` on Hyprland, the trigger in
+/// the id (`dictation-ALT-space`), which configs written then still bind.
+/// Hex binds it beside the bare id so those binds keep working while the
+/// recorded key is the one they were written for. Only the shortcuts 3.3
+/// had get one.
+fn hyprland_legacy_id(shortcut: Shortcut, trigger: &str) -> Option<String> {
+    matches!(
+        shortcut,
+        Shortcut::Dictation | Shortcut::PasteLast | Shortcut::Capture | Shortcut::RawDictation
+    )
+    .then(|| portal_shortcut_id(shortcut.portal_id().0, trigger, false))
+}
+
 /// The trigger the desktop granted a shortcut, by the id Hex bound it under.
 fn granted_trigger<'a>(
     granted: &'a std::collections::HashMap<String, Option<String>>,
@@ -569,16 +586,19 @@ enum Shortcut {
     Capture,
     RawDictation,
     TerminalPaste,
+    /// Labs › Second dictation shortcut.
+    SecondDictation,
 }
 
 impl Shortcut {
-    const ALL: [Self; 6] = [
+    const ALL: [Self; 7] = [
         Self::Dictation,
         Self::PasteLast,
         Self::TypedText,
         Self::Capture,
         Self::RawDictation,
         Self::TerminalPaste,
+        Self::SecondDictation,
     ];
 
     fn index(self) -> usize {
@@ -592,6 +612,7 @@ impl Shortcut {
             Self::Dictation => Some(DictationFlavour::Normal),
             Self::RawDictation => Some(DictationFlavour::Raw),
             Self::TerminalPaste => Some(DictationFlavour::TerminalPaste),
+            Self::SecondDictation => Some(DictationFlavour::Second),
             Self::PasteLast | Self::TypedText | Self::Capture => None,
         }
     }
@@ -602,6 +623,7 @@ impl Shortcut {
             DictationFlavour::Normal => Self::Dictation,
             DictationFlavour::Raw => Self::RawDictation,
             DictationFlavour::TerminalPaste => Self::TerminalPaste,
+            DictationFlavour::Second => Self::SecondDictation,
         }
     }
 
@@ -614,6 +636,7 @@ impl Shortcut {
             Self::Capture => ("capture", "Annotate"),
             Self::RawDictation => ("raw-dictation", "Dictate without processing"),
             Self::TerminalPaste => ("terminal-paste", "Terminal paste shortcut"),
+            Self::SecondDictation => ("second-dictation", "Second dictation shortcut"),
         }
     }
 }
@@ -665,7 +688,8 @@ struct ShortcutState {
     /// stop mean its keys came up.
     repeating: bool,
     /// The shortcut that owns the capture (or the last one): dictation,
-    /// Dictate without processing, or Labs › Terminal paste.
+    /// Dictate without processing, Labs › Terminal paste, or Labs › Second
+    /// dictation.
     flavour: DictationFlavour,
 }
 
@@ -783,7 +807,10 @@ impl ShortcutState {
             Input::Cancel if self.wants_cancel() => self.cancel(),
             Input::Cancel => None,
             Input::Pressed(
-                shortcut @ (Shortcut::Dictation | Shortcut::RawDictation | Shortcut::TerminalPaste),
+                shortcut @ (Shortcut::Dictation
+                | Shortcut::RawDictation
+                | Shortcut::TerminalPaste
+                | Shortcut::SecondDictation),
             ) => {
                 let Some(flavour) = shortcut.flavour() else {
                     unreachable!("a dictation shortcut has a flavour");
@@ -838,7 +865,10 @@ impl ShortcutState {
                 }
             }
             Input::Released(
-                shortcut @ (Shortcut::Dictation | Shortcut::RawDictation | Shortcut::TerminalPaste),
+                shortcut @ (Shortcut::Dictation
+                | Shortcut::RawDictation
+                | Shortcut::TerminalPaste
+                | Shortcut::SecondDictation),
             ) => {
                 if shortcut.flavour() != Some(self.flavour) {
                     return None;
@@ -1227,10 +1257,15 @@ impl Backend {
                 .terminal_paste
                 .as_ref()
                 .map(|key| (Shortcut::TerminalPaste, key)),
+            options
+                .second_dictation
+                .as_ref()
+                .map(|key| (Shortcut::SecondDictation, key)),
         ];
         let desktop_assigns = crate::linux::portal::desktop_assigns_triggers();
         let mut shortcuts = Vec::new();
         let mut ids: [Option<String>; Shortcut::ALL.len()] = Default::default();
+        let mut legacy_ids: [Option<String>; Shortcut::ALL.len()] = Default::default();
         for (shortcut, key) in requested.into_iter().flatten() {
             let (base, description) = shortcut.portal_id();
             // Keep keyboard shortcuts usable after moving X11 settings to
@@ -1244,8 +1279,16 @@ impl Backend {
             shortcuts.push(crate::linux::portal::Shortcut {
                 id,
                 description,
-                trigger: Some(trigger),
+                trigger: Some(trigger.clone()),
             });
+            if desktop_assigns && let Some(legacy) = hyprland_legacy_id(shortcut, &trigger) {
+                legacy_ids[shortcut.index()] = Some(legacy.clone());
+                shortcuts.push(crate::linux::portal::Shortcut {
+                    id: legacy,
+                    description,
+                    trigger: Some(trigger),
+                });
+            }
         }
         // Every shortcut goes in this one bind: a second bind would replace
         // the set on KDE. Escape is never among them (#786).
@@ -1324,9 +1367,10 @@ impl Backend {
         self.status.configure.store(false, Ordering::Release);
         self.mark_ready(DesktopShortcuts::Portal(granted));
         let shortcut_for = |id: &str| {
-            Shortcut::ALL
-                .into_iter()
-                .find(|shortcut| ids[shortcut.index()].as_deref() == Some(id))
+            Shortcut::ALL.into_iter().find(|shortcut| {
+                ids[shortcut.index()].as_deref() == Some(id)
+                    || legacy_ids[shortcut.index()].as_deref() == Some(id)
+            })
         };
         while !self.stopping() {
             // Wakes on the desktop's signals; the timeout only lets queued
@@ -1522,6 +1566,30 @@ mod tests {
             test.events,
             [TERMINAL, Finish, START, Finish, TERMINAL, Finish]
         );
+    }
+
+    #[test]
+    fn second_dictation_shortcut_owns_the_capture_it_starts() {
+        const SECOND: HotkeyEvent = HotkeyEvent::Start {
+            flavour: DictationFlavour::Second,
+        };
+        let mut test = Test::new(true);
+        test.press(Shortcut::SecondDictation);
+        // The dictation and raw shortcuts can't finish or join its capture.
+        test.tap();
+        test.press(Shortcut::RawDictation);
+        test.release(Shortcut::RawDictation);
+        test.release(Shortcut::SecondDictation);
+        assert_eq!(test.events, [SECOND, Finish]);
+        // A dictation tap right after is not its second tap either, and the
+        // second shortcut starts and finishes a later capture of its own.
+        test.now += Duration::from_millis(20);
+        test.tap();
+        assert_eq!(test.events, [SECOND, Finish, START, Finish]);
+        test.now += Duration::from_millis(400);
+        test.press(Shortcut::SecondDictation);
+        test.release(Shortcut::SecondDictation);
+        assert_eq!(test.events, [SECOND, Finish, START, Finish, SECOND, Finish]);
     }
 
     /// #786: only the shortcuts Hex asked for show; a key the desktop still
@@ -1925,6 +1993,27 @@ mod tests {
             id(Shortcut::TerminalPaste, "CTRL+SHIFT+t"),
             "terminal-paste"
         );
+    }
+
+    /// A config written for 3.3 binds `anomaly.hex:dictation-ALT-space`;
+    /// Hex binds that name too, for the key it was written for.
+    #[test]
+    fn hyprland_keeps_the_names_3_3_bound() {
+        assert_eq!(
+            hyprland_legacy_id(Shortcut::Dictation, "ALT+space").as_deref(),
+            Some("dictation-ALT-space")
+        );
+        assert_eq!(
+            hyprland_legacy_id(Shortcut::PasteLast, "CTRL+ALT+v").as_deref(),
+            Some("paste-last-CTRL-ALT-v")
+        );
+        assert_eq!(
+            hyprland_legacy_id(Shortcut::RawDictation, "F9").as_deref(),
+            Some("raw-dictation-F9")
+        );
+        // Shortcuts 3.3 didn't have were never bound by the old names.
+        assert_eq!(hyprland_legacy_id(Shortcut::TerminalPaste, "CTRL+t"), None);
+        assert_eq!(hyprland_legacy_id(Shortcut::SecondDictation, "F10"), None);
     }
 
     #[test]

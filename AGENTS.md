@@ -78,7 +78,10 @@ substitute for source inspection or a second roadmap.
 - `audio`: `cpal` device enumeration, input resolution (`--device`, the saved
   microphone, else the system default, never Hex Microphone), the CoreAudio
   default-input and device-list listeners, timestamped mono float PCM
-  delivery, live selection, and bounded stream recovery. `audio/fixture`:
+  delivery, live selection, and bounded stream recovery (`audio/recovery`:
+  open failures back off from 250 ms to five seconds, but any stream that
+  fails before proving 8 s of steady delivery waits a backoff that doubles to
+  a minute, and failed opens under it grow there too). `audio/fixture`:
   with `HEX_AUDIO_FIXTURE=<wav>` every microphone open plays that file
   instead (10 ms chunks at real-time pace, from its start at each open,
   looping) and no device is enumerated or opened, so benchmarks drive the
@@ -91,6 +94,12 @@ substitute for source inspection or a second roadmap.
   observation (macOS TIS, Windows foreground-window layout, X11 XKB groups;
   Wayland has no general protocol) and the shared debounced policy that turns a
   mapped source into an installed-only model-picker choice.
+- `transcription/app_model_switching`: the matching debounced policy for a
+  dictation mode's optional speech model and language (Labs › Switch model with
+  app, macOS and Windows): the frontmost app's mode choice becomes an
+  installed-only picker preparation once idle. Both OSes match by application,
+  never by website, and Hex's own window (or no app in front) is ignored;
+  Linux has no host for it.
 - `dictation`, `dictation/diagnostics`: warm pre-roll, growable capture, 16 kHz
   local-transcription resampling, and owner-only diagnostic WAV retention when
   `HEX_RETAIN_DICTATION_AUDIO` is set.
@@ -779,8 +788,10 @@ CoreAudio formats, AppleScript details, or event serialization.
   no pre-roll, preserves the physical press for the hold threshold, discards a
   release before readiness, and closes only after the authoritative capture is
   idle. Accepted jobs never keep the stream open. A stream failure before the
-  hold threshold returns the press to pending and reopens; later failures fail
-  the capture. Cold opens retry the selected device briefly before falling back.
+  hold threshold returns the press to pending and reopens; on macOS, a later
+  failure keeps the audio already delivered as a copy-only dictation, or fails
+  the capture when no audio after the start arrived or it is near-silent. Cold
+  opens retry the selected device briefly before falling back.
 - Model inference, optional post-processing, and paste must
   never block authoritative audio capture. Their queues remain bounded.
 - CoreAudio capture timestamps and annotated-session CGEvent shortcut timestamps
@@ -905,14 +916,32 @@ CoreAudio formats, AppleScript details, or event serialization.
   kept. An explicit CLI `--device` remains authoritative for that listener
   process and never falls back. A stream that already failed or delivered
   digital silence is stopped before its replacement opens, so the replacement
-  starts with no dictation stream on the device, as at launch. A runtime stream
-  failure cancels an incomplete capture (a programmatic one keeps the audio
-  delivered before the failure for its owner's `/finish`, which answers
-  `microphone-lost` when there is none), discards stale chunks, and retries
-  with bounded backoff; it must not require a settings change or process
-  restart. An initial open failure uses the same bounded recovery without
-  stopping the listener. Cancellation does not stop warm-microphone retries;
-  enabling release-while-idle stops them once capture is idle.
+  starts with no dictation stream on the device, as at launch. On macOS, a
+  runtime stream failure keeps a shortcut dictation held past the hold
+  threshold, or a `hex dictation start` control capture, along with the audio
+  delivered before the failure: transcribed and processed like a dictation
+  (Dictate without processing copies it unprocessed), then copied rather than
+  pasted (the disruption may have moved focus), still Paste Last Dictation and
+  History, with no error tone. A clip with no audio after its
+  start, or a near-silent one, fails as before; a programmatic capture keeps
+  its audio for its owner's `/finish`, which answers `microphone-lost` when
+  there is none. Audio from after the loss and stale chunks are dropped, and
+  the stream retries with bounded backoff; it must not require a settings
+  change or process restart. Any stream that fails before it has delivered for
+  8 s (STREAM_PROVEN_UPTIME) never proved steady delivery, so its reopen backs
+  off from 250 ms to a minute, and failed opens under that backoff grow there
+  too; one that delivered steadily still reopens at once. A route change or a
+  dictation press retries at once without resetting that backoff. An
+  initial open failure uses the same bounded
+  recovery without stopping the listener. Cancellation does not stop
+  warm-microphone retries; enabling release-while-idle stops them once capture
+  is idle.
+- On Linux, opening ALSA's default device loads PipeWire's ALSA plugin into
+  Hex's own process, so `main` sets `DISABLE_RTKIT` before any stream opens:
+  PipeWire's realtime module would otherwise lower this process's realtime CPU
+  time limit to the desktop portal's advertised budget, which can be zero, and
+  the kernel then kills Hex. Hex never takes realtime scheduling through the
+  portal or rtkit.
 - Feedback volume is persisted from zero through one; zero disables tones.
   Volume changes apply immediately and preview one recording-start tone.
 - Launch at Login uses `SMAppService` for the signed main app. Treat both
@@ -1114,7 +1143,8 @@ CoreAudio formats, AppleScript details, or event serialization.
   `capture.routing`'s autoSend on, routed by Scrawl's router in Hex's process
   (`capture_host::routing`): one `capture-look` thread per stop, one
   `capture-route` thread with a bounded queue, a rule's send held 3 s for
-  Undo, guesses sent only when picked. Queued sends retry only while neither
+  Undo (a page naming its session, by meta tag or `.opencode-session`, sends
+  like a rule and beats one), guesses sent only when picked. Queued sends retry only while neither
   Scrawl.app runs nor anything serves the ingest port, and never in tests.
   `capture.routing` never holds a Jev key. A cabled iPhone records through
   `scrawl-helper mirror --no-microphone`, narrated by the dictation timeline
@@ -1711,9 +1741,12 @@ check out only `.github/release/`, and run only those scripts and SHA-pinned
 actions on artifacts treated as data (macOS Developer ID signing,
 notarization, and stapling; Azure Authenticode; the release service through
 OIDC; the AUR and Homebrew pushes). Every artifact carries a `SHA256SUMS`
-whose digest its job reports and every consumer checks. Site deploy follows
-the same split: its build job has no secret, and its `release` job runs only
-`.github/release/deploy-site.sh`, which deploys the verified Build Output only
+whose digest its job reports and every consumer checks. Deploy
+(`.github/workflows/deploy.yml`) follows the same split: its build job has no
+secret, and its deploy job (in `dev` or `production`) runs only
+`.github/release/cloudflare-token.sh` (which mints a 15-minute Cloudflare
+token after assuming the environment's role) and `.github/release/deploy-site.sh`,
+which deploys the verified Build Output only
 when it names exactly that mode's site Worker, routes, and bindings, with the
 cf CLI locked in `.github/release/cf/`; its build job runs the installer test
 and the appcast check on repository code, no secret. Keep that boundary:

@@ -23,6 +23,9 @@ impl Feature {
             Self::KeyboardModelSwitching => {
                 "Changing the keyboard language switches the speech model and language"
             }
+            Self::AppModelSwitching => {
+                "Each dictation mode's speech model and language follow the app in front"
+            }
             Self::MouseShortcuts => "Record mouse buttons as shortcuts",
             Self::PauseBrowser => "Also pause the browser while dictating, with Pause media",
             Self::ShareShortcut => "Let apps such as Discord see the dictation shortcut too",
@@ -50,6 +53,9 @@ impl Feature {
             }
             Self::SecondDictationShortcut => {
                 "Another shortcut that dictates like the main one (second_dictation_hotkey), such as a key on an external keyboard"
+            }
+            Self::MoreDictationShortcuts => {
+                "Up to four more shortcuts that dictate like the main one, each with its own binding and activation mode (extra_dictation_hotkeys)"
             }
             Self::TerminalPasteShortcut => {
                 "Another dictation shortcut that always pastes with Ctrl+Shift+V (terminal_paste_hotkey)"
@@ -160,6 +166,9 @@ impl Feature {
             Self::MeetingDescriptiveFilenames => {
                 "Rename exported meeting Markdown to the meeting's title once notes or a rename provide one, keeping the date and time"
             }
+            Self::MeetingNotesFile => {
+                "Write the meeting's notes to their own file next to the transcript, sharing its name, with a link back to the transcript"
+            }
             Self::QuitClosesWindow => {
                 "⌘Q closes the Settings window instead of quitting Hex; dictation keeps running, and the menu bar icon still quits"
             }
@@ -180,6 +189,15 @@ impl Feature {
             }
             Self::ApiProcessing => {
                 "Let apps using Hex's local API ask for transcripts with your Global mode's corrections, rewrite, and transformations applied"
+            }
+            Self::ApiTimestamps => {
+                "Let apps using Hex's local API ask for each segment's or word's start and end times in the transcript, as the speech model heard them"
+            }
+            Self::SpeakersOnly => {
+                "Apply \"While dictating\" only when sound plays through speakers; headphones are left alone"
+            }
+            Self::PauseMenu => {
+                "Add Pause Hex to the menu bar. While paused, Hex ignores its shortcuts so other apps get the keys"
             }
         }
     }

@@ -668,11 +668,12 @@ impl MacHost {
                 crate::meeting::trash(&id).map_err(|error| format!("{error:#}"))
             }
             MeetingRequest::Reveal(target) => {
+                // `open -R` selects the exported Markdown in Finder; a
+                // recording folder opens itself.
                 if target.is_markdown() {
-                    // `open -R` selects the exported Markdown in Finder.
                     crate::meeting::reveal(target.path());
                 } else {
-                    open_path(target.path());
+                    crate::meeting::open_folder(target.path());
                 }
                 Ok(())
             }
@@ -680,7 +681,7 @@ impl MacHost {
                 let folder = crate::app_settings::meeting_output_folder();
                 match std::fs::create_dir_all(&folder) {
                     Ok(()) => {
-                        crate::meeting::reveal(&folder);
+                        crate::meeting::open_folder(&folder);
                         self.folder_error = None;
                     }
                     Err(error) => self.folder_error = Some(error.to_string()),
@@ -1265,7 +1266,7 @@ impl ScrawlHost {
                 let folder = crate::app_settings::capture_settings().captures_dir();
                 match std::fs::create_dir_all(&folder) {
                     Ok(()) => {
-                        crate::meeting::reveal(&folder);
+                        crate::meeting::open_folder(&folder);
                         self.folder_error = None;
                     }
                     Err(error) => self.folder_error = Some(error.to_string()),
@@ -1408,15 +1409,6 @@ fn notes_availability() -> NotesAvailability {
         Availability::ModelNotReady => NotesAvailability::ModelNotReady,
         Availability::UnsupportedSystem => NotesAvailability::UnsupportedSystem,
         Availability::Unknown => NotesAvailability::Unknown,
-    }
-}
-
-fn open_path(path: &std::path::Path) {
-    if let Err(error) = std::process::Command::new("/usr/bin/open")
-        .arg(path)
-        .spawn()
-    {
-        tracing::error!(%error, path = %path.display(), "could not open path");
     }
 }
 

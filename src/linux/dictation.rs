@@ -790,8 +790,10 @@ pub(crate) fn run(
                     );
                     service_ended |= !service.is_active();
                 }
-                // Recording starts at the microphone's first chunk.
+                // Recording starts at the first chunk. A failed stream keeps
+                // its backoff, but the client's start asks for it now.
                 Effect::Start => {
+                    input.retry_now();
                     if release_while_idle && !input.is_active() {
                         input.request_open();
                     }
@@ -862,6 +864,10 @@ pub(crate) fn run(
                         .as_mut()
                         .is_some_and(|host| host.recording_since(&timeline).is_some()) => {}
                 HotkeyEvent::Start { flavour } if !capture.is_recording() && !start_pending => {
+                    // A failed stream keeps its backoff; the press asks now.
+                    if input.is_recovering() {
+                        input.retry_now();
+                    }
                     recording_flavour = flavour;
                     // A short tap or chord must never create an input method;
                     // Live typing starts at the hold threshold (or the Toggle
@@ -1964,6 +1970,43 @@ mod tests {
 
         settings.typed_text_hotkey = None;
         assert!(shortcuts(&settings).1.typed_text.is_none());
+    }
+
+    #[test]
+    fn second_dictation_is_registered_only_while_its_lab_is_on() {
+        use crate::app_settings::{HotkeyBinding, HotkeyKey, HotkeyModifiers};
+        let binding = HotkeyBinding {
+            modifiers: HotkeyModifiers::default(),
+            key: Some(HotkeyKey::named("f7")),
+        };
+        let mut settings = AppSettings {
+            second_dictation_hotkey: Some(binding.clone()),
+            ..AppSettings::default()
+        };
+        let (_, options) = shortcuts(&settings);
+        assert!(
+            options.second_dictation.is_none(),
+            "the lab off registers nothing"
+        );
+
+        settings.labs.second_dictation_shortcut = true;
+        assert_eq!(
+            shortcuts(&settings).1.second_dictation,
+            Some(LinuxHotkey::from(&binding))
+        );
+
+        // A shortcut without a key never runs on Linux.
+        settings.second_dictation_hotkey = Some(HotkeyBinding {
+            modifiers: HotkeyModifiers {
+                control: Some(crate::app_settings::ModifierSide::Either),
+                ..HotkeyModifiers::default()
+            },
+            key: None,
+        });
+        assert!(shortcuts(&settings).1.second_dictation.is_none());
+
+        settings.second_dictation_hotkey = None;
+        assert!(shortcuts(&settings).1.second_dictation.is_none());
     }
 
     #[test]

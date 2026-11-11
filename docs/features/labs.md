@@ -37,6 +37,11 @@ Feature             Pane  Toggle (settings.json, hex settings)   On: what it doe
 ├── Vocabulary biasing no labs.vocabulary_biasing                Parakeet transcription biased toward the vocabulary (#452/#457)
 ├── Switch model with keyboard language  no  keyboard_model_switching.enabled  (macOS, Windows, X11)
 │                                        the input source picks its mapped model (#216); General shows the mappings while on
+├── Switch model with app no  labs.app_model_switching       (macOS, Windows)
+│                                        each mode, Global included, picks a speech model and language; Modes shows the choice
+│                                        while on, and Hex switches when the app in front changes. Both OSes match by
+│                                        application, never by website, and Hex's own window is ignored; Linux has no
+│                                        runtime for it; a switch never downloads a model
 ├── Mouse shortcuts no    labs.mouse_shortcuts         (macOS)   mouse buttons record as shortcuts (#209)
 ├── Also pause the browser no pause_browser_media      (macOS)   pause a playing tab too, with Pause media (#301); General shows its permission row
 ├── Share dictation shortcut no share_dictation_shortcut (Windows) apps such as Discord see the shortcut too (#176)
@@ -50,8 +55,11 @@ Feature             Pane  Toggle (settings.json, hex settings)   On: what it doe
 ├── Spoken symbols  no    labs.spoken_symbols          spoken "hashtag", "underscore", "comma", … become symbols joined to their words: "#release", "my_variable", "done, thanks"; Spanish "arroba", "guion bajo", "coma", … too (#678, #1040)
 ├── Remove filler words no labs.filler_words          English dictations lose um, umm, uh, uhh, erm, er, ah, with no model (#631)
 ├── Subtitle export no    labs.subtitle_export         (macOS)   hex meetings show --srt|--vtt writes a meeting as timed subtitles (#633)
-├── Second dictation shortcut no labs.second_dictation_shortcut + second_dictation_hotkey (macOS)
+├── Second dictation shortcut no labs.second_dictation_shortcut + second_dictation_hotkey
 │                                        another shortcut dictates like the main one (#627); General shows its recorder while on
+├── More dictation shortcuts no labs.more_dictation_shortcuts + extra_dictation_hotkeys (macOS)
+│                                        up to four more shortcuts that each dictate like the main one, each with its own
+│                                        mode; General shows a numbered row with a recorder, a shortcut mode, and Remove for each while on
 ├── Terminal paste shortcut no labs.terminal_paste_shortcut + terminal_paste_hotkey (Windows, Linux)
 │                                        another shortcut dictates like the main one and always pastes with Ctrl+Shift+V; General shows its recorder while on
 ├── Caps Lock dictation no labs.caps_lock_dictation + labs.caps_lock_light (macOS)   a Caps Lock press starts and stops hands-free dictation; its light waits for the microphone, then shows recording (steady or slow blink), processing, and off
@@ -77,6 +85,13 @@ Feature             Pane  Toggle (settings.json, hex settings)   On: what it doe
 │                                        stay raw transcripts as before
 │                                        // checks: local_api::processing route tests (409, 403, 400, 429, processed, absent);
 │                                        // not observed on macOS or Windows, and no /transcriptions success without a model
+├── Timestamps in API transcripts no labs.api_timestamps (every OS) apps using Hex's local API can add
+│                                        timestamps=segment|word to POST /transcriptions for the speech model's own
+│                                        segment or word times (startMs, endMs); off, a timed request answers 403
+│                                        timestamps-disabled and responses stay as before
+│                                        // checks: local_api::timestamps (parse, 403 before the body, response fields,
+│                                        // clamping, empty arrays), transcription::service (the 422 decision), and
+│                                        // gguf_session (chunk offsets); no real-model transcript with times
 ├── Model in use first no labs.picker_active_first     the speech model picker shows the model in use first: Compare's first column, Every model's first row (#1019)
 ├── Use model files where they are no labs.model_in_place the picker adds a model file without copying it, so accounts can share one (#941)
 ├── Downloaded models only no labs.picker_downloaded   the picker's All speech models view can show only downloaded models, with the space Hex's copies take (#1018)
@@ -91,8 +106,9 @@ Feature             Pane  Toggle (settings.json, hex settings)   On: what it doe
 │                                        // a_refusal_follows_hexs_code_rather_than_its_status
 │                                        // (control/cli/transcribe.rs); a running service answered model-unavailable for an uninstalled
 │                                        // model, but no transcript answer or offline model load was observed, and nothing ran on macOS or Windows
-├── Keep recordings no    labs.keep_recordings         History entries keep their dictation audio; Transcribe again runs it through another installed model (#1032)
+├── Keep recordings no    labs.keep_recordings         History entries keep their dictation audio; Play hears it, and Transcribe again runs it through another installed model (#1032)
 ├── Hide menu bar icon no labs.hide_menu_bar_icon      (macOS) the menu-bar icon hides while no meeting is under way; shortcuts keep working, reopening Hex shows Settings (#1064)
+├── Pause from menu bar no labs.pause_menu             (macOS) the menu bar's action block offers Pause Hex; while paused every capture shortcut and the secure-input hotkeys are inert, the event tap passes keys through, and Resume waits for a neutral keyboard (#82)
 ├── ⌘Q closes Settings no labs.quit_closes_window      (macOS) the app menu's Quit Hex (⌘Q) closes the Settings window instead of quitting Hex; dictation keeps running, the menu bar icon still quits (#1473)
 ├── Notch indicator no    labs.notch_indicator         (macOS) on a screen with a notch, the HUD widens the notch sideways in the Dynamic Island's compact style at either visible position: an orange mic and level bars, the macOS spinner, a green checkmark; Hidden still hides it, and flat screens keep the Top/Bottom setting
 ├── Movable meeting capsules no labs.movable_meeting_capsules (macOS) panel capsules (Meeting transcript ready, Recording automatically, offers, reminders) drag to another corner and show in the last one, shared with the recording capsule (#1093)
@@ -112,6 +128,10 @@ Feature             Pane  Toggle (settings.json, hex settings)   On: what it doe
 │                                        once notes or a rename give a meeting a title, its exported Markdown is renamed
 │                                        in place to <date> <time> <title>.md; a taken name adds " (2)", and the
 │                                        manifest follows so Reveal, Trash, and retention see the new path
+├── Separate notes file no labs.meeting_notes_file (every OS with Meetings)
+│                                        finished meetings export as <date> <time> <title>.transcript.md with the
+│                                        notes in <date> <time> <title>.notes.md beside it, linking back; both take
+│                                        " (2)" together, follow a descriptive rename, and go to the Trash together
 ├── Expire meeting audio separately no labs.expire_meeting_audio (every OS with Meetings)
 │                                        Meetings › Settings adds Keep audio under Keep meetings: finished meetings drop
 │                                        their WAVs on their own schedule (at or beyond Keep meetings it has no effect),
@@ -152,14 +172,15 @@ Feature             Pane  Toggle (settings.json, hex settings)   On: what it doe
 │                                        // checks: gnome_annotate_is_its_own_bit_* (labs.rs), meeting capsule xwayland decision reused
 │                                        // (linux/meeting_capsules.rs); Rune's xwayland tests; not run on a GNOME session
 ├── Screenshots     no    labs.screenshots + screenshots.hotkey (default ⌘⇧4) + screenshots.record_hotkey (unbound) + screenshots.folder (macOS)
-│                                        the shortcut picks an area (Space: a window); the PNG goes on the clipboard, into the folder (Desktop), and into a corner thumbnail
+│                                        the shortcut picks an area (Space: a window); the PNG goes on the clipboard, into the folder (Desktop), and into a corner thumbnail;
+│                                        a saved record shortcut and Annotate's capture shortcuts never share a key, on or off
 ├── Annotate 15 s replay no labs.annotate_replay + capture.replay_hotkey (macOS 27+)
 │                                        keeps a rolling 15 s SCClipBufferingOutput screen buffer for hex capture replay and the replay shortcut;
 │                                        macOS keeps its screen-recording dot lit the whole time it is on
 ├── Terminal paste  no    paste_with_shift             (Windows) paste with Ctrl+Shift+V (#477/#478; Linux keeps it in General);
 │                                         Java games (javaw/java, e.g. Minecraft) still get Ctrl+V (#1362)
 │                                         // check: terminal_paste_sends_plain_control_v_to_java_games (windows/paste.rs)
-└── OpenCode in WSL no    labs.opencode_in_wsl          (Windows) Modes rewriting, the Modes model picker, and Annotate's capture sends
+├── OpenCode in WSL no    labs.opencode_in_wsl          (Windows) Modes rewriting, the Modes model picker, and Annotate's capture sends
                                          use an OpenCode service running in the default WSL distribution
                                          when no Windows registration answers; looking for it can start WSL
                                          // checks: the_passwd_line_for_the_uid_names_its_home, both_wsl_prefixes_name_the_distribution,
@@ -176,6 +197,20 @@ Feature             Pane  Toggle (settings.json, hex settings)   On: what it doe
                                          // a_failed_wsl_request_forgets_the_workspace, a_not_found_wsl_request_forgets_the_workspace,
                                          // a_wsl_request_failure_reads_as_the_capsule_expects,
                                          // opencode_in_wsl_is_its_own_bit_and_windows_only; not run on a real Windows PC with WSL
+└── Only on speakers no   labs.speakers_only            (every OS) While dictating (Mute, Lower audio, Pause
+                                         media) applies only while the default output is speakers; wired or Bluetooth
+                                         headphones leave the output and media alone for that recording or capture, and
+                                         anything Hex can't classify counts as speakers
+                                         // checks: bluetooth_outputs_are_headphones,
+                                         // a_built_in_output_on_its_headphone_jack_is_headphones,
+                                         // apples_wired_headphone_device_is_headphones, everything_else_is_speakers,
+                                         // an_analog_sink_is_headphones_only_on_a_headphone_port, a_headset_port_is_headphones,
+                                         // bluetooth_sinks_are_headphones_unless_they_say_speakers,
+                                         // a_sink_the_sound_server_does_not_name_is_unknown,
+                                         // a_non_string_property_does_not_hide_the_others,
+                                         // cpal_headphone_types_are_headphones (audio/output_route.rs);
+                                         // speakers_only_is_its_own_bit_and_off_by_default (labs.rs);
+                                         // not observed on a real Mac or a real Linux or Windows desktop with headphones
 
 Settings › Labs                          // labs.page, a store (labs/store.rs)
 ├── Header -> "Labs", Search N labs (⌘F focuses it), Discover | Turned on · N
@@ -257,6 +292,53 @@ not only where its UI appears: `labs::live_text()`, `labs::live_chapters()`,
 Add a new feature to `labs::Feature` (name, settings key, description, audience), give
 it a row in `rune_ui/labs.rs` and a `hex settings` key, and default it off.
 When a feature graduates, remove it from Labs.
+
+Switch model with app (`app-model-switching`, macOS and Windows): while on,
+the Modes pane gives each mode, Global included, a "Speech model" row:
+Don't switch, or any installed GGUF model the picker offers, then a language
+that model supports (shown fixed for a one-language model). A new model
+choice starts on that model's last-used language, else the saved language it
+supports. The choice saves to the mode's `speech` (in
+`dictation_processing.modes[]`, and Global's in
+`dictation_processing.default_mode`) as `{"model": ..., "language": ...}`.
+When the app in front changes, `transcription/app_model_switching` matches it
+to a mode by application and, 300 ms after the last change, starts the shared
+picker's installed-only preparation for the mode's choice; a mode without a
+choice switches nothing. Matching is by application on macOS and Windows
+alike: a mode's website rules are ignored, so a mode chosen only by website
+never switches. Hex's own window, and a moment with no application in front,
+are ignored: they neither schedule nor cancel a switch. A manual model
+choice cancels a pending switch, launching Hex records the mode in front
+without switching it, and a switch due while a dictation records or
+transcribes waits until it is idle (macOS knows a capture from its press;
+Windows sees only the engine's streams and finishes). It never downloads a
+model: a choice whose model is no longer downloaded shows Not installed, its
+preparation refuses it, and the selected model stays. Enabling the lab while
+Hex is in front applies nothing; the choice applies when you next focus an
+app other than Hex, after the same 300 ms. Editing a mode's choice, Global's
+included, likewise applies when you next focus an app whose mode carries it,
+never while Hex is in front. With keyboard switching also on, the source
+whose switch is due later wins, and an app switch wins a tie in the same
+tick. There is no Linux runtime for it, so Linux does not list the lab. Off,
+the Modes pane is exactly as before and nothing reads the frontmost app for
+models. Checks:
+`app_model_switching_is_a_labs_toggle_on_macos_and_windows`,
+`a_mode_picks_an_installed_speech_model_and_language`, and
+`the_speech_row_needs_the_lab_and_a_capable_os` in
+[speech_model_tests.rs](../../src/rune_ui/speech_model_tests.rs); the switch
+policy tests in
+[app_model_switching.rs](../../src/transcription/app_model_switching.rs);
+`app_model_switching_is_opt_in_and_mode_speech_choices_round_trip` and
+`loading_drops_mode_speech_choices_that_no_longer_validate` in
+[app_settings.rs](../../src/app_settings.rs); and
+`a_modes_speech_choice_uses_the_same_selectors_as_its_processing` in
+[dictation/config.rs](../../src/dictation/config.rs) and
+`a_modes_speech_choice_matches_its_application_or_website_else_global` in
+[dictation/modes.rs](../../src/dictation/modes.rs). Not yet observed: a
+real Mac or Windows PC switching apps while dictating, and the runtime
+scheduling on either host; the `mac-labs` and `windows-labs` goldens were
+regenerated for the new card, the Modes goldens did not change with the lab
+off, and the new `modes-speech` golden shows the on state.
 
 Mouse shortcuts off: the recorder ignores mouse buttons, `hex settings`
 refuses one, and a saved mouse-button shortcut goes back to its default when
@@ -579,30 +661,109 @@ window yet. Checks:
 loaded in a player; the Labs page goldens need regenerating on Linux with the
 new row.
 
-Second dictation shortcut (`second-dictation-shortcut`, issue 627, macOS):
-for a Globe/Fn shortcut on the laptop keyboard and another key on an
-external keyboard. While on, General shows a "Second dictation shortcut"
+Second dictation shortcut (`second-dictation-shortcut`, issue 627, macOS, Linux
+and Windows): for a Globe/Fn shortcut on the laptop keyboard and another key on
+an external keyboard. While on, General shows a "Second dictation shortcut"
 recorder under Shortcut, unbound by default and clearable
 (`second_dictation_hotkey`, also `hex settings set second_dictation_hotkey
 f5`). It is refused when it shares a key with another Hex shortcut, and the
 others' checks count it while the toggle is on. The gate is
-`AppSettings::active_second_dictation_hotkey`: only on macOS, with the toggle
-on, a binding saved, and no overlap does `RuntimeHotkeys::second_dictation`
-carry it, so the event tap suppresses its keys and the listener
-(`recognition::Hotkeys`) runs a second shortcut machine with the dictation
-shortcut's Hold/Toggle, double-tap lock, and double-tap-only settings. It
-dictates and pastes with processing, as the dictation shortcut does; Paste
-last and meeting paste still come only from the main machine. The shortcut
-that starts a capture finishes or cancels it, and the other stands down
-until its keys lift while it records. Turning the toggle off or clearing the
-binding mid-capture cancels that capture. Off, nothing is matched,
-suppressed, or checked for it, and Hex is unchanged. Checks:
+`AppSettings::active_second_dictation_hotkey`: with the toggle on, a binding
+saved, no overlap with another active shortcut, and, on Linux and Windows, a
+key. On macOS `RuntimeHotkeys::second_dictation` carries it, so the event tap
+suppresses its keys and the listener (`recognition::Hotkeys`) runs a second
+shortcut machine with the dictation shortcut's Hold/Toggle, double-tap lock,
+and double-tap-only settings. On Linux it joins the listener's
+`HotkeyOptions` as its own `Shortcut`, so an X11 grab or a shortcuts-portal
+entry (id `second-dictation`, description "Second dictation shortcut")
+registers it only while on and bound; the desktop may grant a different
+trigger, and Settings shows what it granted. On Windows the listener's
+keyboard hook registers it as its own trigger and down flag
+(`CallbackState::second_dictation`), so it starts, locks, double-taps, and
+finishes a capture exactly as the dictation shortcut does, and the capture's
+`DictationFlavour::Second` keeps it from the main, raw, or Terminal paste
+machine. Linux and Windows register a key, so a binding without one never runs
+there; Windows Settings refuses one without a key, the same rule Dictate
+without processing and Terminal paste follow. On every OS it dictates and
+pastes with processing, as the dictation shortcut does; Paste last and meeting
+paste still come only from the main machine. The shortcut that starts a
+capture finishes or cancels it, and the other stands down until its keys lift
+while it records. Turning the toggle off or clearing the binding mid-capture
+cancels that capture on macOS; on Linux and Windows a settings change applies
+once the capture ends. Off, nothing is matched, suppressed, registered, or
+checked for it, and Hex is unchanged. Checks:
 `the_second_dictation_shortcut_needs_its_lab_and_its_own_keys` in
-[app_settings.rs](../../src/app_settings.rs) and
+[app_settings.rs](../../src/app_settings.rs),
 `the_shortcut_that_starts_a_capture_owns_it` in
-[recognition.rs](../../src/recognition.rs) (macOS only). Not yet observed: a
-real Mac with an external keyboard, or the recorder row's rendering (macOS
-builds only; no golden).
+[recognition.rs](../../src/recognition.rs) (macOS only),
+`second_dictation_shortcut_owns_the_capture_it_starts` in
+[linux/input.rs](../../src/linux/input.rs),
+`second_dictation_is_registered_only_while_its_lab_is_on` in
+[linux/dictation.rs](../../src/linux/dictation.rs), and the Windows
+`the_second_dictation_flavour_owns_its_capture` (cross-compiled only). Not yet observed: a
+real Mac with an external keyboard, a real Linux X11 or Wayland shortcut press,
+or the recorder row's rendering; the Labs page goldens show the new row counted
+on Linux, macOS, and Windows.
+
+More dictation shortcuts (`more-dictation-shortcuts`, macOS): up to four
+more shortcuts that each dictate like the main one, each with its own
+activation mode, for a keyboard with more keys to spare. While on, General
+shows one numbered row per saved extra under the second dictation shortcut's:
+its recorder, a shortcut-mode select with the dictation shortcut's choices
+(Hold or double-tap, Hold, Tap, Double-tap; Double-tap is left out while the
+row's binding has no key, unless Labs › Double-tap on a lone modifier is on,
+exactly as it is for the main shortcut), and
+a Remove button that drops the row. An Add shortcut row appears while fewer
+than four rows exist, and a new row starts unbound. The rows persist as
+`extra_dictation_hotkeys`, an array of `{"binding": ..., "mode": ...}` rows
+in `settings.json` (also `hex settings set extra_dictation_hotkeys …`),
+capped at four: loading keeps the first four and folds each row's mode to
+one its binding can trigger. The gate is
+`AppSettings::active_extra_dictation_hotkey`: only on macOS, with the toggle
+on, a binding saved, and no overlap with another active shortcut does
+`RuntimeHotkeys::extra_dictation` carry that row, so the event tap
+suppresses its keys and the listener (`recognition::Hotkeys`) runs the row's
+own shortcut machine with the switches its mode saves
+(`ExtraDictationMode::switches`). Each row follows Labs › Double-tap on a
+lone modifier exactly as the dictation shortcut does: with it on, a row on a
+lone modifier keeps Double-tap, and the machine's own
+`labs::double_tap_modifiers()` check admits it; off, the row folds to Hold or
+double-tap as before, and turning the lab off folds the saved mode while the
+dictation shortcut's `double_tap_only` is cleared. It dictates and pastes with processing, as
+the dictation shortcut does; Paste last and meeting paste still come only
+from the main machine. The shortcut that starts a capture owns it, and the
+others stand down until its keys lift while it records. Escape cancels a
+recording row once it is locked, in Tap mode, or while a bare key or mouse
+button is held, Toggle's cancel binding included; while a Hold row on a
+modifier or chord binding is physically held, Escape carries those modifiers
+and neither cancels nor is swallowed. Removing the row that records cancels
+its capture while removing another row leaves it recording. Turning the
+toggle off or clearing the binding mid-capture cancels that capture. Off,
+the saved rows stay and nothing is matched, suppressed, or checked for them.
+Checks:
+`an_extra_shortcut_needs_its_lab_and_its_own_keys`,
+`active_rows_do_not_share_a_key`,
+`adding_stops_at_the_maximum_and_removing_frees_a_place`,
+`extra_rows_round_trip_and_survive_their_lab_turning_off`,
+`loading_truncates_and_folds_the_rows`,
+`double_tap_folds_away_without_a_key_or_the_lab` and
+`a_rows_double_tap_follows_the_lone_modifier_lab` in
+[app_settings/extra_shortcuts.rs](../../src/app_settings/extra_shortcuts.rs);
+`a_row_needs_a_key_or_the_lone_modifier_lab` in
+[rune_ui/shortcut_mode.rs](../../src/rune_ui/shortcut_mode.rs);
+`each_extra_shortcut_keeps_its_own_mode`,
+`an_extra_shortcut_owns_the_capture_it_starts`,
+`removing_another_row_keeps_a_recording_extra` and
+`escape_cancels_a_locked_extra_that_records` in
+[recognition.rs](../../src/recognition.rs); and
+`an_extra_capture_keeps_its_cancel_from_the_app` and
+`an_extra_mode_sets_its_trigger_switches` in
+[suppression/tests.rs](../../src/suppression/tests.rs) (macOS only).
+`extra_dictation_hotkeys_takes_up_to_four_checked_rows` covers
+`hex settings set` in
+[control/settings.rs](../../src/control/settings.rs). Not yet observed on a
+real Mac: the recorder rows, the mode select, Add shortcut and Remove, each
+row's own mode, and the Labs card (macOS builds only; no golden).
 
 Terminal paste shortcut (`terminal-paste-shortcut`, Windows and Linux):
 another dictation shortcut whose paste is always Ctrl+Shift+V, for a terminal
@@ -848,13 +1009,13 @@ different modifier. Modifier flag events are never suppressed, so a lone
 Option or Globe press and release reach the focused app unchanged; macOS's
 own "press Globe twice" system dictation shortcut may therefore also fire
 while this lab is on. It applies to every `DictationHotkey` that takes the
-mode (the primary shortcut, Dictate without processing, and the second
-dictation shortcut). Off, the persisted normalization clears `double_tap_only`
-for a shortcut without a key exactly as a fresh load does, Double-tap is
-dimmed in the Shortcut mode modal, and `hex settings set double_tap_only on`
-refuses it. Windows and Linux have no such path for this lab: their runtime
-gates and `hex settings` validation are exactly as before, and both keep the
-key requirement.
+mode (the primary shortcut, Dictate without processing, the second dictation
+shortcut, and each Labs › More dictation shortcuts row). Off, the persisted
+normalization clears `double_tap_only` for a shortcut without a key exactly
+as a fresh load does, Double-tap is dimmed in the Shortcut mode modal, and
+`hex settings set double_tap_only on` refuses it. Windows and Linux have no
+such path for this lab: their runtime gates and `hex settings` validation are
+exactly as before, and both keep the key requirement.
 
 Checks: `double_tap_only_with_the_lab_starts_from_a_lone_modifier` (Option
 and Fn), `double_tap_only_with_the_lab_still_discards_a_lone_modifier_chord`,
@@ -1120,12 +1281,14 @@ stream hears it (`skip_long_pauses` in
 [engine/streaming.rs](../../src/transcription/engine/streaming.rs), the same
 `PauseCap`): each pause at the noise floor keeps its first 2.5 s and last
 0.3 s, a trailing pause only its first 2.5 s, and shorter pauses pass whole.
+Unified English's trailing silence is appended after that cut, so the trailing
+pause cannot trim it.
 A clip in which no frame rose above the noise floor is left whole, as the
 stream does for #841. The job deadline, History's duration, and the silence
 discard still use the full clip; process.log adds a `skipped long pauses
 before whole-clip transcription` line with `pauses_dropped_ms`. macOS,
-streams, meetings, captures, and the local API are unchanged, and off the
-clip is passed through untouched. Checks:
+streams, meetings, captures, and the local API are unchanged, and off, the
+pause cut leaves the clip untouched. Checks:
 `skipping_pauses_cuts_a_whole_clips_long_pauses_to_their_ends`,
 `skipping_pauses_leaves_short_pauses_and_quiet_only_clips_whole`, and
 `with_skip_pauses_off_the_whole_clip_is_untouched` in
@@ -1260,7 +1423,9 @@ path (`custom_models::add_in_place`), never copied
 is `model_import::in_place_on`, read when the button draws and again when the
 dialog answers, before the worker starts. Off, the picker is exactly as
 before. Checks:
-`a_file_added_in_place_is_recorded_by_path_copied_nowhere_and_forgetting_leaves_it`
+`a_file_added_in_place_is_recorded_by_path_copied_nowhere_and_forgetting_leaves_it`,
+`hex_s_own_copy_chosen_through_another_path_is_never_deleted`, and
+`an_independent_identical_file_replaces_hex_s_copy`
 in [transcription/custom_models.rs](../../src/transcription/custom_models.rs);
 `every_feature_is_off_by_default_and_round_trips` in
 [labs.rs](../../src/labs.rs). Not yet observed: a real window or a second
@@ -1293,7 +1458,7 @@ in the file manager, or choosing another folder for models. Checks:
 Labs page goldens need regenerating on Linux with the new row.
 
 Keep recordings (`keep-recordings`, issue 1032, every OS): for hearing a
-dictation again through a different model.
+dictation again, through the output device or a different model.
 
 ```ts
 Labs › Keep recordings on                     // labs.keep-recordings
@@ -1306,7 +1471,13 @@ Labs › Keep recordings on                     // labs.keep-recordings
 ├── Retention, the 10,000-entry and text caps, Delete, Clear all -> the
 │   entry's WAV is deleted at the next save (`recordings::sweep`)
 ├── Over 512 MiB of audio -> the oldest entries lose their audio, keep their text
-├── History card, entry with audio -> "Saved recording" + "Transcribe again" menu
+├── History card, entry with audio -> "Saved recording" + Play + "Transcribe again" menu
+│   ├── Play -> the clip through the default output device, on a worker; one
+│   │   playback at a time: Play on another entry, Stop, selecting another
+│   │   entry, leaving History, turning the lab off, or closing the window
+│   │   stops it. Stop shows while it plays and Play returns when it ends or
+│   │   fails (history/playback.rs)
+│   ├── Failed -> "Could not play: <why>" (the file is gone, no output device)
 │   ├── Lists every available model installed for the language it would use
 │   ├── A model that takes a language hint (not Parakeet v3/Ultra, GigaAM,
 │   │   Granite, Bark) -> "<model> · Language: <saved language>" menu (Auto when it
@@ -1324,26 +1495,41 @@ Labs › Keep recordings on                     // labs.keep-recordings
 │   │   Stored in the entry: they count toward the 16 MiB text cap and leave
 │   │   with it (retention, Delete, Clear all); hidden while the toggle is off
 │   └── Failed -> "Could not transcribe again: <why>"
-└── Toggle off -> nothing new is saved and the menu hides; existing audio stays
-    until it expires or History is cleared
+└── Toggle off -> nothing new is saved and the menu and Play hide; existing
+    audio stays until it expires or History is cleared
 ```
 
-No playback yet. Off, History and dictation are exactly as before: no copy
-of the clip is made. Checks: `a_kept_recording_is_an_owner_only_wav_that_reads_back`,
+`hex history --json` names each kept recording's absolute path in `recording`
+while the lab is on and the file is still there; every other row omits the
+field. `hex history` reads the saved `labs.keep_recordings` switch with
+`AppSettings::read` instead of the process's runtime switches, which that
+read-only command never sets; a managed lock and the build's audience keep it
+off as `labs::encode` does. Turning the lab off, leaving the entry or History,
+or closing the window stops playback; closing stops it directly in `on_close`,
+since a hidden window only polls when woken. Off, History and dictation are
+exactly as before: no copy of the clip is made. Checks:
+`a_kept_recording_is_an_owner_only_wav_that_reads_back`,
 `recordings_leave_with_their_entries`,
 `the_recordings_byte_cap_drops_the_oldest_audio_but_keeps_the_text`,
 `a_recording_another_process_has_not_saved_yet_survives_a_sweep`,
 `replacing_the_text_keeps_the_entry_and_its_recording`, and
 `retranscribing_a_missing_recording_says_so` in
 [history.rs](../../src/history.rs);
-`transcribe_again_shows_only_with_its_lab_and_replace_updates_the_entry` and
-`transcribe_again_offers_a_language_only_for_models_that_take_one` in
+`a_kept_recording_decodes_into_its_own_clip` and
+`a_worker_answer_returns_the_card_to_play_and_keeps_a_failure` in
+[history/playback.rs](../../src/history/playback.rs);
+`keep_recordings_follows_the_saved_switch_not_the_process` and
+`history_json_names_a_recording_only_where_one_is_kept` in
+[transcript_cli_tests.rs](../../src/control/transcript_cli_tests.rs);
+`transcribe_again_shows_only_with_its_lab_and_replace_updates_the_entry`,
+`transcribe_again_offers_a_language_only_for_models_that_take_one`, and
+`leaving_an_entry_or_turning_off_keep_recordings_stops_playback` in
 [tests.rs](../../src/rune_ui/tests.rs);
 `keep_recordings_is_its_own_bit_and_off_by_default` in
 [labs.rs](../../src/labs.rs); the tests in
 [history/versions.rs](../../src/history/versions.rs) (newest first, five at
-most, switch back, text cap, Clear all). Not yet observed: a real dictation kept and
-transcribed again with another model in a window, on any OS.
+most, switch back, text cap, Clear all). Not yet observed: a real dictation kept
+and played or transcribed again with another model in a window, on any OS.
 
 Hide menu bar icon (`hide-menu-bar-icon`, issue 1064, macOS): for people
 who only use the shortcut and want the menu-bar space back. The status item
@@ -1364,6 +1550,88 @@ only); `hide_menu_bar_icon_is_its_own_bit_and_off_by_default` in
 [labs.rs](../../src/labs.rs). Not yet observed: the icon hiding on a real
 Mac, or macOS restoring an item's remembered visibility; the row renders
 only in macOS builds, so no golden changes.
+
+Pause from menu bar (`pause-menu`, issue 82, macOS): for people whose game or
+another app collides with Hex's shortcuts and who don't want to quit. With the
+lab on, the menu bar's action block starts with Pause Hex; pressing it pauses
+Hex and the row reads Resume Hex. A pause is runtime-only and never saved, so a
+restart starts unpaused. While paused every capture shortcut is inert:
+dictation (main, second, extra, Caps Lock, and raw), Paste Last Dictation and
+meeting paste, Annotate and Screenshots, and the Carbon hotkeys registered under
+Secure Event Input. The event tap passes every key event through unmodified,
+exactly as while a new binding is recorded, because every suspension site reads
+`app_settings::shortcuts_suspended()` (a recording binding or a pause) instead
+of `hotkey_capture_active()` alone. Pausing cancels only an active dictation
+capture: the listener suspends every shortcut machine as the pause begins
+(`Hotkeys::suspend_when`, once per suspension) and cancels the capture it was
+recording, while accepted transcription and paste jobs still finish and a
+capture a command starts during the same pause keeps recording. An Annotate or
+Screenshots recording already under way is not cancelled by a pause: it keeps
+recording and stops from its own capsule, while only its shortcuts go inert. A
+Caps Lock dictation ignores the key while shortcuts are suspended, so a pause
+neither starts a dictation nor forces Caps Lock off. Hiding the menu bar icon
+(Labs › Hide menu bar icon) leaves no Resume Hex row at all, so with the icon
+hidden turning the lab off is what resumes.
+
+```ts
+Paused     -> every capture shortcut inert; tap passes keys through
+           -> the listener cancels only the dictation capture it is recording
+           -> Caps Lock starts nothing and the lock stays as it is
+Resume     -> the row still reads Resume Hex: shortcuts stay suspended until
+              no key or modifier reads as held for 100 ms -> live again
+Lab off    -> resumes at once and the row hides; a restart starts unpaused
+```
+
+Choosing Resume Hex again while a resume already waits leaves it waiting; it is
+never re-paused or restarted.
+
+Resuming does not re-arm shortcuts on a held keyboard: the listener's
+`shortcut_pause::tick` settles the pause on each pass and only goes live after
+100 ms of a neutral keyboard (`STALE_KEY_NEUTRAL_DURATION`'s window in
+[src/suppression.rs](../../src/suppression.rs)), so a key held while the user
+clicks Resume can never start a capture. That check,
+`suppression::keyboard_is_neutral`, reads the HID modifier flags and every
+keyboard key code below 128 through `CGEventSourceKeyState` (the combined
+session state and HID state must agree); Caps Lock's own key code is skipped
+because macOS reports it down while it is merely toggled on, and the Fn flag is
+masked out because arrow-key metadata can leave SecondaryFn set after release
+(the pause has no modifier history to tell that apart from a held Fn, so it
+always ignores the bit), the same way `recover_stale_keys_with` drops it once
+its own history says Fn is up. Only a pending resume reads the keyboard and
+takes the pause machine's lock (once); a running or paused Hex reads a lock-free
+atomic mirror instead. A pending resume logs one warning naming the held key
+code after five seconds, and the pause, resume request, and live-again
+transitions log at info. The gate, `labs::pause_menu()`, is read when the status
+item refreshes (about twice a second) and as the menu opens; `labs::apply`
+resumes at once when the lab turns off. Explicit CLI commands (`hex dictation
+start`) and the menu's own actions are not keyboard shortcuts and keep working,
+though a capture `hex dictation start` begins during a pause can only be
+finished with `hex dictation stop`: its reply still offers the shortcut, which
+is inert until Resume.
+Checks: `pause_suspends_and_resume_only_follows_a_neutral_keyboard`,
+`a_neutral_keyboard_past_the_window_resumes`,
+`choosing_resume_while_a_resume_waits_leaves_it_waiting`,
+`a_pending_resume_reports_how_long_it_has_waited`,
+`turning_the_lab_off_resumes_at_once`, `settling_leaves_a_running_hex_alone`, and
+`a_resume_ignored_while_running_does_not_suspend` in
+[shortcut_pause.rs](../../src/shortcut_pause.rs);
+`a_pause_cancels_once_and_leaves_a_command_capture_alone` in
+[recognition/hotkeys.rs](../../src/recognition/hotkeys.rs);
+`the_pause_row_reads_pause_or_resume` and
+`the_menu_reads_meeting_then_actions_then_the_app` in
+[macos_rune/status_item.rs](../../src/macos_rune/status_item.rs);
+`pause_menu_is_its_own_bit_and_macos_only` in [labs.rs](../../src/labs.rs);
+`a_toggled_caps_lock_still_reads_neutral`, `a_held_key_reads_not_neutral`,
+`a_held_modifier_reads_not_neutral`, and
+`a_stuck_function_flag_still_reads_neutral` in
+[suppression/tests.rs](../../src/suppression/tests.rs).
+Not yet observed: a real pause and resume on a Mac, especially against a held
+modifier and a game's colliding key; the suppression, secure-input, listener,
+and status-item changes are compiled and clippy-linted by the macOS CI build but
+no permission-granted keyboard test ran. The pause machine's checks run on
+Linux too, while the tap, secure-input, listener, and menu tests, and the
+neutral-keyboard rules, run only in macOS builds. The row renders only in macOS
+builds, so no golden changes.
 
 ⌘Q closes Settings (`quit-closes-window`, issue 1473, macOS): for people who
 press ⌘Q to put the Settings window away and expect dictation to keep running.
@@ -1451,6 +1719,9 @@ shortcut uses) opens a second copy of Annotate's capture picker
                       (Reduce Motion: a fade either way); ✕ shows inside its top-left corner on hover
                       a dictation while cards show -> pastes as usual, being no shot's talk-over
                       a failure -> the error tone; there is no success sound (Hex has no shutter cue)
+Another app holds Secure Event Input -> ⌘⇧4 and the record shortcut still open the picker
+                  (Carbon hotkeys while it lasts; see dictation.md's Shortcuts Under Secure Input);
+                  Space and Escape don't arrive, so window mode and Escape don't work then
 ```
 
 The cards stack in the corner as CleanShot's Quick Access Overlay does
@@ -1577,6 +1848,17 @@ Annotate on (`capture.enabled`): a recording is an Annotate capture
 dictation timeline. Its shortcut (`screenshots.record_hotkey`) is unbound
 until the drawer's Record screen row sets one (a key is required; the
 trash button clears it); without Annotate the row says "Needs Annotate".
+A saved record shortcut and Annotate's capture shortcuts never share a key,
+whether Annotate or the Lab is on: giving one the other's chord is refused,
+so turning either on can't leave the record shortcut dead while Annotate's
+whole-screen recording takes the chord. A file saved before that rule had its
+record shortcut cleared when it loaded, with a warning logged: Annotate's
+capture shortcut isn't filtered the way the record one is, so the chord would
+still record the whole screen, and a record saved on the replay shortcut
+turned replay off with the Lab off. Other shortcuts only see the record
+key while a recording is available (the Lab and Annotate on). Without
+Annotate, the row still shows a saved shortcut with its clear button, so the
+key it holds stays visible and can be freed.
 
 ```ts
 record shortcut  -> the same picker, "Full screen · Click to record"; area, window (Space), or display
@@ -1627,6 +1909,20 @@ an Annotate capture's movie  -> 1280 px long edge (2560 for a display), system H
 
 Checks: `the_record_shortcut_records_and_never_while_the_picker_shows` in
 [screenshots.rs](../../src/screenshots.rs),
+`a_granted_screenshots_permission_reopens_its_picker` in
+[capture_capsule/flow.rs](../../src/rune_ui/capture_capsule/flow.rs),
+`a_clip_capture_asks_for_the_screenshots_picker` in
+[capture_host/permissions.rs](../../src/capture_host/permissions.rs),
+`a_failed_screenshots_recording_asks_for_its_picker` in
+[capture_capsule/feed.rs](../../src/rune_ui/capture_capsule/feed.rs),
+`the_record_shortcut_and_annotates_capture_shortcuts_never_share_a_key` in
+[app_settings.rs](../../src/app_settings.rs),
+`a_saved_record_shortcut_sharing_annotates_chord_is_cleared_on_load` in
+[app_settings.rs](../../src/app_settings.rs),
+`annotate_will_not_take_a_saved_record_shortcut` in
+[rune_ui/scrawl.rs](../../src/rune_ui/scrawl.rs),
+`the_screenshot_lab_and_annotate_never_share_a_shortcut` in
+[control/settings.rs](../../src/control/settings.rs),
 `a_recording_saves_beside_the_shots_and_never_over_one` in
 [screenshots/recording.rs](../../src/screenshots/recording.rs),
 `a_stopped_screenshot_recording_folds_the_capsule` in
@@ -1643,8 +1939,13 @@ from [suppression.rs](../../src/suppression.rs) before the listener's
 own handling), never by the listener, and its press and release stay with
 it. With the lab off the tap returns at once and nothing is made: no
 picker window, no thumbnail, no work. Screen Recording is Annotate's: a
-press without it shows Annotate's permission helper instead of the
-picker.
+press without it shows the same permission helper instead of the picker.
+Restart relaunches Hex; when the grant arrives without a relaunch, the
+helper's Ready button reopens the Screenshots picker in the mode the
+shortcut asked for — a shot, or a recording — never Annotate's whole-screen
+recording. A record pick that starts a clip (`CaptureCommand::Clip`) reports
+the same way, and a clip that fails after starting keeps that picker origin
+for its helper. Annotate's own helper still records once it's ready.
 
 The picker is a non-key overlay, so Hex is usually not the frontmost app
 while it shows, and macOS ignores a background app's cursor. Hex builds
@@ -1831,6 +2132,54 @@ needs an installed model, so its `processed` field is covered through the
 shared seam and the `/streams` finish route rather than an end-to-end
 transcription; nothing ran on macOS or Windows.
 
+Timestamps in API transcripts (`api-timestamps`; every OS; its row is
+Output's, beside Process API transcripts): for a host app that needs to know
+when each phrase or word was said, for captions, search, or syncing. While on,
+the authenticated local API's `POST /transcriptions` accepts
+`timestamps=segment|word`; absent means `none`, the response as it was
+([local-transcription-service.md](../specs/local-transcription-service.md)).
+`segment` adds `timestampGranularity: "segment"` and `segments`; `word` adds
+`timestampGranularity: "word"`, `segments`, and `words`. Each span is `text`,
+`startMs`, and `endMs` in whole milliseconds from the start of the submitted
+audio.
+
+The times are the model's own native output. Nothing estimates them from text
+length or chunk boundaries: `Transcript` (already the meeting and capture
+result) carries them, Linux and Windows chunk long clips at the model's own
+window and add each chunk's offset once from its sample position, and macOS
+chunks a GGUF clip the same way. Apple Speech gives segments. An end that the
+minimum clip duration or a model's trailing silence pushed past the decoded
+audio is clamped to `durationMs`. A GGUF model answers a clip with no speech
+with `200`, an empty `transcript`, and empty arrays; Apple Speech reports no
+speech as `500 transcription-failed`, with or without timings.
+
+An unknown value, or a repeated parameter, is `400 invalid-request`. With the
+lab off, `segment` and `word` answer `403 timestamps-disabled` before the
+audio body is read, and `none` is unaffected. The running app reads the switch
+live; a `hex service` process without the app reads the saved
+`labs.api_timestamps` once (the embedded helper on its first request), so a
+change reaches a running helper after it restarts.
+
+When the selected model cannot
+produce that level natively — a word request on a model whose
+`capabilities.max_timestamp_kind` is segments, or Apple Speech for words — the
+answer is `422 unsupported-timestamps`, decided after the model resolves and
+before inference, on both the shared dictation engine and the service's own
+copy. A word request is never downgraded to segments. With `process=global`,
+the timings describe the raw transcript and `processed` stays separate.
+`/streams` and `/dictations` keep their own timing and do not offer this
+parameter. Checks: `local_api::timestamps` route tests cover the absent and
+`none` defaults, each level, invalid and repeated values, the 403 before the
+body, the response fields (and no new field without a request), clamping, and
+empty arrays; `transcription::service`'s
+`a_timed_request_is_answered_only_at_the_models_own_level` covers the 422
+decision; `transcription::gguf_session`'s
+`a_chunks_times_move_onto_the_clips_timeline_by_sample_position` covers chunk
+offsets; `api_timestamps_is_its_own_bit_and_off_by_default` and
+`every_feature_is_off_by_default_and_round_trips` in
+[labs.rs](../../src/labs.rs) cover the switch. Not observed: a real model
+answering with times, on any OS, and the macOS `/transcriptions` path.
+
 Meeting finished event (`meeting-finished-event`, issue 964; every OS with
 Meetings; its row shows wherever Meetings does): for a companion app that
 processes a meeting once its transcript is ready, without watching the
@@ -1946,6 +2295,64 @@ writer, which renames it with the title it applies. Checks:
 [labs.rs](../../src/labs.rs). The Labs page goldens (`mac-labs`, `windows-labs`,
 `linux-labs`) show the new card. Not yet observed: a real macOS end-to-end run
 renaming an exported meeting file.
+
+Separate notes file (`meeting-notes-file`, every OS with Meetings; its row
+shows wherever Meetings does): a finished meeting's Markdown is exported as
+`<YYYY-MM-DD HHMM> <title>.transcript.md`, and its notes are written beside it
+as `<YYYY-MM-DD HHMM> <title>.notes.md` with a relative link back to the
+transcript. Export picks the first stem whose transcript and notes names are
+both free, adding `" (2)"` to both together, so a later meeting never lands on
+half a pair. While applying the notes (final title and summary), Hex writes the
+notes file with the title, date, duration, app, the percent-encoded transcript
+link (its text escaping Markdown punctuation), the summary, each chapter as
+`### mm:ss · title` with its summary, and its own footer naming the writer and
+saying the transcript has the details. The transcript keeps its own
+`<!-- hex:notes -->` summary block and its "transcript below" footer as before.
+If the plain notes name is taken by a file Hex doesn't track, only the notes
+file gets the next number (`<stem> (2).notes.md`) and it logs that; the
+manifest's `notes_export_path` and `notes_export_sha256` track it, so one
+meeting never gets a second notes file. A later notes regeneration rewrites the
+file only while its SHA-256 still matches, so a file the user edited is left
+alone and logged. A notes file the user deletes stops being tracked and is
+never written back, even by a later regeneration with the lab on. With Labs ›
+Descriptive meeting file names on, notes and renames move both files together
+(a `.transcript` suffix is kept) and re-render an unedited notes file's heading
+and link; if the notes rename fails the transcript rename is rolled back, and
+if that rollback also fails the manifest keeps the paths the files actually
+have. A user rename or chapter retitle re-renders the notes file even with
+descriptive file names off, and either re-render works whether or not this lab
+is still on — only creating a notes file is gated. Delete to Trash moves the
+transcript, then the tracked notes file, then the recording folder; retention
+moves the notes file only while its SHA-256 matches, as it does for the
+transcript, and Reveal stays pointed at the transcript. Off, a new export keeps
+the plain `<stem>.md` name and unchanged bytes and creates no notes file; one
+written while the lab was on still follows later notes and renames. Checks:
+`a_separated_export_names_the_transcript_and_its_notes_as_a_pair`,
+`a_taken_pair_gets_the_next_number_without_overwriting`,
+`notes_are_written_beside_the_transcript_with_an_encoded_link`,
+`a_taken_untracked_notes_name_gets_a_number_and_is_never_replaced`,
+`an_edited_notes_file_is_left_alone_even_with_new_notes`,
+`a_deleted_notes_file_stays_gone_and_stops_being_tracked`,
+`moving_only_the_notes_file_returns_nothing`,
+`an_unedited_tracked_notes_file_follows_later_notes_without_the_lab`,
+`a_descriptive_rename_moves_both_files_and_updates_the_link`,
+`a_manifest_round_trips_the_notes_file_and_older_ones_still_load`, and
+`a_plain_export_gets_the_plain_notes_name` in
+[meeting/notes_file.rs](../../src/meeting/notes_file.rs);
+`an_untracked_notes_file_does_not_number_a_plain_rename` in
+[meeting/export_name.rs](../../src/meeting/export_name.rs);
+`a_separated_export_names_the_transcript_and_keeps_the_pair_free` in
+[meeting/transcript.rs](../../src/meeting/transcript.rs);
+`a_chapter_retitle_rewrites_an_unedited_notes_file_heading` in
+[meeting/chapters_tests.rs](../../src/meeting/chapters_tests.rs);
+`deleting_trashes_a_tracked_notes_file_after_the_transcript`,
+`expiry_trashes_a_notes_file_only_while_its_digest_matches`, and
+`a_rename_without_descriptive_names_still_retitles_the_notes_file` in
+[tests.rs](../../src/meeting/tests.rs); and
+`meeting_notes_file_is_its_own_bit_and_off_by_default` in
+[labs.rs](../../src/labs.rs). The Labs page goldens (`mac-labs`,
+`windows-labs`, `linux-labs`) show the new card. Not yet observed: a real macOS
+end-to-end run writing, renaming, and trashing a separate notes file.
 
 Meeting platform icons (`meeting-platform-icons`, issue 1290) graduated:
 each recording in the Meetings list always shows its call service's icon, or
@@ -2310,6 +2717,55 @@ running OpenCode inside WSL, including whether the UNC read starts the
 distribution and whether Annotate's send reaches it. The
 `windows-labs` golden shows the new card.
 
+Only on speakers (`speakers-only`, every OS)
+puts "While dictating" behind the default output. While on, each dictation
+session and each screen-capture session asks the route as it starts, on the
+recording environment's worker thread (macOS) or the audio-control worker
+(Linux and Windows), never the event tap's or the dictation loop's, and with
+headphones it holds no audio effect for that session: no mute, no lower, no
+media pause. On macOS an overlapping session that shares an already-held
+effect reuses the decision the first session made when it took it. Dictation
+still prevents idle sleep, and screen captures never do. Speakers, and
+anything the route can't classify, behave exactly as before, and with the lab
+off every recording behaves as it always did, and nothing reads the output at
+all: macOS never asks CoreAudio, Linux never runs
+`pactl`, Windows never asks cpal, and a session with "While dictating" set to
+Do nothing never asks either. The macOS backend
+([audio/output_route.rs](../../src/audio/output_route.rs)) reads
+the default output's CoreAudio transport type, its output-scope data source
+(`hdpn` on the built-in jack), and its UID (`BuiltInHeadphoneOutputDevice`):
+Bluetooth and Bluetooth LE are headphones whatever they are, a built-in
+device is headphones while the jack source is selected. Linux reads `pactl
+get-default-sink` and `pactl -f json list sinks` with the same helper its
+microphone route uses: the default sink is headphones while its active port
+names headphones or a headset (`analog-output-headphones`, `[Out] Headset`),
+or its `device.form_factor` is headphone or headset, and a Bluetooth sink
+(`device.api` `bluez5`) is headphones unless its form factor says speaker.
+Windows reads the default output's WASAPI form factor through cpal: headphones,
+headset, earpiece, and handset are headphones, speakers are speakers, and
+anything else is unknown. Limits:
+Bluetooth speakers read as headphones on macOS (transport alone) and on Linux
+unless PipeWire names them speakers; an external USB headphone DAC reads as
+speakers; a Linux session with only `wpctl` and no `pactl`, or an older
+`pactl` without `get-default-sink`, reads unknown, so "While dictating"
+applies; and the hotkey pre-roll follows the While dictating setting, not the
+route, so a skipped recording keeps the setting's pre-roll. Checks:
+`bluetooth_outputs_are_headphones`,
+`a_built_in_output_on_its_headphone_jack_is_headphones`,
+`apples_wired_headphone_device_is_headphones`,
+`everything_else_is_speakers`,
+`an_analog_sink_is_headphones_only_on_a_headphone_port`,
+`a_headset_port_is_headphones`,
+`bluetooth_sinks_are_headphones_unless_they_say_speakers`,
+`a_sink_the_sound_server_does_not_name_is_unknown`,
+`a_non_string_property_does_not_hide_the_others`, and
+`cpal_headphone_types_are_headphones` in
+[output_route.rs](../../src/audio/output_route.rs);
+`speakers_only_is_its_own_bit_and_off_by_default` in
+[labs.rs](../../src/labs.rs). Not yet observed: a real Mac with wired and
+Bluetooth headphones and the lab on, and the Linux and Windows backends on a
+real desktop.
+
 Checks: `labs_is_one_flat_list_of_toggles_off_by_default`,
 `contributed_options_are_labs_toggles_off_by_default`,
 `the_browser_labs_toggle_turns_on_and_asks_for_system_audio`,
@@ -2317,6 +2773,10 @@ Checks: `labs_is_one_flat_list_of_toggles_off_by_default`,
 `voice_filter_shows_only_while_its_labs_toggle_is_on`, and
 `an_installed_driver_keeps_the_voice_filter_on` in
 [panes.rs](../../src/rune_ui/tests/panes.rs);
+`app_model_switching_is_a_labs_toggle_on_macos_and_windows`,
+`a_mode_picks_an_installed_speech_model_and_language`, and
+`the_speech_row_needs_the_lab_and_a_capable_os` in
+[speech_model_tests.rs](../../src/rune_ui/speech_model_tests.rs);
 `every_feature_is_off_by_default_and_round_trips` and
 `the_old_master_switch_is_read_and_ignored` in [labs.rs](../../src/labs.rs);
 `a_dev_feature_in_a_stable_build_is_unlisted_refused_and_off` in [labs.rs](../../src/labs.rs) (a stand-in for a Dev feature, since none exists yet); `labs_parse_as_a_read_command` in [main.rs](../../src/main.rs);

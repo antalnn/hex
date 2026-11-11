@@ -1175,9 +1175,9 @@ fn choosing_an_opencode_model_saves_it() {
             .as_deref(),
         Some("anthropic/claude-sonnet-4-5")
     );
-    assert!(!rt.state.models.picker.open);
+    assert!(!rt.state.models.picker.is_open());
     tap(&mut rt, "model-value");
-    assert!(rt.state.models.picker.open && rt.state.models.picker.search.focused);
+    assert!(rt.state.models.picker.is_open() && rt.state.models.picker.search().focused);
     tap(&mut rt, "model-picker-option-0");
     assert_eq!(
         rt.state.settings.dictation_processing.modes[0]
@@ -1204,7 +1204,7 @@ fn a_long_model_list_fits_the_window_and_follows_the_highlight() {
         key(&mut rt, Key::Down, Mods::default());
     }
     settle(&mut rt);
-    assert_eq!(rt.state.models.picker.active.as_deref(), Some("40"));
+    assert_eq!(rt.state.models.picker.active(), Some("40"));
     let [_, row_top, _, row_height] = rt.presented("model-picker-option-40").unwrap().0;
     assert!(
         row_top >= top && row_top + row_height <= top + height,
@@ -1230,7 +1230,7 @@ fn arrow_keys_move_the_search_highlight_and_enter_picks_it() {
             .as_deref(),
         Some("anthropic/claude-sonnet-4-5")
     );
-    assert!(!rt.state.models.picker.open);
+    assert!(!rt.state.models.picker.is_open());
 
     let mut rt = runtime("modes-picker", true, GOLDEN_SIZE);
     tap(&mut rt, "application-search");
@@ -1675,6 +1675,7 @@ fn transcribe_again_shows_only_with_its_lab_and_replace_updates_the_entry() {
     rt.invalidate();
     settle(&mut rt);
     assert!(rt.find("again").is_some());
+    assert!(rt.find("again-play").is_some(), "audio can be played");
     rt.state.history.selected = Some(plain);
     rt.invalidate();
     settle(&mut rt);
@@ -1682,6 +1683,7 @@ fn transcribe_again_shows_only_with_its_lab_and_replace_updates_the_entry() {
         rt.find("again").is_none(),
         "an entry without audio has nothing to transcribe"
     );
+    assert!(rt.find("again-play").is_none());
 
     rt.state.history.selected = Some(id);
     rt.state.history.again = Some(history::Again::finished(
@@ -1729,11 +1731,101 @@ fn transcribe_again_shows_only_with_its_lab_and_replace_updates_the_entry() {
     rt.invalidate();
     settle(&mut rt);
     assert!(rt.find("versions").is_none(), "off, the versions hide");
+    assert!(rt.find("again-play").is_none(), "off, Play hides");
     assert!(
         texts(&rt).iter().any(|text| text == "Parakeet v3"),
         "the model shows either way"
     );
     let _ = std::fs::remove_dir_all(&directory);
+}
+
+#[test]
+fn leaving_an_entry_or_turning_off_keep_recordings_stops_playback() {
+    use crate::history::playback::Playback;
+    let mut rt = runtime("history", true, GOLDEN_SIZE);
+    rt.state.settings.labs.keep_recordings = true;
+    for entry in &mut rt.state.history.entries {
+        if entry.id == 2 {
+            entry.recording_bytes = 32_000;
+        }
+    }
+    let start = |rt: &mut Runtime<Ui>| {
+        rt.state.history.selected = Some(2);
+        rt.state.history.playback = Some(Playback::test_playing(2));
+        rt.invalidate();
+        settle(rt);
+        assert!(
+            rt.state
+                .history
+                .playback
+                .as_ref()
+                .is_some_and(Playback::playing),
+            "the playback starts"
+        );
+        assert_eq!(
+            element(rt, "again-play").label.as_deref(),
+            Some("Stop"),
+            "the card offers Stop while it plays"
+        );
+    };
+    let stopped = |rt: &Runtime<Ui>| {
+        assert!(
+            !rt.state
+                .history
+                .playback
+                .as_ref()
+                .is_some_and(Playback::playing),
+            "the playback stopped"
+        );
+    };
+    let play = |rt: &Runtime<Ui>| {
+        assert_eq!(
+            element(rt, "again-play").label.as_deref(),
+            Some("Play"),
+            "the card offers Play again"
+        );
+    };
+
+    // Leaving for another entry.
+    start(&mut rt);
+    rt.state.history.selected = Some(3);
+    rt.invalidate();
+    settle(&mut rt);
+    stopped(&rt);
+    rt.state.history.selected = Some(2);
+    rt.invalidate();
+    settle(&mut rt);
+    play(&rt);
+
+    // Leaving History.
+    start(&mut rt);
+    rt.state.pane = Pane::General;
+    rt.invalidate();
+    settle(&mut rt);
+    stopped(&rt);
+    rt.state.pane = Pane::History;
+    rt.invalidate();
+    settle(&mut rt);
+    play(&rt);
+
+    // Turning the lab off.
+    start(&mut rt);
+    rt.state.settings.labs.keep_recordings = false;
+    rt.invalidate();
+    settle(&mut rt);
+    stopped(&rt);
+    assert!(rt.find("again-play").is_none(), "off, Play hides");
+
+    rt.state.settings.labs.keep_recordings = true;
+    rt.invalidate();
+    settle(&mut rt);
+    play(&rt);
+
+    // Closing the window: a hidden window only polls when woken, so on_close
+    // stops the playback itself.
+    start(&mut rt);
+    on_close(&mut rt.state, &mut rune::Tx::default());
+    stopped(&rt);
 }
 
 #[test]
@@ -2577,10 +2669,10 @@ fn microphone_value(rt: &mut Runtime<Ui>) -> Option<String> {
 fn the_microphone_field_names_the_input_in_use() {
     let field = microphone_value;
     let mut rt = runtime("mac-settings", true, TALL_SIZE);
-    assert_eq!(field(&mut rt).as_deref(), Some("System default, Kit Pods"));
+    assert_eq!(field(&mut rt).as_deref(), Some("System default, Alex Pods"));
 
     let mut rt = runtime("mac-microphone-missing", true, TALL_SIZE);
-    assert_eq!(field(&mut rt).as_deref(), Some("System default, Kit Pods"));
+    assert_eq!(field(&mut rt).as_deref(), Some("System default, Alex Pods"));
     let texts = texts(&rt);
     assert!(texts.contains(&"not connected".to_owned()), "{texts:?}");
     assert!(texts.contains(&"Shure MV7 isn't connected; using your Mac's input".to_owned()));
@@ -2615,7 +2707,7 @@ fn a_closed_lid_names_the_input_standing_in_for_the_built_in_microphone() {
 
 #[test]
 fn a_passed_over_bluetooth_default_names_the_input_in_use() {
-    let note = "Kit Pods is Bluetooth, so Hex listens to MacBook Pro Microphone";
+    let note = "Alex Pods is Bluetooth, so Hex listens to MacBook Pro Microphone";
     let mut rt = runtime("mac-microphone-bluetooth", true, TALL_SIZE);
     assert_eq!(
         a11y_value(&rt, "microphone-control").as_deref(),
@@ -2627,7 +2719,7 @@ fn a_passed_over_bluetooth_default_names_the_input_in_use() {
     assert!(!rt.state.settings.avoid_bluetooth_microphone);
     // A saved Bluetooth microphone is used as named, without the note.
     rt.state.settings.avoid_bluetooth_microphone = true;
-    rt.state.settings.microphone = Some("Kit Pods".into());
+    rt.state.settings.microphone = Some("Alex Pods".into());
     rt.invalidate();
     settle(&mut rt);
     assert!(!texts(&rt).contains(&note.to_owned()));
@@ -2847,6 +2939,7 @@ fn goldens() {
             "output",
             "modes",
             "modes-picker",
+            "modes-speech",
             "picker-downloading",
         ] {
             check_golden(scene, dark, PANE_SIZE);

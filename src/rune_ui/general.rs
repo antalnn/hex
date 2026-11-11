@@ -29,6 +29,10 @@ use crate::transcription::models as transcription_models;
 mod search;
 mod shortcuts;
 
+/// Labs › More dictation shortcuts (macOS): General's extra shortcut rows.
+#[cfg(target_os = "macos")]
+mod extra_shortcuts;
+
 pub(super) use self::search::{focus_search_key, pane};
 pub(super) use self::shortcuts::shortcut_rows;
 
@@ -81,9 +85,8 @@ pub(super) fn basics(ui: &Ui, p: Paint, layer: &mut Vec<El>, query: &str) -> Vec
         // replaces the selection with the remote model's result.
         #[cfg(target_os = "windows")]
         search::rewrite_rows(&mut keys, ui, p);
-        // Labs › Second dictation shortcut (macOS): another key that
-        // dictates like the one above, such as on an external keyboard.
-        #[cfg(target_os = "macos")]
+        // Labs › Second dictation shortcut: another key that dictates like
+        // the one above, such as on an external keyboard.
         if crate::labs::Feature::SecondDictationShortcut.on(&ui.settings) {
             keys.extend_described(
                 tr("Second dictation shortcut"),
@@ -97,6 +100,15 @@ pub(super) fn basics(ui: &Ui, p: Paint, layer: &mut Vec<El>, query: &str) -> Vec
                     ShortcutTarget::SecondDictation,
                     Some(tr("Dictates like the shortcut above")),
                 ),
+            );
+        }
+        // Labs › More dictation shortcuts (macOS): up to four more keys that
+        // each dictate like the one above, each with its own shortcut mode.
+        #[cfg(target_os = "macos")]
+        if crate::labs::Feature::MoreDictationShortcuts.on(&ui.settings) {
+            rows.extend(
+                tr("Extra dictation shortcut"),
+                extra_shortcuts::rows(ui, p, layer),
             );
         }
         // Labs › Terminal paste shortcut (Windows, Linux): another key that
