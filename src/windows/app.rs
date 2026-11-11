@@ -764,6 +764,9 @@ impl WindowsDesktopHost {
 
 impl Drop for WindowsDesktopHost {
     fn drop(&mut self) {
+        // Stop the server Hex owns before the rest of the shutdown, so its
+        // planned exit is not polled as a failure.
+        self.local_model.stop();
         self.updater.stop();
         if let Some(listener) = self.listener.take() {
             listener.stop_and_join();

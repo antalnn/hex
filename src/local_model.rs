@@ -4,7 +4,9 @@
 //! Hex starts one child (`llama-server`) and owns it: it is started when the
 //! app opens, its health is polled until it answers, and it dies whenever Hex
 //! ends, however it ends: a Windows job object kills it when Hex's process
-//! closes the handle, including on a crash or a force kill. A server already
+//! closes the handle, including on a crash or a force kill. A child that exits
+//! while Hex is running is started again, at most three times in five minutes,
+//! and its stderr is kept in `logs/llama-server.log`. A server already
 //! answering the port is adopted instead of fought, unless Hex recorded its pid
 //! at spawn: that is Hex's own orphan from an earlier run, and it is stopped so
 //! the GPU memory comes back.
@@ -23,6 +25,14 @@ const PROBE_TIMEOUT: Duration = Duration::from_millis(600);
 /// The runtime ticks faster than this; a health probe is not worth one per
 /// tick, so probes are spaced out.
 const PROBE_INTERVAL: Duration = Duration::from_secs(1);
+/// A child that exits while Hex is running is started again after this pause.
+const RESTART_DELAY: Duration = Duration::from_secs(2);
+/// No more than this many restarts in [`RESTART_WINDOW`], so a server that
+/// cannot start does not loop forever.
+const RESTART_LIMIT: u32 = 3;
+const RESTART_WINDOW: Duration = Duration::from_secs(300);
+/// A server that stays ready this long clears the restart count.
+const RESTART_RESET_AFTER: Duration = Duration::from_secs(60);
 
 /// The model this build starts. The file lives in Hex's own support folder, so
 /// uninstalling the app that used to serve it cannot break Hex.
@@ -218,6 +228,13 @@ pub(crate) struct LocalModel {
     detail: Option<String>,
     started_at: Option<Instant>,
     last_probe: Option<Instant>,
+    /// When an exited child may be started again.
+    restart_at: Option<Instant>,
+    /// The first restart inside the current window, and how many followed.
+    restart_window: Option<Instant>,
+    restarts: u32,
+    /// When the server last became ready, so a stable run clears the count.
+    ready_at: Option<Instant>,
 }
 
 impl LocalModel {
@@ -231,6 +248,10 @@ impl LocalModel {
             detail: None,
             started_at: None,
             last_probe: None,
+            restart_at: None,
+            restart_window: None,
+            restarts: 0,
+            ready_at: None,
         }
     }
 
@@ -248,6 +269,8 @@ impl LocalModel {
         if self.child.is_some() || matches!(self.state, State::Ready | State::External) {
             return;
         }
+        self.restart_at = None;
+        self.ready_at = None;
         // A server Hex left behind on a previous run is Hex's own, not one a
         // person started: stop it instead of adopting it.
         self.kill_orphan();
@@ -282,11 +305,25 @@ impl LocalModel {
             }
         };
         let mut command = crate::desktop::background_process::command(&self.config.program);
+        // The server's own log is the only place a startup failure explains
+        // itself; the app's log saw only "exited (exit code: 1)".
+        let log = server_log();
+        let log_path = log.as_ref().map(|(_, path)| path.clone());
+        let (stdout, stderr) = match log {
+            Some((file, _)) => match file.try_clone() {
+                Ok(copy) => (Stdio::from(file), Stdio::from(copy)),
+                Err(error) => {
+                    tracing::warn!(%error, "could not open the local model server's log");
+                    (Stdio::null(), Stdio::null())
+                }
+            },
+            None => (Stdio::null(), Stdio::null()),
+        };
         command
             .args(self.config.argv())
             .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null());
+            .stdout(stdout)
+            .stderr(stderr);
         match command.spawn() {
             Ok(mut child) => {
                 #[cfg(windows)]
@@ -302,6 +339,11 @@ impl LocalModel {
                     model = %self.config.model.display(),
                     port = self.config.port,
                     pid,
+                    log = log_path
+                        .as_ref()
+                        .map(|path| path.display().to_string())
+                        .as_deref()
+                        .unwrap_or("none"),
                     "starting the local model server"
                 );
                 write_pid(pid);
@@ -322,17 +364,24 @@ impl LocalModel {
     /// notices an external server that went away. Cheap enough to call on
     /// every window poll: a ready server costs one local request.
     pub(crate) fn poll(&mut self) {
+        if self.restart_at.is_some_and(|due| Instant::now() >= due) {
+            self.restart_at = None;
+            self.start();
+        }
         match self.state {
             State::Starting => {
                 if self.probe_due() && answering(&self.config) {
                     self.state = State::Ready;
                     self.detail = None;
                     self.started_at = None;
+                    self.ready_at = Some(Instant::now());
                     tracing::info!(port = self.config.port, "the local model server is ready");
                     return;
                 }
                 if let Some(status) = self.child_exit() {
-                    self.fail(format!("llama-server exited during startup ({status})"));
+                    self.restart_after_exit(format!(
+                        "llama-server exited during startup ({status})"
+                    ));
                     return;
                 }
                 if self
@@ -345,7 +394,18 @@ impl LocalModel {
             }
             State::Ready => {
                 if let Some(status) = self.child_exit() {
-                    self.fail(format!("llama-server exited ({status})"));
+                    self.restart_after_exit(format!("llama-server exited ({status})"));
+                    return;
+                }
+                // A run this stable is not a restart loop; a later exit starts
+                // the count over.
+                if self.restarts > 0
+                    && self
+                        .ready_at
+                        .is_some_and(|ready| ready.elapsed() > RESTART_RESET_AFTER)
+                {
+                    self.restarts = 0;
+                    self.restart_window = None;
                 }
             }
             State::External => {
@@ -356,6 +416,38 @@ impl LocalModel {
             }
             State::Stopped | State::Failed | State::Missing => {}
         }
+    }
+
+    /// A child exited while Hex still owns it: start another one after a short
+    /// pause, with a bound so a server that cannot stay up does not loop. The
+    /// stderr log named in the start line holds the child's own reason.
+    fn restart_after_exit(&mut self, detail: String) {
+        self.kill();
+        self.ready_at = None;
+        let now = Instant::now();
+        if self
+            .restart_window
+            .is_none_or(|start| now.duration_since(start) > RESTART_WINDOW)
+        {
+            self.restart_window = Some(now);
+            self.restarts = 0;
+        }
+        self.restarts += 1;
+        if self.restarts > RESTART_LIMIT {
+            self.fail(format!(
+                "{detail}; it keeps exiting, so see logs/llama-server.log"
+            ));
+            return;
+        }
+        tracing::warn!(
+            %detail,
+            attempt = self.restarts,
+            "the local model server exited; restarting it"
+        );
+        self.state = State::Starting;
+        self.detail = Some(detail);
+        self.started_at = None;
+        self.restart_at = Some(now + RESTART_DELAY);
     }
 
     /// Whether a health probe is due now, spacing probes out so a fast
@@ -378,6 +470,10 @@ impl LocalModel {
         self.state = State::Stopped;
         self.detail = None;
         self.started_at = None;
+        self.restart_at = None;
+        self.ready_at = None;
+        self.restarts = 0;
+        self.restart_window = None;
     }
 
     fn fail(&mut self, detail: String) {
@@ -386,6 +482,8 @@ impl LocalModel {
         self.state = State::Failed;
         self.detail = Some(detail);
         self.started_at = None;
+        self.restart_at = None;
+        self.ready_at = None;
     }
 
     /// Nothing tried to start: no llama-server program is installed. The
@@ -397,6 +495,8 @@ impl LocalModel {
         self.state = State::Missing;
         self.detail = Some(detail);
         self.started_at = None;
+        self.restart_at = None;
+        self.ready_at = None;
     }
 
     /// The exit status of a child that has already finished, if it has.
@@ -467,6 +567,22 @@ fn state_path() -> Option<PathBuf> {
     crate::app_paths::support_dir()
         .ok()
         .map(|dir| dir.join("local-model.pid"))
+}
+
+/// Opens `logs/llama-server.log` for the child's own stdout and stderr, with a
+/// start marker so consecutive runs stay apart. `None` leaves the handles
+/// null as before.
+fn server_log() -> Option<(std::fs::File, PathBuf)> {
+    use std::io::Write;
+
+    let path = crate::app_paths::logs_dir().ok()?.join("llama-server.log");
+    let mut file = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&path)
+        .ok()?;
+    let _ = writeln!(file, "\n===== start =====");
+    Some((file, path))
 }
 
 #[cfg(windows)]
@@ -725,6 +841,74 @@ mod tests {
             "{snapshot:?}"
         );
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A child that dies while Hex owns it is started again after the pause,
+    /// not left as a dead server.
+    #[cfg(windows)]
+    #[test]
+    fn an_unexpected_exit_schedules_a_restart() {
+        let dir = temp_dir("restart");
+        let mut model = LocalModel::new(Config {
+            program: dir.join("absent").join(program_name()),
+            model: dir.join("model.gguf"),
+            port: 9,
+            args: Vec::new(),
+        });
+        model.state = State::Ready;
+        let mut child = std::process::Command::new("cmd")
+            .args(["/c", "exit", "1"])
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .expect("a child that exits");
+        let _ = child.wait();
+        model.child = Some(child);
+        model.poll();
+        assert_eq!(model.state, State::Starting);
+        assert_eq!(model.restarts, 1);
+        assert!(model.restart_at.is_some());
+        assert!(
+            model
+                .detail
+                .as_deref()
+                .is_some_and(|detail| detail.contains("exit code: 1")),
+            "{:?}",
+            model.detail
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A planned stop clears the child and never looks like an unexpected exit.
+    #[test]
+    fn a_planned_stop_does_not_schedule_a_restart() {
+        let mut model = LocalModel::new(Config::default());
+        model.state = State::Ready;
+        model.stop();
+        assert_eq!(model.state, State::Stopped);
+        assert!(model.restart_at.is_none());
+        assert!(model.ready_at.is_none());
+    }
+
+    /// A server that cannot stay up is not restarted forever.
+    #[test]
+    fn a_server_that_keeps_exiting_stops_after_three_restarts() {
+        let mut model = LocalModel::new(Config::default());
+        model.state = State::Ready;
+        model.restart_window = Some(Instant::now());
+        model.restarts = RESTART_LIMIT;
+        model.restart_after_exit("llama-server exited (exit code: 1)".into());
+        assert_eq!(model.state, State::Failed);
+        assert!(model.restart_at.is_none());
+        assert!(
+            model
+                .detail
+                .as_deref()
+                .is_some_and(|detail| detail.contains("logs/llama-server.log")),
+            "{:?}",
+            model.detail
+        );
     }
 
     /// The job object is what makes the child die with Hex; closing the handle
