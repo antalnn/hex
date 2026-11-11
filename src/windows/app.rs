@@ -620,6 +620,7 @@ impl WindowsDesktopHost {
                 .unwrap_or_else(|error| error.into_inner()) =
                 crate::dictation::modes::ModeRuntime::from_settings(current);
         }
+        self.sync_local_model_port();
         if previous.ui_language != current.ui_language {
             crate::desktop::i18n::apply(current.ui_language.as_deref());
         }
@@ -694,8 +695,19 @@ impl WindowsDesktopHost {
         }
     }
 
+    /// The cleanup's local model port follows the server's actual one, which
+    /// can differ from the setting when the preferred port was busy.
+    fn sync_local_model_port(&mut self) {
+        let port = self.local_model.port();
+        self.mode_runtime
+            .write()
+            .unwrap_or_else(|error| error.into_inner())
+            .set_llm_port(port);
+    }
+
     pub(crate) fn refresh(&mut self) {
         self.local_model.poll();
+        self.sync_local_model_port();
         self.switch_with_keyboard();
         self.switch_with_app();
         if let Some(result) = self.preparation.poll() {

@@ -1295,7 +1295,7 @@ const TRANSLATIONS: &[(&str, &str)] = &[
     ("For example https://api.example.com/v1", "Например https://api.example.com/v1"),
     ("API key", "Ключ API"),
     ("Left empty when the endpoint takes no key", "Оставьте пустым, если конечной точке ключ не нужен"),
-    ("Remote needs an endpoint that starts with http:// or https:// and a model name", "Удалённому режиму нужна конечная точка, начинающаяся с http:// или https://, и имя модели"),
+    ("Remote needs an https:// endpoint, or http:// on localhost or a private network, plus a model name", "Удалённой модели нужен адрес https:// или http:// на localhost либо в частной сети, а также имя модели"),
     ("Prompts", "Инструкции"),
     ("1 prompt", "1 инструкция"),
     ("{} prompts", "Инструкции: {}"),

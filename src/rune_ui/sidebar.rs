@@ -421,7 +421,7 @@ fn model_line(ui: &Ui, p: Paint) -> Option<El> {
     let snapshot = ui.view.as_ref()?.local_model.as_ref()?;
     let words = format!("Local model · {}", snapshot.state.words());
     let color = match snapshot.state {
-        crate::local_model::State::Ready | crate::local_model::State::External => p.k.c.text_muted,
+        crate::local_model::State::Ready => p.k.c.text_muted,
         crate::local_model::State::Failed => p.danger(),
         _ => p.faint(),
     };

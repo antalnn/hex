@@ -8,6 +8,7 @@
 //! name, and optionally a bearer token.
 
 use super::*;
+use url::{Host, Url};
 
 /// Which endpoint a model call uses.
 #[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
@@ -80,6 +81,15 @@ impl RemoteModel {
         if !(endpoint.starts_with("http://") || endpoint.starts_with("https://")) {
             return Some("the remote endpoint address must start with http:// or https://");
         }
+        if let Ok(url) = Url::parse(endpoint) {
+            if url.scheme() == "http" && !Self::is_local_or_private(&url) {
+                return Some(
+                    "the remote endpoint must use https:// unless it is localhost or a private network address",
+                );
+            }
+        } else {
+            return Some("the remote endpoint address is not a valid URL");
+        }
         if self.model.trim().is_empty() {
             return Some("the remote model name is empty");
         }
@@ -92,6 +102,20 @@ impl RemoteModel {
             return format!("remote · {}", self.endpoint.trim());
         }
         format!("remote · {}", self.model.trim())
+    }
+
+    /// Whether a parsed HTTP URL names this machine or a private network:
+    /// loopback, RFC 1918, link-local, or IPv6 unique-local. A hostname other
+    /// than `localhost` does not qualify; it may resolve anywhere.
+    fn is_local_or_private(url: &Url) -> bool {
+        match url.host() {
+            Some(Host::Domain("localhost")) => true,
+            Some(Host::Ipv4(ip)) => ip.is_loopback() || ip.is_private() || ip.is_link_local(),
+            Some(Host::Ipv6(ip)) => {
+                ip.is_loopback() || ip.is_unique_local() || ip.is_unicast_link_local()
+            }
+            _ => false,
+        }
     }
 }
 
@@ -244,6 +268,32 @@ mod tests {
             Some("the remote model name is empty")
         );
         assert!(remote("https://api.example.com", "m").missing().is_none());
+        assert!(remote("http://127.0.0.1:8000", "m").missing().is_none());
+        assert!(remote("http://localhost:8000", "m").missing().is_none());
+        assert!(
+            remote("http://192.168.1.9:8000/v1", "m")
+                .missing()
+                .is_none()
+        );
+        assert!(remote("http://10.0.0.5", "m").missing().is_none());
+        assert!(remote("http://172.16.0.5", "m").missing().is_none());
+        assert!(remote("http://[::1]:8000", "m").missing().is_none());
+        assert_eq!(
+            remote("http://api.example.com", "m").missing(),
+            Some(
+                "the remote endpoint must use https:// unless it is localhost or a private network address"
+            )
+        );
+        assert_eq!(
+            remote("http://myserver.local:8000", "m").missing(),
+            Some(
+                "the remote endpoint must use https:// unless it is localhost or a private network address"
+            )
+        );
+        assert_eq!(
+            remote("http://", "m").missing(),
+            Some("the remote endpoint address is not a valid URL")
+        );
     }
 
     #[test]

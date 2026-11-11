@@ -71,6 +71,13 @@ impl ModeRuntime {
         }
     }
 
+    /// Changes the local model port the cleanup calls. The host keeps it in
+    /// step with the server's actual port, which can differ from the setting
+    /// when the preferred port was busy.
+    pub(crate) fn set_llm_port(&mut self, port: u16) {
+        self.llm_port = port;
+    }
+
     /// Whether processing looks at the focused page: a mode chosen by
     /// website, an OpenCode rewrite, or a script transformation. Otherwise
     /// the listener never asks the browser for its address, as on macOS.
@@ -401,6 +408,13 @@ mod tests {
         let mut value = AppSettings::default();
         settings(&mut value);
         ModeRuntime::from_settings(&value)
+    }
+
+    #[test]
+    fn the_cleanup_port_can_follow_the_running_server() {
+        let mut runtime = runtime(|settings| settings.llm.port = 9);
+        runtime.set_llm_port(8099);
+        assert_eq!(runtime.llm_port, 8099);
     }
 
     #[test]

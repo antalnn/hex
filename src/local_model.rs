@@ -6,10 +6,10 @@
 //! ends, however it ends: a Windows job object kills it when Hex's process
 //! closes the handle, including on a crash or a force kill. A child that exits
 //! while Hex is running is started again, at most three times in five minutes,
-//! and its stderr is kept in `logs/llama-server.log`. A server already
-//! answering the port is adopted instead of fought, unless Hex recorded its pid
-//! at spawn: that is Hex's own orphan from an earlier run, and it is stopped so
-//! the GPU memory comes back.
+//! and its stderr is kept in `logs/llama-server.log`. A server Hex recorded at
+//! spawn is its own orphan from an earlier run and is stopped so the GPU memory
+//! comes back; any other server on the preferred port is left alone, and Hex
+//! moves its child to a free loopback port.
 
 #[cfg(windows)]
 use std::fs;
@@ -63,15 +63,13 @@ pub(crate) const DEFAULT_ARGS: &[&str] = &[
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
 pub(crate) enum State {
-    /// No server Hex owns, and nothing answers the port.
+    /// No server Hex owns.
     #[default]
     Stopped,
     /// Hex started a child; it has not answered yet.
     Starting,
     /// Hex's own child answers. It is killed when Hex quits.
     Ready,
-    /// A server Hex did not start answers; it is used and left alone.
-    External,
     /// The child could not start, exited, or never answered.
     Failed,
     /// No llama-server program is on this computer, so nothing was started.
@@ -85,7 +83,6 @@ impl State {
             Self::Stopped => "off",
             Self::Starting => "starting",
             Self::Ready => "running",
-            Self::External => "running (external)",
             Self::Failed => "failed",
             Self::Missing => "not installed",
         }
@@ -96,9 +93,13 @@ impl State {
 #[derive(Clone, Debug, Default, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
 pub(crate) struct Snapshot {
     pub(crate) state: State,
-    /// Why it failed, or where an external server came from.
+    /// Why it failed, when it did.
     #[serde(default)]
     pub(crate) detail: Option<String>,
+    /// The loopback port the child listens on. The preferred port while
+    /// stopped; a fallback when the preferred one was busy.
+    #[serde(default)]
+    pub(crate) port: u16,
 }
 
 /// Everything needed to start the server. Hardcoded defaults until the
@@ -183,21 +184,17 @@ fn resolve_program(candidates: &[PathBuf]) -> PathBuf {
 }
 
 impl Config {
-    /// The child's arguments, in order: the model, then the port, then the
-    /// generation flags.
-    pub(crate) fn argv(&self) -> Vec<String> {
+    /// The same arguments with an actual port, which may differ from the
+    /// preferred one when it was busy.
+    pub(crate) fn argv_for(&self, port: u16) -> Vec<String> {
         let mut argv = vec![
             "-m".to_string(),
             self.model.display().to_string(),
             "--port".to_string(),
-            self.port.to_string(),
+            port.to_string(),
         ];
         argv.extend(self.args.iter().cloned());
         argv
-    }
-
-    fn health_url(&self) -> String {
-        format!("http://127.0.0.1:{}/health", self.port)
     }
 
     /// The settings' values, with the built-in defaults filling anything left
@@ -220,6 +217,8 @@ impl Config {
 /// The one server Hex owns, if it owns one.
 pub(crate) struct LocalModel {
     config: Config,
+    /// The loopback port the current child uses. Starts as the preferred one.
+    port: u16,
     child: Option<Child>,
     /// Windows: ends the child when Hex's process ends, even without Drop.
     #[cfg(windows)]
@@ -240,6 +239,7 @@ pub(crate) struct LocalModel {
 impl LocalModel {
     pub(crate) fn new(config: Config) -> Self {
         Self {
+            port: config.port,
             config,
             child: None,
             #[cfg(windows)]
@@ -259,27 +259,23 @@ impl LocalModel {
         Snapshot {
             state: self.state,
             detail: self.detail.clone(),
+            port: self.port,
         }
     }
 
-    /// Starts the child unless a server already answers, or one Hex started is
-    /// still alive. A second start is what the Output button does when the
+    /// Starts the child unless Hex already owns a live one. A busy preferred
+    /// port is left alone; the child moves to a free loopback port. A second
+    /// start is what the Output button does when the
     /// state says off, so it must be safe to call at any time.
     pub(crate) fn start(&mut self) {
-        if self.child.is_some() || matches!(self.state, State::Ready | State::External) {
+        if self.child.is_some() || self.state == State::Ready {
             return;
         }
         self.restart_at = None;
         self.ready_at = None;
         // A server Hex left behind on a previous run is Hex's own, not one a
-        // person started: stop it instead of adopting it.
+        // person started: stop it so the preferred port comes back.
         self.kill_orphan();
-        if answering(&self.config) {
-            self.state = State::External;
-            self.detail = Some(format!("already answering on port {}", self.config.port));
-            self.started_at = None;
-            return;
-        }
         if !self.config.program.is_file() {
             self.missing(format!(
                 "llama-server was not found at {}",
@@ -293,6 +289,15 @@ impl LocalModel {
                 self.config.model.display()
             ));
             return;
+        }
+        let preferred = self.config.port;
+        self.port = choose_port(preferred);
+        if self.port != preferred {
+            tracing::info!(
+                preferred,
+                port = self.port,
+                "the preferred local model port is busy; using another loopback port"
+            );
         }
         // Every child goes into a job that kills it when Hex's process ends,
         // so a crash or a force kill cannot leave it holding GPU memory.
@@ -320,7 +325,7 @@ impl LocalModel {
             None => (Stdio::null(), Stdio::null()),
         };
         command
-            .args(self.config.argv())
+            .args(self.config.argv_for(self.port))
             .stdin(Stdio::null())
             .stdout(stdout)
             .stderr(stderr);
@@ -337,7 +342,8 @@ impl LocalModel {
                 tracing::info!(
                     program = %self.config.program.display(),
                     model = %self.config.model.display(),
-                    port = self.config.port,
+                    port = self.port,
+                    preferred,
                     pid,
                     log = log_path
                         .as_ref()
@@ -360,9 +366,9 @@ impl LocalModel {
         }
     }
 
-    /// Moves a starting server to ready, notices a child that died, and
-    /// notices an external server that went away. Cheap enough to call on
-    /// every window poll: a ready server costs one local request.
+    /// Moves a starting server to ready and notices a child that died. Cheap
+    /// enough to call on every window poll: a ready server costs one local
+    /// request.
     pub(crate) fn poll(&mut self) {
         if self.restart_at.is_some_and(|due| Instant::now() >= due) {
             self.restart_at = None;
@@ -370,12 +376,12 @@ impl LocalModel {
         }
         match self.state {
             State::Starting => {
-                if self.probe_due() && answering(&self.config) {
+                if self.probe_due() && answering(self.port) {
                     self.state = State::Ready;
                     self.detail = None;
                     self.started_at = None;
                     self.ready_at = Some(Instant::now());
-                    tracing::info!(port = self.config.port, "the local model server is ready");
+                    tracing::info!(port = self.port, "the local model server is ready");
                     return;
                 }
                 if let Some(status) = self.child_exit() {
@@ -406,12 +412,6 @@ impl LocalModel {
                 {
                     self.restarts = 0;
                     self.restart_window = None;
-                }
-            }
-            State::External => {
-                if self.probe_due() && !answering(&self.config) {
-                    self.state = State::Stopped;
-                    self.detail = None;
                 }
             }
             State::Stopped | State::Failed | State::Missing => {}
@@ -464,7 +464,7 @@ impl LocalModel {
         true
     }
 
-    /// Stops the child Hex owns. An external server is left running.
+    /// Stops the child Hex owns. Nothing else on the port is touched.
     pub(crate) fn stop(&mut self) {
         self.kill();
         self.state = State::Stopped;
@@ -474,6 +474,13 @@ impl LocalModel {
         self.ready_at = None;
         self.restarts = 0;
         self.restart_window = None;
+        self.port = self.config.port;
+    }
+
+    /// The loopback port the cleanup should call: the one this child uses,
+    /// which is the preferred port until a busy one moves it.
+    pub(crate) fn port(&self) -> u16 {
+        self.port
     }
 
     fn fail(&mut self, detail: String) {
@@ -525,7 +532,8 @@ impl LocalModel {
 
     /// A pid Hex recorded at spawn and left behind means the server answering
     /// the port is Hex's own orphan: stop it so the GPU memory comes back.
-    /// A server Hex never recorded is adopted by [`Self::start`] as before.
+    /// A server Hex never recorded is left alone; [`Self::start`] moves the
+    /// child to a free loopback port instead.
     fn kill_orphan(&mut self) {
         #[cfg(windows)]
         if let Some(path) = state_path() {
@@ -548,8 +556,8 @@ impl LocalModel {
                 "stopping the local model server a previous Hex left behind"
             );
             kill_pid(pid);
-            // Wait for the port to free before the health probe can adopt the
-            // dying server as external.
+            // Wait for the killed orphan to release the port before the next
+            // start chooses it.
             for _ in 0..40 {
                 if !process_alive(pid) {
                     break;
@@ -687,9 +695,9 @@ impl Drop for LocalModel {
 /// Whether a llama server answers this config's port. The body is checked too,
 /// so a different program squatting on the port is not mistaken for the model
 /// server: llama.cpp's `/health` reports `{"status":"ok"}`.
-fn answering(config: &Config) -> bool {
+fn answering(port: u16) -> bool {
     let agent = crate::net::loopback_agent(|settings| settings.timeout_global(Some(PROBE_TIMEOUT)));
-    let Ok(mut response) = agent.get(&config.health_url()).call() else {
+    let Ok(mut response) = agent.get(&health_url(port)).call() else {
         return false;
     };
     if !response.status().is_success() {
@@ -702,6 +710,29 @@ fn answering(config: &Config) -> bool {
         .read_to_vec()
         .unwrap_or_default();
     String::from_utf8_lossy(&body).contains("ok")
+}
+
+fn health_url(port: u16) -> String {
+    format!("http://127.0.0.1:{port}/health")
+}
+
+/// The preferred port when it is free, otherwise a port the OS assigns on
+/// loopback. The bind is dropped before the child starts; a foreign process
+/// winning the race shows up as a startup exit and the supervisor tries again.
+fn choose_port(preferred: u16) -> u16 {
+    if port_is_free(preferred) {
+        return preferred;
+    }
+    free_loopback_port().unwrap_or(preferred)
+}
+
+fn port_is_free(port: u16) -> bool {
+    std::net::TcpListener::bind(("127.0.0.1", port)).is_ok()
+}
+
+fn free_loopback_port() -> Option<u16> {
+    let listener = std::net::TcpListener::bind(("127.0.0.1", 0)).ok()?;
+    listener.local_addr().ok().map(|address| address.port())
 }
 
 #[cfg(test)]
@@ -718,14 +749,35 @@ mod tests {
     #[test]
     fn the_arguments_carry_the_model_and_the_port() {
         let config = Config::default();
-        let argv = config.argv();
+        let argv = config.argv_for(config.port);
         assert_eq!(argv[0], "-m");
         assert_eq!(argv[1], config.model.display().to_string());
         assert_eq!(argv[2], "--port");
         assert_eq!(argv[3], "8081");
         assert!(argv.iter().any(|arg| arg == "-ngl"));
         assert!(argv.iter().any(|arg| arg == "--jinja"));
-        assert!(config.health_url().ends_with(":8081/health"));
+        assert!(health_url(config.port).ends_with(":8081/health"));
+
+        let fallback = config.argv_for(8082);
+        assert_eq!(fallback[2], "--port");
+        assert_eq!(fallback[3], "8082");
+    }
+
+    #[test]
+    fn a_free_preferred_port_is_kept() {
+        let listener = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let free = listener.local_addr().unwrap().port();
+        drop(listener);
+        assert_eq!(choose_port(free), free);
+    }
+
+    #[test]
+    fn a_busy_preferred_port_falls_back_to_a_free_one() {
+        let listener = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let busy = listener.local_addr().unwrap().port();
+        let chosen = choose_port(busy);
+        assert_ne!(chosen, busy);
+        assert!(port_is_free(chosen), "the fallback port is free");
     }
 
     #[test]
@@ -742,7 +794,7 @@ mod tests {
             port: 9,
             ..Config::default()
         };
-        assert!(!answering(&config));
+        assert!(!answering(config.port));
     }
 
     #[test]
@@ -933,8 +985,8 @@ mod tests {
     }
 
     /// A pid Hex recorded at spawn and never cleared is killed at the next
-    /// start, before the health probe can adopt it as external. Hex never
-    /// kills a pid that is its own, and clears the record either way.
+    /// start, before the next start chooses a port. Hex never kills a pid that
+    /// is its own, and clears the record either way.
     #[cfg(windows)]
     #[test]
     fn a_recorded_pid_from_a_previous_run_is_stopped() {

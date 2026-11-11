@@ -7,7 +7,6 @@ pub enum State {
     Stopped,
     Starting,
     Ready,
-    External,
     Failed,
     Missing,
 }
@@ -15,4 +14,6 @@ pub enum State {
 #[derive(Clone, Debug, Default, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Snapshot {
     pub state: State,
+    #[serde(default)]
+    pub port: u16,
 }

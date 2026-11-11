@@ -327,7 +327,7 @@ fn setup_summary(ui: &Ui) -> String {
                     .as_ref()
                     .and_then(|view| view.local_model.as_ref())
                     .map(|snapshot| snapshot.state),
-                Some(crate::local_model::State::Ready | crate::local_model::State::External)
+                Some(crate::local_model::State::Ready)
             );
             if running {
                 tr_fill("Local · {} · server running", &seconds)
@@ -416,7 +416,7 @@ pub(super) fn setup_modal(ui: &Ui, p: Paint) -> Option<[El; 2]> {
             p,
             "local-model-state",
             &state,
-            Some((format!("127.0.0.1:{}", ui.settings.llm.port), p.muted())),
+            Some((format!("127.0.0.1:{}", local_model_port(ui)), p.muted())),
             local_model_control(p, start),
         ));
         rows.push(described_row(
@@ -453,7 +453,7 @@ pub(super) fn setup_modal(ui: &Ui, p: Paint) -> Option<[El; 2]> {
         if ui.settings.dictation_rewrite.missing().is_some() {
             rows.push(note(
                 "dictation-incomplete",
-                tr("Remote needs an endpoint that starts with http:// or https:// and a model name"),
+                tr("Remote needs an https:// endpoint, or http:// on localhost or a private network, plus a model name"),
                 p.warning(),
             ));
         }
@@ -592,12 +592,21 @@ fn local_model_control(p: Paint, start: bool) -> El {
 /// The llama.cpp server Hex owns: what it serves and its files. Start/Stop
 /// and the auto-start switch sit with the Local choice in the AI cleanup card
 
+/// The port the setup window shows: the running server's actual port, or the
+/// preferred one while it is off.
+fn local_model_port(ui: &Ui) -> u16 {
+    ui.view
+        .as_ref()
+        .and_then(|view| view.local_model.as_ref())
+        .map(|snapshot| snapshot.port)
+        .filter(|port| *port != 0)
+        .unwrap_or(ui.settings.llm.port)
+}
+
 /// The card's title and whether it offers Start, for each server state.
 fn local_model_copy(state: Option<crate::local_model::State>) -> (&'static str, bool) {
     match state {
-        Some(crate::local_model::State::Ready) | Some(crate::local_model::State::External) => {
-            (tr("Local model server running"), false)
-        }
+        Some(crate::local_model::State::Ready) => (tr("Local model server running"), false),
         Some(crate::local_model::State::Starting) => (tr("Local model server starting"), false),
         Some(crate::local_model::State::Failed) => (tr("Local model server failed"), true),
         Some(crate::local_model::State::Missing) => (
@@ -632,7 +641,7 @@ fn rewrite_card(ui: &Ui, p: Paint) -> El {
     if ui.settings.rewrite.remote.missing().is_some() {
         rows.push(note(
             "rewrite-incomplete",
-            tr("Remote needs an endpoint that starts with http:// or https:// and a model name"),
+            tr("Remote needs an https:// endpoint, or http:// on localhost or a private network, plus a model name"),
             p.warning(),
         ));
     }
