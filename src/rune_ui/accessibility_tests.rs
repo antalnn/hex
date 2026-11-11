@@ -396,6 +396,7 @@ fn ai_cleanup_reads_its_switch_prompt_and_setup() {
         "the prompt opens its own sheet"
     );
     assert!(rt.find("ai-cleanup-setup").is_some());
+    assert_eq!(name(&node(&rt, "ai-cleanup-setup")), "Configuration");
 
     assert!(rt.accessibility_action("open-cleanup-setup", Action::Click, None));
     settle(&mut rt);
@@ -412,9 +413,9 @@ fn ai_cleanup_reads_its_switch_prompt_and_setup() {
     settle(&mut rt);
     let warning = node(&rt, "ai-cleanup-model-limit");
     assert!(
-        warning["children"][0]["name"].as_str().is_some_and(
-            |name| name.contains("How well this works depends on how large the local model")
-        ),
+        warning["children"][0]["name"]
+            .as_str()
+            .is_some_and(|name| name.contains("Results depend on how capable the model you use is")),
         "{warning}"
     );
     assert!(rt.accessibility_action("close-ai-cleanup-prompt", Action::Click, None));
@@ -756,5 +757,105 @@ fn settings_reopened_sends_its_whole_tree_to_the_new_adapter() {
             .iter()
             .any(|(_, node)| node.author_id() == Some("microphone-control")),
         "the reopened window shows Settings"
+    );
+}
+
+/// A held minus or plus steps again and again until it is released, a click
+/// steps exactly once, and both stop at the ends of the range.
+#[test]
+fn holding_a_limit_button_repeats_until_release() {
+    let mut rt = runtime("portal");
+    open_models(&mut rt);
+    assert!(rt.accessibility_action("open-cleanup-setup", Action::Click, None));
+    settle(&mut rt);
+    let (x, y) = rt.find("ai-cleanup-limit-up").expect("the plus button");
+
+    rt.pointer_move(x, y);
+    rt.pointer_down(x, y);
+    rt.pointer_up(x, y);
+    rt.frame(1.0 / 60.0);
+    assert_eq!(
+        rt.state.settings.ai_cleanup.deadline_seconds, 21,
+        "a click steps once"
+    );
+
+    rt.pointer_down(x, y);
+    rt.frame(1.0 / 60.0);
+    assert_eq!(
+        rt.state.settings.ai_cleanup.deadline_seconds, 22,
+        "the press steps at once"
+    );
+    for _ in 0..40 {
+        rt.frame(1.0 / 60.0);
+    }
+    let held = rt.state.settings.ai_cleanup.deadline_seconds;
+    assert!(held > 22, "the hold repeats: {held}");
+    rt.pointer_up(x, y);
+    rt.frame(1.0 / 60.0);
+    rt.frame(1.0 / 60.0);
+    assert_eq!(
+        rt.state.settings.ai_cleanup.deadline_seconds, held,
+        "the release adds no step"
+    );
+
+    rt.state.settings.ai_cleanup.deadline_seconds = 3599;
+    rt.pointer_down(x, y);
+    for _ in 0..90 {
+        rt.frame(1.0 / 60.0);
+    }
+    rt.pointer_up(x, y);
+    rt.frame(1.0 / 60.0);
+    assert_eq!(
+        rt.state.settings.ai_cleanup.deadline_seconds, 3600,
+        "the hold stops at an hour"
+    );
+
+    let (x, y) = rt.find("ai-cleanup-limit-down").expect("the minus button");
+    rt.state.settings.ai_cleanup.deadline_seconds = 2;
+    rt.pointer_down(x, y);
+    for _ in 0..30 {
+        rt.frame(1.0 / 60.0);
+    }
+    rt.pointer_up(x, y);
+    rt.frame(1.0 / 60.0);
+    assert_eq!(
+        rt.state.settings.ai_cleanup.deadline_seconds, 1,
+        "the hold stops at one second"
+    );
+}
+
+/// Local model files opens from the setup window, draws above it, and leaves
+/// the setup window open when it closes.
+#[test]
+fn the_local_model_files_sheet_draws_above_the_setup_window() {
+    let mut rt = runtime("portal");
+    open_models(&mut rt);
+    assert!(rt.accessibility_action("open-cleanup-setup", Action::Click, None));
+    settle(&mut rt);
+    assert!(rt.accessibility_action("local-model-files-control", Action::Click, None));
+    settle(&mut rt);
+    let index = |key: &str| {
+        rt.elements()
+            .iter()
+            .position(|element| element.key.as_deref() == Some(key))
+            .unwrap_or_else(|| panic!("no {key} in the drawn window"))
+    };
+    assert!(
+        rt.presented("cleanup-setup").is_some(),
+        "the setup window is not drawn under the files sheet"
+    );
+    assert!(
+        rt.presented("local-models").is_some(),
+        "the files sheet is not drawn"
+    );
+    assert!(
+        index("local-models") > index("cleanup-setup"),
+        "the files sheet is not above the setup window"
+    );
+    assert!(rt.accessibility_action("close-local-models", Action::Click, None));
+    settle(&mut rt);
+    assert!(
+        rt.find("cleanup-setup").is_some(),
+        "closing the files sheet left the setup window open"
     );
 }

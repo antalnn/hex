@@ -13,7 +13,9 @@
 //! The Rewrite prompts sheet holds Rewrite selection's snippets and its default
 //! prompt, edited like the Vocabulary sheet and saved when typing pauses.
 
-use rune::{El, TextEdit, col, row, text};
+use std::time::Duration;
+
+use rune::{El, Phase, TextEdit, Tx, col, row, text};
 use rune_kit::{ControlSize, TextArea, TextInput};
 
 use super::controls::{
@@ -84,7 +86,21 @@ pub(super) struct ModelSources {
     /// side's details.
     pub(super) setup_open: bool,
     pub(super) cleanup_open: bool,
+    /// The time limit's button while the pointer holds it, so the click that
+    /// ends the press does not step the limit a second time.
+    limit_hold: Option<LimitHold>,
 }
+
+/// A held minus or plus: which way it steps.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct LimitHold {
+    dir: i64,
+}
+
+/// How long a held stepper waits before its first repeat, and how often it
+/// repeats after that. AppKit's steppers start slowly and then run.
+const LIMIT_HOLD_DELAY: Duration = Duration::from_millis(400);
+const LIMIT_HOLD_EVERY: Duration = Duration::from_millis(60);
 
 impl ModelSources {
     pub(super) fn new(settings: &AppSettings) -> Self {
@@ -283,7 +299,7 @@ fn ai_cleanup_card(ui: &Ui, p: Paint) -> El {
         rows.push(described_row(
             p,
             "ai-cleanup-setup",
-            tr("Cleanup setup"),
+            tr("Configuration"),
             Some((setup_summary(ui), p.muted())),
             button(
                 p,
@@ -363,26 +379,14 @@ pub(super) fn setup_modal(ui: &Ui, p: Paint) -> Option<[El; 2]> {
         .key("ai-cleanup-limit-stepper")
         .gap(6.0)
         .center_y()
-        .child(button(
-            p,
-            "ai-cleanup-limit-down",
-            "-",
-            ButtonKind::Secondary,
-            |ui: &mut Ui, _| change_cleanup_limit(ui, -1),
-        ))
+        .child(step_button(p, "ai-cleanup-limit-down", "-", -1))
         .child(
             text(limit.to_string())
                 .key("value")
                 .font(p.k.ty.ui_medium)
                 .color(p.text()),
         )
-        .child(button(
-            p,
-            "ai-cleanup-limit-up",
-            "+",
-            ButtonKind::Secondary,
-            |ui: &mut Ui, _| change_cleanup_limit(ui, 1),
-        ));
+        .child(step_button(p, "ai-cleanup-limit-up", "+", 1));
     let mut rows = vec![
         source_row(p, "ai-cleanup", source, set_dictation_source),
         setting_row(
@@ -513,6 +517,51 @@ fn change_cleanup_limit(ui: &mut Ui, delta: i64) {
         let next = settings.ai_cleanup.deadline_seconds as i64 + delta;
         settings.ai_cleanup.deadline_seconds = next.clamp(1, 3600) as u64;
     });
+}
+
+/// A minus or plus that steps once on press and then repeats while held. The
+/// first step happens on the press itself, so a click needs no release; the
+/// release click is swallowed because the press already stepped.
+fn step_button(p: Paint, key: &str, label: &str, dir: i64) -> El {
+    button(
+        p,
+        key,
+        label,
+        ButtonKind::Secondary,
+        move |ui: &mut Ui, _| finish_limit_press(ui, dir),
+    )
+    .on_drag(
+        move |ui: &mut Ui, drag: &mut rune::Drag, tx: &mut Tx| match drag.phase {
+            Phase::Down => {
+                ui.model_sources.limit_hold = Some(LimitHold { dir });
+                change_cleanup_limit(ui, dir);
+                tx.drag_repeat_after(LIMIT_HOLD_DELAY);
+            }
+            Phase::Move if tx.drag_repeat() => {
+                if ui.model_sources.limit_hold == Some(LimitHold { dir }) {
+                    change_cleanup_limit(ui, dir);
+                    tx.drag_repeat_after(LIMIT_HOLD_EVERY);
+                }
+            }
+            Phase::Move => {}
+            // A release outside the button gets no click, so it must not leave a
+            // hold that would swallow the next keyboard press.
+            Phase::Up => {
+                let inside = (0.0..=drag.w).contains(&drag.x) && (0.0..=drag.h).contains(&drag.y);
+                if !inside {
+                    ui.model_sources.limit_hold = None;
+                }
+            }
+        },
+    )
+}
+
+/// The click that ends a pointer press: the press's own step already happened,
+/// so only a keyboard activation steps here.
+fn finish_limit_press(ui: &mut Ui, dir: i64) {
+    if ui.model_sources.limit_hold.take() != Some(LimitHold { dir }) {
+        change_cleanup_limit(ui, dir);
+    }
 }
 
 /// The llama.cpp server's Start or Stop, sent to the host that owns it.
@@ -922,7 +971,7 @@ pub(super) fn cleanup_modal(ui: &Ui, p: Paint) -> Option<[El; 2]> {
         .child(heading)
         .child(note(
             "ai-cleanup-model-limit",
-            tr("How well this works depends on how large the local model you installed is."),
+            tr("Results depend on how capable the model you use is."),
             p.warning(),
         ))
         .child(prompt)

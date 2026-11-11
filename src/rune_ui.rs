@@ -1534,9 +1534,6 @@ fn view(ui: &Ui, cx: &mut Cx<Ui>) -> El {
     if let Some(modal) = shortcut::guard::modal(ui, p) {
         layer.extend(modal);
     }
-    if let Some(modal) = local_models::modal(ui, p) {
-        layer.extend(modal);
-    }
     if let Some(modal) = ai_models::prompts_modal(ui, p) {
         layer.extend(modal);
     }
@@ -1544,6 +1541,11 @@ fn view(ui: &Ui, cx: &mut Cx<Ui>) -> El {
         layer.extend(modal);
     }
     if let Some(modal) = ai_models::setup_modal(ui, p) {
+        layer.extend(modal);
+    }
+    // The local model files sheet opens from the setup window and draws above
+    // it, leaving the setup window open underneath.
+    if let Some(modal) = local_models::modal(ui, p) {
         layer.extend(modal);
     }
     if let Some(first_run) = onboarding_kit::live::overlay(ui, p, cx.is_reduced_motion()) {
