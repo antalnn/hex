@@ -647,8 +647,7 @@ impl HistoryStore {
         }
         let temporary = self.path.with_extension("json.tmp");
         {
-            let mut file = fs::File::create(&temporary)?;
-            restrict_to_owner(&file)?;
+            let mut file = crate::durable::create_private(&temporary)?;
             file.write_all(&json)?;
             file.sync_all()?;
         }
@@ -802,17 +801,6 @@ pub use crate::desktop::events::now_ms;
 
 fn truncated(text: &str, max_bytes: usize) -> String {
     text[..text.floor_char_boundary(max_bytes)].to_string()
-}
-
-#[cfg(unix)]
-fn restrict_to_owner(file: &fs::File) -> io::Result<()> {
-    use std::os::unix::fs::PermissionsExt;
-    file.set_permissions(fs::Permissions::from_mode(0o600))
-}
-
-#[cfg(not(unix))]
-fn restrict_to_owner(_file: &fs::File) -> io::Result<()> {
-    Ok(())
 }
 
 #[cfg(test)]

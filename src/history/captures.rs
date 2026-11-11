@@ -343,8 +343,7 @@ fn create_owner_folder(folder: &Path) -> io::Result<()> {
 }
 
 fn write_owner_file(path: &Path, bytes: &[u8]) -> io::Result<()> {
-    let mut file = fs::File::create(path)?;
-    super::restrict_to_owner(&file)?;
+    let mut file = crate::durable::create_private(path)?;
     file.write_all(bytes)?;
     file.sync_all()
 }

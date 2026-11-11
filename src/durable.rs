@@ -28,6 +28,8 @@ pub(crate) fn sync_directory(directory: &Path) -> io::Result<()> {
 /// the complete new one. The staging file is unique to this write, so
 /// concurrent writers never share one. A symlinked `path` (settings kept in
 /// a dotfiles repository) stays a symlink: its final target is replaced.
+/// The file is owner-only on Unix: what this writes includes the remote
+/// endpoint's API key, and a plain create would leave it at the umask's 0644.
 pub(crate) fn write(path: &Path, contents: &[u8]) -> io::Result<()> {
     let path = &symlink_target(path)?;
     let parent = path
@@ -36,7 +38,7 @@ pub(crate) fn write(path: &Path, contents: &[u8]) -> io::Result<()> {
         .unwrap_or(Path::new("."));
     let staging = staging_path(path);
     let written = (|| {
-        let mut file = fs::File::create(&staging)?;
+        let mut file = create_private(&staging)?;
         file.write_all(contents)?;
         file.sync_all()
     })();
@@ -45,6 +47,29 @@ pub(crate) fn write(path: &Path, contents: &[u8]) -> io::Result<()> {
         return Err(error);
     }
     sync_directory(parent)
+}
+
+/// Creates `path` for writing, truncating what was there, owner-only on Unix
+/// from the first byte: a plain create is 0644 under the usual umask, and
+/// these files carry an API key, a transcript, or a recording. A staging
+/// file a crash left behind keeps its old mode, and `create` cannot change
+/// it, so the open handle is tightened too. Best-effort, as
+/// `app_paths::tighten` is: a filesystem without Unix modes refuses the
+/// call, and the write still has to happen.
+pub(crate) fn create_private(path: &Path) -> io::Result<fs::File> {
+    let mut options = OpenOptions::new();
+    options.write(true).create(true).truncate(true);
+    #[cfg(unix)]
+    std::os::unix::fs::OpenOptionsExt::mode(&mut options, 0o600);
+    let file = options.open(path)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        if let Err(error) = file.set_permissions(fs::Permissions::from_mode(0o600)) {
+            tracing::warn!(path = %path.display(), %error, "could not make this file private");
+        }
+    }
+    Ok(file)
 }
 
 /// Follows `path`'s symlinks to the file they finally name, which need not
@@ -135,6 +160,21 @@ mod tests {
             1,
             "no staging file remains"
         );
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_write_leaves_the_file_owner_only() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let directory =
+            std::env::temp_dir().join(format!("hex-durable-mode-{}", std::process::id()));
+        fs::create_dir_all(&directory).unwrap();
+        let path = directory.join("settings.json");
+        write(&path, b"{\"api_key\":\"secret\"}").unwrap();
+        let mode = fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600, "settings must be owner-only, not {mode:o}");
         fs::remove_dir_all(directory).unwrap();
     }
 

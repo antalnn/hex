@@ -71,8 +71,7 @@ pub(super) fn write(directory: &Path, id: u64, recording: &Recording) -> io::Res
     let target = path(directory, id);
     let temporary = target.with_extension("wav.tmp");
     let written = (|| {
-        let file = fs::File::create(&temporary)?;
-        super::restrict_to_owner(&file)?;
+        let file = crate::durable::create_private(&temporary)?;
         let spec = WavSpec {
             channels: 1,
             sample_rate: SAMPLE_RATE,
