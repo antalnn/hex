@@ -308,6 +308,10 @@ pub struct DictationProcessing {
 pub struct LlmSettings {
     pub enabled: bool,
     pub port: u16,
+    /// The llama-server executable, when one was chosen.
+    pub program: Option<std::path::PathBuf>,
+    /// The GGUF the server loads, when one was chosen.
+    pub model: Option<std::path::PathBuf>,
 }
 
 impl Default for LlmSettings {
@@ -315,6 +319,8 @@ impl Default for LlmSettings {
         Self {
             enabled: true,
             port: 8081,
+            program: None,
+            model: None,
         }
     }
 }

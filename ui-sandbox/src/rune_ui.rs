@@ -115,6 +115,7 @@ pub(crate) struct ServiceView {
 pub(crate) struct Ui {
     pub(crate) settings: AppSettings,
     pub(crate) model_sources: ai_models::ModelSources,
+    pub(crate) local_models: local_models::LocalModels,
     service: Service,
     pub(crate) window: Option<rune::AppHandle<Ui>>,
     pub(crate) view: Option<ServiceView>,
@@ -155,6 +156,7 @@ impl Ui {
         Self {
             settings,
             model_sources,
+            local_models: local_models::LocalModels::default(),
             service,
             window: None,
             view: None,
@@ -271,13 +273,18 @@ pub(crate) fn view(ui: &Ui, cx: &mut Cx<Ui>) -> El {
         Pane::Models => {
             let (mut extra, body) = ai_models::pane(ui, p, &mut layer);
             layer.append(&mut extra);
+            if let Some(modal) = ai_models::prompts_modal(ui, p) {
+                layer.extend(modal);
+            }
             if let Some(modal) = ai_models::cleanup_modal(ui, p) {
                 layer.extend(modal);
             }
             if let Some(modal) = ai_models::setup_modal(ui, p) {
                 layer.extend(modal);
             }
-            if let Some(modal) = ai_models::prompts_modal(ui, p) {
+            // The local model files sheet opens from the setup window and
+            // draws above it, leaving it open underneath.
+            if let Some(modal) = local_models::modal(ui, p) {
                 layer.extend(modal);
             }
             body

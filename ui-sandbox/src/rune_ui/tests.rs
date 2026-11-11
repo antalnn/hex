@@ -162,12 +162,13 @@ fn models_pane_snapshots() {
     };
     let size = (980.0, 1500.0);
     let scale = 2.0;
-    for (label, prompt_open, setup_open, remote, enabled) in [
-        ("ai-cleanup", false, false, false, true),
-        ("ai-cleanup-off", false, false, false, false),
-        ("ai-cleanup-prompt", true, false, false, true),
-        ("ai-cleanup-setup", false, true, false, true),
-        ("ai-cleanup-setup-remote", false, true, true, true),
+    for (label, prompt_open, setup_open, files_open, remote, enabled) in [
+        ("ai-cleanup", false, false, false, false, true),
+        ("ai-cleanup-off", false, false, false, false, false),
+        ("ai-cleanup-prompt", true, false, false, false, true),
+        ("ai-cleanup-setup", false, true, false, false, true),
+        ("ai-cleanup-setup-remote", false, true, false, true, true),
+        ("ai-cleanup-setup-files", false, true, true, false, true),
     ] {
         for dark in [false, true] {
             let mut settings = AppSettings::default();
@@ -192,6 +193,7 @@ fn models_pane_snapshots() {
             rt.state.pane = Pane::Models;
             rt.state.model_sources.cleanup_open = prompt_open;
             rt.state.model_sources.setup_open = setup_open;
+            rt.state.local_models.open = files_open;
             let width = (size.0 * scale) as u32;
             let height = (size.1 * scale) as u32;
             let pixels = crate::rune_ui::offscreen::draw(&gpu, &mut rt, width, height);
@@ -239,4 +241,106 @@ fn general_pane_snapshots() {
         rune::render::write_png(&path, width, height, &pixels).unwrap();
         println!("wrote {}", path.display());
     }
+}
+
+/// A held minus or plus steps again and again until it is released, a click
+/// steps exactly once, and both stop at the ends of the range.
+#[test]
+fn holding_a_limit_button_repeats_until_release() {
+    let mut rt = runtime();
+    rt.state.pane = Pane::Models;
+    rt.state.model_sources.setup_open = true;
+    rt.settle_all();
+    rt.frame(0.0);
+    let (x, y) = rt.find("ai-cleanup-limit-up").expect("the plus button");
+
+    rt.pointer_move(x, y);
+    rt.pointer_down(x, y);
+    rt.pointer_up(x, y);
+    rt.frame(1.0 / 60.0);
+    assert_eq!(
+        rt.state.settings.ai_cleanup.deadline_seconds, 21,
+        "a click steps once"
+    );
+
+    rt.pointer_down(x, y);
+    rt.frame(1.0 / 60.0);
+    assert_eq!(
+        rt.state.settings.ai_cleanup.deadline_seconds, 22,
+        "the press steps at once"
+    );
+    for _ in 0..40 {
+        rt.frame(1.0 / 60.0);
+    }
+    let held = rt.state.settings.ai_cleanup.deadline_seconds;
+    assert!(held > 22, "the hold repeats: {held}");
+    rt.pointer_up(x, y);
+    rt.frame(1.0 / 60.0);
+    rt.frame(1.0 / 60.0);
+    assert_eq!(
+        rt.state.settings.ai_cleanup.deadline_seconds, held,
+        "the release adds no step"
+    );
+
+    rt.state.settings.ai_cleanup.deadline_seconds = 3599;
+    rt.pointer_down(x, y);
+    for _ in 0..90 {
+        rt.frame(1.0 / 60.0);
+    }
+    rt.pointer_up(x, y);
+    rt.frame(1.0 / 60.0);
+    assert_eq!(
+        rt.state.settings.ai_cleanup.deadline_seconds, 3600,
+        "the hold stops at an hour"
+    );
+
+    let (x, y) = rt.find("ai-cleanup-limit-down").expect("the minus button");
+    rt.state.settings.ai_cleanup.deadline_seconds = 2;
+    rt.pointer_down(x, y);
+    for _ in 0..30 {
+        rt.frame(1.0 / 60.0);
+    }
+    rt.pointer_up(x, y);
+    rt.frame(1.0 / 60.0);
+    assert_eq!(
+        rt.state.settings.ai_cleanup.deadline_seconds, 1,
+        "the hold stops at one second"
+    );
+}
+
+/// The local model files sheet opens from the setup window and draws above it,
+/// with the setup window still there underneath.
+#[test]
+fn the_local_model_files_sheet_draws_above_the_setup_window() {
+    let mut rt = runtime();
+    rt.state.pane = Pane::Models;
+    rt.state.model_sources.setup_open = true;
+    rt.state.local_models.open = true;
+    rt.settle_all();
+    rt.frame(0.0);
+    let index = |key: &str| {
+        rt.elements()
+            .iter()
+            .position(|element| element.key.as_deref() == Some(key))
+            .unwrap_or_else(|| panic!("no {key} in the drawn window"))
+    };
+    assert!(
+        rt.presented("cleanup-setup").is_some(),
+        "the setup window is not drawn under the files sheet"
+    );
+    assert!(
+        rt.presented("local-models").is_some(),
+        "the files sheet is not drawn"
+    );
+    assert!(
+        index("local-models") > index("cleanup-setup"),
+        "the files sheet is not above the setup window"
+    );
+    super::local_models::close(&mut rt.state);
+    rt.settle_all();
+    rt.frame(0.0);
+    assert!(
+        rt.find("cleanup-setup").is_some(),
+        "closing the files sheet left the setup window open"
+    );
 }

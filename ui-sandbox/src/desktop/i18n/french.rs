@@ -17,7 +17,7 @@ pub(super) fn table() -> &'static HashMap<&'static str, &'static str> {
 const TRANSLATIONS: &[(&str, &str)] = &[
     ("AI cleanup prompt", "Invite de nettoyage IA"),
     ("Describe how AI cleanup should fix the dictation…", "Décrivez comment le nettoyage IA doit corriger la dictée…"),
-    ("How well this works depends on how large the local model you installed is.", "How well this works depends on how large the local model you installed is."),
+    ("Results depend on how capable the model you use is.", "Results depend on how capable the model you use is."),
     ("Fix grammar, punctuation and paragraphs with a model", "Corriger la grammaire, la ponctuation et les paragraphes avec un modèle"),
     ("Off: each dictation is pasted as transcribed, with no model step.", "Désactivé : chaque dictée est collée telle que transcrite, sans étape de modèle."),
     ("Prompt", "Invite"),
@@ -617,7 +617,7 @@ const TRANSLATIONS: &[(&str, &str)] = &[
     ("Clean up time limit", "Clean up time limit"),
     ("AI cleanup setup", "AI cleanup setup"),
     ("Where cleanup runs and how long it may wait.", "Where cleanup runs and how long it may wait."),
-    ("Cleanup setup", "Cleanup setup"),
+    ("Configuration", "Configuration"),
     ("{} seconds", "{} seconds"),
     ("Local · {} · server running", "Local · {} · server running"),
     ("Local · {} · server off", "Local · {} · server off"),
