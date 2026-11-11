@@ -1,24 +1,17 @@
 # Hex (personal fork)
 
-Fork of Hex (local voice dictation for Mac, Windows and Linux) that brings new
-features, more customizations, and improves the set up and configuration
-experience.
-
-This repository is `antalnn/hex`, a personal fork of
+This repository is a fork of
 [anomalyco/hex](https://github.com/anomalyco/hex). It tracks the latest
 upstream `dev` and `main` updates and takes the upstream features that merge
-cleanly, so it stays current while the fork work adds quality-of-life changes.
-The core transcription, models, meetings and dictation pipeline are the
-upstream app. Fork work lives on `personal`; `dev` is a clean mirror of
-`upstream/dev` and is reset, never merged into. Every change below is
-optional, and none is required to dictate.
+cleanly, so it stays up-to-date with the official release while the fork contains
+quality-of-life changes. The core transcription, models, meetings and dictation pipeline are the
+upstream app.
 
 ## Contents
 
 - [Added features](#added-features)
-  - [Configuration and setup](#configuration-and-setup)
   - [AI cleanup, local and remote](#ai-cleanup-local-and-remote)
-  - [Transformations: order and switches](#transformations-order-and-switches)
+  - [Output transformations](#output-transformations)
   - [Rewrite selection](#rewrite-selection)
   - [Application exclusion](#application-exclusion)
   - [Paste where the dictation started](#paste-where-the-dictation-started)
@@ -30,106 +23,78 @@ optional, and none is required to dictate.
 
 ## Added features
 
-### Configuration and setup
-
-General reads the hardware first: Microphone, Keys, Shortcut mode and
-Vocabulary, each a card of its own. Launch at login sits in Application.
-Models puts every feature above the server that serves it, so the speech
-model, the AI cleanup source and the rewrite endpoint each sit next to their
-own settings.
-
 ### AI cleanup, local and remote
 
-The AI cleanup step repairs grammar, false starts and punctuation. It is one
-entry in a mode's transformation list, separate from the OpenCode rewrite, so
-turning one on never turns the other off.
+AI cleanup (previously dictation's "post-processing") uses a prompt that you configure
+on the dictated text.
 
-Its card carries Run on. Local serves the cleanup from the llama.cpp server Hex
-runs itself. Remote sends it to an endpoint and model you name, with your API
-key.
+Configure where the model will run:
 
-- Local: the Start with Hex switch above Start and Stop decides whether the
-  server starts with the app. With that switch off, the server runs only when
-  you press Start. On Windows the child runs in a job object, so a crash
-  cannot leave it holding GPU memory. A server that already answers health
-  checks is adopted instead of replaced.
-- Remote: the endpoint, the model and the API key. A missing local program
-  leaves the local model off while Remote keeps working for every feature.
-- Clean up time limit takes 1 to 3600 seconds and aborts a call that outlives
-  it. The text still pastes unchanged and the failure pill names the reason.
-- The prompt sheet holds the cleanup prompt and reads "How well this works
-  depends on how large the local model you installed is."
+- Local: start a local llama.cpp server and load a model through
+  GGUF files
+- Remote: use a remote model by configuring the endpoint, the model and the API key
 
-The local model is a chat model, not a speech model: it receives the transcript
-and returns a cleaned version. Hex loads any GGUF model its llama.cpp server
-supports, such as one from the Qwen family. Browse
-[Hugging Face](https://huggingface.co/models) for a model that publishes GGUF
-files.
+Find local models on [Hugging Face](https://huggingface.co/models), search for GGUF files.
 
-### Transformations: order and switches
+### Output transformations
 
-Output lists the steps a mode runs, in order. Drag a number to move its step.
-Click a number without dragging to switch that step off. A switched-off step
-keeps its row, dims, and is skipped by the pipeline and by Try. The AI cleanup
-row has its own Edit button for its prompt.
+This fork makes the numbering for transformation in the `Output` tab draggable and clickable:
 
-The order decides what each step sees: rules that read the raw words run before
-the model, and rules that shape its output run after. Editing a loaded rule in
-`~/.config/hex` changes its trust hash, so Hex asks for Allow in Output once
-before the rules run again.
+- Drag to reorder transformations
+- Click to enable/disable
+
+The upstream application only allows this configuration through `settings.json`, which is inconvenient
+when you just want to change the execution order or toggle them directly inside of the interface.
 
 ### Rewrite selection
 
-Select text, press the rewrite shortcut, and speak an instruction. The
-selection is replaced with the model's result, so "make this a structured
+Rewrite instructions are customizable in the `Models` section.
+Name an instruction, assign it a prompt, then run it by speaking the keyword or snippet name;
+you can also use `Rewrite semantic match` to let the model match a spoken instruction to the snippet.
+
+To use one, select text, press the rewrite shortcut, and speak the instruction.
+If your spoken instruction contains both the keyword and the snippet name, it will invoke the instruction.
+
+The selection is replaced with the model's result, so "make this a structured
 prompt" rewrites the paragraph you highlighted.
 
-- General carries the Rewrite shortcut row.
-- Models carries the Rewrite selection card with the endpoint, the model and
-  the API key. This feature is remote only: the bundled small model did not
-  execute a measured rewrite instruction.
-- The selection is read through UI Automation, with a clipboard round trip
-  when the app has no text pattern.
-- A rewrite recording stops at ten seconds.
+This feature is remote only and Windows only: small models cannot execute a
+measured rewrite instruction, and the rewrite shortcut is not bound on macOS or
+Linux.
 
 This feature is not covered by [Paste where the dictation
 started](#paste-where-the-dictation-started).
 
 ### Application exclusion
 
-Named executables keep every Hex shortcut, so dictation keeps working in the
-tools you list. A separate switch suppresses the shortcuts whenever a
-full-screen app is in front.
+Go to General->Excluded apps to disable all Hex shortcuts for the specified
+programs. Contains fullscreen detection - toggle to automatically block
+shortcuts when any window is in fullscreen exclusive.
 
 ### Paste where the dictation started
 
-On Windows the transcript returns to the window that was in front when the
-recording started, even after alt-tabbing during dictation. A closed or elevated
-window falls back to the current focus.
+Enable this setting to automatically paste the transcript to the window
+or text box where dictation started. This lets you Alt-Tab anywhere and speak freely;
+when you stop dictating, the text pastes automatically into that window.
+It should work in most programs, though some applications may not support it.
 
-This feature covers dictation only. It does not apply to rewrite selection, and
-rewrite selection does not assure the prompt is pasted into the last selected
-text the way a dictation paste does.
+This is a Windows-only feature and it only applies to dictation; rewrite selection
+is not safeguarded through it.
 
 ### Rewrite semantic match
 
-Labs carries a switch that lets the model match an instruction to one of your
-saved prompts by meaning instead of by name.
+Rewrite semantic match lets the model match a spoken instruction to one of
+your saved prompts by meaning instead of by name.
 
-With the switch off, a full sentence may not match a prompt you named
-`structure`. With it on, the model compares the instruction against your
-configured prompts, picks the closest one, and applies that prompt to the
-selected text. A reply that names nothing you saved leaves the instruction as
-spoken.
+With it off, a full sentence may not match a prompt named `structure`.
+
+With it on, the closest prompt applies; unmatched instructions run as spoken.
 
 ### Other changes
 
 - Escape cancels a recording in Hold and Toggle, and cancels a rewrite
   recording or a pending rewrite.
-- Vocabulary corrections turn `sounds_like` spellings into the saved term, and
-  a mode's own vocabulary adds its corrections.
-- The code-term wrap puts backticks around terms marked as code, after the
-  cleanup. It is off by default.
+- Turned "sounds like" into a unified Vocabulary that transforms no matter the model.
 
 ## Getting started
 
