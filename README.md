@@ -28,8 +28,9 @@ upstream app.
 AI cleanup (previously dictation's "post-processing") uses a prompt that you configure
 on the dictated text.
 
-Configure where the model will run:
+<img width="2824" height="1512" alt="image" src="https://github.com/user-attachments/assets/0133782a-0dd8-4299-90db-4dd2f7aad5a1" />
 
+Configure where the model will run:
 - Local: start a local llama.cpp server and load a model through
   GGUF files
 - Remote: use a remote model by configuring the endpoint, the model and the API key
@@ -39,9 +40,11 @@ Find local models on [Hugging Face](https://huggingface.co/models), search for G
 ### Output transformations
 
 This fork makes the numbering for transformation in the `Output` tab draggable and clickable:
-
 - Drag to reorder transformations
 - Click to enable/disable
+
+<img width="982" height="792" alt="hex_kYSo2eemFj" src="https://github.com/user-attachments/assets/3b5652a0-f03e-4ec7-84c9-9650dacffd84" />
+
 
 The upstream application only allows this configuration through `settings.json`, which is inconvenient
 when you just want to change the execution order or toggle them directly inside of the interface.
