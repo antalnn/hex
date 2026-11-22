@@ -18,6 +18,7 @@ mod dictation;
 mod discovery;
 mod http;
 mod meeting_events;
+pub(crate) mod openai;
 pub(crate) mod processing;
 mod streams;
 pub(crate) mod timestamps;
