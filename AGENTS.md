@@ -50,7 +50,8 @@ language (#216), Mouse shortcuts (#209, macOS), Also pause the browser (#301,
 macOS), Share dictation shortcut (#176, Windows), Free memory when idle
 (#442), Smaller model files (macOS), Terminal paste (Windows), Terminal
 paste shortcut (Windows, Linux), Stop phrase, Hold through other keys
-(macOS and Windows), and Microphone key alone (#181, macOS).
+(macOS and Windows), Microphone key alone (#181, macOS), and
+Transcription endpoint (the fork's, Windows).
 Externally contributed features land there too.
 Every `Everyone` lab also gets a page on Hex's website,
 `anoma.ly/hex/labs/<id>` (index at `/hex/labs`), built from
@@ -251,6 +252,11 @@ substitute for source inspection or a second roadmap.
   (Linux and Windows, `dictationPartials`). `hex service` answers
   `service-capture-unavailable`, and off macOS `/profile/vitals` answers 503.
   `/control` carries the `hex` control commands on every OS (`control`).
+  `local_api/openai` is a second, separate listener (Labs › Transcription endpoint,
+  Windows): OpenAI-style `POST /v1/audio/transcriptions` on `127.0.0.1:8787`
+  only, no token, started and stopped by `windows/endpoint_host`; it decodes
+  uploads in 30 s pieces onto the dictation engine and answers with Global
+  mode's text, never pasting or keeping audio.
 - `control`: the release `hex` control surface on every OS: the versioned
   `ControlRequest`/`ControlReply` protocol, the settings registry behind
   `hex settings` (one dotted key per persisted setting, with the window's

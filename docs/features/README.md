@@ -2794,6 +2794,37 @@ model without that native level is `422 unsupported-timestamps`. Nothing
 estimates the times, and `/streams` and `/dictations` are unchanged
 ([labs.md](labs.md), [service contract](../specs/local-transcription-service.md)).
 
+```ts
+Transcription endpoint                     // Windows, Labs › Transcription endpoint, off by default
+├── An app on this PC (OpenChamber) -> POST http://127.0.0.1:8787/v1/audio/transcriptions
+│   ├── multipart/form-data: file (any audio Hex reads), model (ignored), language, response_format
+│   ├── Also GET /v1/models and GET /v1/health; the /v1 prefix is optional; anything else is 404
+│   └── No token and no CORS: loopback only, the port is fixed, nothing else can reach it
+├── Upload -> Staged in a temp file -> Decoded in pieces of at most 30 s (WebM, Ogg, MP4, MP3, FLAC, WAV)
+│   └── Each piece -> Transcription service -> The dictation engine's loaded model (no second copy)
+├── Joined transcript -> Global mode (replacements, corrections, rewrite, transformations)
+│   └── Never pastes, writes History, updates Paste Last, or touches the clipboard
+├── Reply -> json {"text"} | text | verbose_json; errors as {"error":{"message","type"}}
+│   ├── 400 bad upload or response_format, 413 over 64 MiB, 429 another request runs
+│   └── 503 no model ready, 504 over ten minutes, 500 the model failed
+└── Lab off -> Nothing listens on 8787; port taken -> logged, the card says so, Hex runs on
+```
+
+The endpoint ([local_api/openai.rs](../../src/local_api/openai.rs),
+[windows/endpoint_host.rs](../../src/windows/endpoint_host.rs)) is its own
+listener, not the local API's: it takes no token, writes no discovery file, and
+binds `127.0.0.1:8787` and nothing wider. It takes the model and language Hex's
+window holds at each request, and a request's `language` replaces the language
+only when that model lists it. It reads the same bounded body (64 MiB, 30 s) as
+the local API and refuses a chunked one with `400`. The audio is staged in a
+temp file only because the shared pieces reader opens a path, and that file is
+deleted on every path; logs carry sizes, timings, and statuses, never audio or
+text. The route tests (`local_api::openai`) cover the multipart reader, each
+reply shape, a real TCP upload with a fake transcriber and processor, a 31 s
+clip in two pieces, `429`, the staged file's deletion, the listener's end and a
+port already in use. Not observed by any test: a real model, because tests have
+none installed; the live answer to OpenChamber is a manual check.
+
 The [SDK guide](../../sdk/typescript/README.md),
 [service contract](../specs/local-transcription-service.md), and
 [SDK tests](../../sdk/typescript/test) distinguish those paths. Helper-only service

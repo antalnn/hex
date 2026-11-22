@@ -73,6 +73,8 @@ Feature             Pane  Toggle (settings.json, hex settings)   On: what it doe
 ├── Live chapters   no    labs.live_chapters           (macOS)   chapters a meeting while it records, boundary pass after Stop
 ├── Words on screen no labs.screen_vocabulary         (macOS)   names and terms in the focused window become temporary vocabulary for each dictation; read locally through Accessibility, never saved, password fields skipped
 ├── Learn from corrections no labs.learn_from_corrections (macOS) after a dictation is pasted, watch only that field for up to 5 minutes and add up to 5 names you corrected to Vocabulary; password fields, long text, and rewrites are skipped, and nothing leaves the Mac
+├── Rewrite semantic match no labs.rewrite_snippet_match (Windows) a spoken rewrite instruction that names no saved snippet is sent, with the snippet names and instructions, to the rewrite model, which answers with one snippet; that snippet's prompt replaces the instruction (the fork's own lab)
+│                                        // checks: the a_match_reply_* and the_match_call_is_skipped_* tests in dictation::rewrite
 ├── Rewrite reads nearby text no labs.cursor_context (macOS) the mode's OpenCode rewrite reads the focused text element's text around the caret as context for names, terms, and where the result lands; password fields skipped
 ├── Switch model with keyboard language  no  keyboard_model_switching.enabled  (macOS, Windows, X11)
 │                                        the input source picks its mapped model (#216); General shows the mappings while on
@@ -155,6 +157,11 @@ Feature             Pane  Toggle (settings.json, hex settings)   On: what it doe
 │                                        // checks: local_api::timestamps (parse, 403 before the body, response fields,
 │                                        // clamping, empty arrays), transcription::service (the 422 decision), and
 │                                        // gguf_session (chunk offsets); no real-model transcript with times
+├── Transcription endpoint no labs.transcription_endpoint (Windows) Hex listens on 127.0.0.1:8787 for OpenAI-style
+│                                        audio uploads (POST /v1/audio/transcriptions) from apps on this PC, such as
+│                                        OpenChamber, and answers with the text Global mode produces; off, nothing listens
+│                                        // checks: local_api::openai (multipart, replies, TCP upload, 31 s in two pieces,
+│                                        // 429, staged-file deletion, stop, port in use), labs tests; not observed with a real model
 ├── Use model files where they are no labs.model_in_place the picker adds a model file without copying it, so accounts can share one (#941)
 ├── Smaller model files no labs.k_quant_models         (macOS) adding a model file also accepts Q6_K, Q5_K, and Q4_K weights, smaller than Q8_0 and unverified
 │                                        // checks: k_quants_are_known_only_where_the_caller_runs_them,
@@ -3412,6 +3419,54 @@ offsets; `api_timestamps_is_its_own_bit_and_off_by_default` and
 `every_feature_is_off_by_default_and_round_trips` in
 [labs.rs](../../src/labs.rs) cover the switch. Not observed: a real model
 answering with times, on any OS, and the macOS `/transcriptions` path.
+
+Transcription endpoint (`transcription-endpoint`; Windows; its row is Output's,
+after Timestamps in API transcripts): for an app on this PC that speaks the
+OpenAI transcription API, such as OpenChamber's speech provider. While on, Hex
+listens on `127.0.0.1:8787`, a fixed port with no setting, and answers
+`POST /v1/audio/transcriptions` (also without `/v1`), `GET /v1/models` and
+`GET /v1/health`. It binds loopback only, takes no token, and is a different
+listener from the local API, which keeps its token and discovery file. Off, no
+thread runs and nothing listens. If another program holds the port, Hex logs it
+and runs on; the next saved settings change tries again.
+
+The upload is OpenAI's `multipart/form-data`: `file` (any audio container Hex's
+reader decodes), `model` (ignored; Hex uses the model selected in General),
+`language` (`auto` or empty keeps Hex's saved one; another value applies only
+when the model lists it), `response_format` (`json`, `text` or `verbose_json`).
+The body is read with a `Content-Length` under the local API's 64 MiB and 30 s
+limits; a chunked body is refused, because OpenChamber sends a length. The
+audio is staged in a temp file for the shared pieces reader and decoded in
+pieces of at most 30 s, each run on the dictation engine's loaded model, so
+Hex never holds a second copy. The joined transcript then goes through exactly
+what a paste with no matching app or website mode gets, as Process API
+transcripts does, regardless of that lab: global replacements, Global mode
+corrections, the optional OpenCode rewrite and Global's transformations. It
+never pastes, writes History, updates Paste Last or touches the clipboard, and
+keeps no audio after the reply. One request runs at a time (`429`); a clip
+with no speech answers an empty `text`.
+
+Errors use OpenAI's `{"error":{"message","type"}}`: `400` for a bad body,
+`response_format` or undecodable audio, `413` over the cap, `429` while another
+request runs, `503` when no model is ready or Hex is stopping, `504` after ten
+minutes, `500` when the model fails. Logs carry the route, sizes, timing and
+status, never text. Checks: `local_api::openai` covers the multipart reader
+(curl and browser boundaries, caps, truncation), each reply shape and error, a
+real TCP upload with a fake transcriber and processor (the processor's text,
+not the raw transcript, comes back), a 31 s clip as two pieces, `429` while one
+request runs, the staged file's deletion on success and failure, a stopped
+listener and a port in use; `labs` tests cover the switch. Not observed: a real
+model through the endpoint, which tests cannot install; item 6 of the plan
+checks it live with OpenChamber.
+
+Rewrite semantic match (`rewrite-snippet-match`; Windows; the fork's own lab,
+its row is Dictation's): when a spoken rewrite instruction names no saved
+snippet exactly and opens like a rewrite request, Hex asks the configured
+rewrite model to pick one saved snippet from the list of names and
+instructions. A match replaces the instruction with that snippet's prompt; a
+`NONE`, a skip or a failed call keeps the instruction as spoken. It runs only
+with snippets saved and a remote rewrite model configured
+(`dictation::rewrite::layer_two`).
 
 Transcribe files (`transcribe-files`) graduated: `hex transcribe <file>`
 always works now, reads common audio and video formats, and starts its own
