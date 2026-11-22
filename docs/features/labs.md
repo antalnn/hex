@@ -3429,7 +3429,8 @@ listens on `127.0.0.1:8787`, a fixed port with no setting, and answers
 listener from the local API, which keeps its token and discovery file. Off, no
 thread runs and nothing listens. If another program holds the port, Hex logs it
 and runs on; the next saved settings change tries again. While the lab is on its
-card shows whether Hex is listening or the port is taken, the Server URL
+card shows whether Hex is listening, the port is taken or it could not start
+(nothing shows until the listener is up), the Server URL
 (`http://127.0.0.1:8787/v1`) and the Endpoint path (`/audio/transcriptions`)
 each with a Copy button, and says that any model name works. The card's layout
 was reviewed in `ui-sandbox` (`labs_endpoint_card_snapshots`); the running app's

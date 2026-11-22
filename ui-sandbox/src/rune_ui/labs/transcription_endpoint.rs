@@ -11,7 +11,7 @@ use crate::desktop::i18n::{tr, tr_fill};
 const PATH: &str = "/audio/transcriptions";
 /// The label and value columns of a copy line, wide enough for the longest
 /// translated label and the Server URL.
-const LABEL_WIDTH: f32 = 110.0;
+const LABEL_WIDTH: f32 = 168.0;
 const VALUE_WIDTH: f32 = 190.0;
 
 /// Where the endpoint stands, as the card says it.

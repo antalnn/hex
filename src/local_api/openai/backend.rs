@@ -1,8 +1,9 @@
 //! What turns one uploaded file into the text a paste in Global mode would
 //! produce. The file is staged in a temp file only because the shared pieces
 //! reader opens a path; every path deletes it. It is decoded in pieces of at
-//! most 30 s, so each piece runs on the dictation engine's loaded model
-//! instead of making the service load a second copy. The joined transcript
+//! most 30 s, so each piece runs on the dictation engine's model while it
+//! holds that exact model and language; a request language it lacks makes the
+//! service load its own copy for that request. The joined transcript
 //! goes through the dictation pipeline and nothing else: no paste, no
 //! History, no Paste Last, no clipboard.
 
