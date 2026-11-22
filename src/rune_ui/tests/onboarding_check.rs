@@ -382,3 +382,162 @@ fn onboarding_walkthrough() {
         downloaded.load(std::sync::atomic::Ordering::Relaxed)
     );
 }
+
+/// The practice and Hex is ready speak the interface language, the
+/// shortcut's keycaps sitting where the translation puts `{keys}`.
+#[test]
+fn the_practice_and_ready_pages_are_translated() {
+    let shown = |scene: &str| {
+        let mut rt = runtime(scene, true, PANE_SIZE);
+        crate::desktop::i18n::apply(Some("zh"));
+        settle(&mut rt);
+        texts(&rt)
+    };
+    let english = [
+        "Hold",
+        "Tap",
+        "Not recording",
+        "and answer the one that's lit.",
+        "anywhere, then talk.",
+        "to answer",
+        "Keyboard mode",
+        "Hex is ready",
+    ];
+    for (scene, expected) in [
+        (
+            "mac-onboarding-try",
+            &["按住", "，回复亮起的那条。", "未在录音", "回复"][..],
+        ),
+        (
+            "mac-onboarding-ready",
+            &["在任何地方按住", "，然后开口说。"][..],
+        ),
+    ] {
+        let shown = shown(scene);
+        for text in expected {
+            assert!(
+                shown.iter().any(|t| t == text),
+                "{scene}: {text}: {shown:?}"
+            );
+        }
+        for text in english {
+            assert!(
+                !shown.iter().any(|t| t == text),
+                "{scene}: {text}: {shown:?}"
+            );
+        }
+    }
+}
+
+/// A shortcut that didn't start leaves only the way out: no hold prompt or
+/// idle pill inviting a press that does nothing, and one Reopen Hex.
+#[test]
+fn a_shortcut_that_did_not_start_shows_only_reopen() {
+    let rt = runtime("mac-onboarding-reopen", true, PANE_SIZE);
+    let shown = texts(&rt);
+    assert!(
+        !shown
+            .iter()
+            .any(|t| t == "and answer the one that's lit." || t == "and say anything."),
+        "{shown:?}"
+    );
+    assert!(rt.find("idle-pill").is_none(), "no idle pill");
+    assert_eq!(
+        rt.elements()
+            .iter()
+            .filter(|e| !e.exiting && e.path.ends_with("/reopen-hex"))
+            .count(),
+        1,
+        "one Reopen Hex"
+    );
+    assert!(
+        shown.iter().any(|t| t == "Hex's shortcut didn't start."),
+        "{shown:?}"
+    );
+}
+
+/// A ready page on `caps` with its login item as `login`, so the ask shows,
+/// and a shortcut that `tap`s to start or holds.
+fn ready_with_login(
+    caps: platform::Capabilities,
+    login: crate::desktop::login_item::LoginItemStatus,
+    tap: bool,
+) -> Ui {
+    let mut ui = portal_fixture();
+    ui.platform.caps = caps;
+    ui.platform.login_item = Some(login);
+    ui.settings.shortcut_mode = if tap {
+        crate::dictation::ShortcutMode::Toggle
+    } else {
+        crate::dictation::ShortcutMode::Hold
+    };
+    super::super::onboarding::fixture(&mut ui, Step::Setup, true);
+    ui.picker.installed = Some(vec![ui.settings.transcription.model]);
+    if let Some(view) = &mut ui.view {
+        view.transcription.preparing = None;
+    }
+    super::super::onboarding::poll(&mut ui);
+    super::super::onboarding_kit::live::fixture(&mut ui, Page::Ready);
+    ui
+}
+
+/// The launch-at-login ask in the platform's own words: a Mac and its menu
+/// bar, a Windows computer and its system tray, a Linux computer in the
+/// background.
+#[test]
+fn the_login_ask_speaks_each_platforms_wording() {
+    use crate::desktop::login_item::LoginItemStatus;
+
+    let mac = texts(&runtime("mac-onboarding-ready", true, PANE_SIZE));
+    assert!(
+        mac.contains(&"Open Hex when your Mac starts?".to_owned()),
+        "{mac:?}"
+    );
+    assert!(
+        mac.contains(&"It's tiny. It naps in your menu bar until you hold the key.".to_owned()),
+        "{mac:?}"
+    );
+
+    for (caps, place) in [
+        (platform::Capabilities::WINDOWS, "your system tray"),
+        (platform::Capabilities::LINUX, "the background"),
+    ] {
+        for (tap, start) in [(false, "hold"), (true, "tap")] {
+            let off = texts(&runtime_for(
+                ready_with_login(caps, LoginItemStatus::Disabled, tap),
+                true,
+                PANE_SIZE,
+            ));
+            assert!(
+                off.contains(&"Open Hex when your computer starts?".to_owned()),
+                "{caps:?}: {off:?}"
+            );
+            assert!(
+                off.contains(&format!(
+                    "It's tiny. It naps in {place} until you {start} the key."
+                )),
+                "{caps:?}: {off:?}"
+            );
+            assert!(
+                !off.iter()
+                    .any(|text| text.contains("Mac") || text.contains("menu bar")),
+                "{caps:?}: {off:?}"
+            );
+        }
+
+        let on = texts(&runtime_for(
+            ready_with_login(caps, LoginItemStatus::Enabled, false),
+            true,
+            PANE_SIZE,
+        ));
+        assert!(
+            on.contains(&"Hex opens when your computer starts.".to_owned()),
+            "{caps:?}: {on:?}"
+        );
+        assert!(
+            !on.iter()
+                .any(|text| text.contains("Mac") || text.contains("menu bar")),
+            "{caps:?}: {on:?}"
+        );
+    }
+}

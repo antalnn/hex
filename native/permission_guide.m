@@ -230,6 +230,13 @@ static NSString *const settingsBundleID = @"com.apple.systempreferences";
 /// Bumped by every pane request, so an older request's retries stand down.
 static NSUInteger settingsRequest;
 
+/// Whether System Settings is the application in front, so the guide has
+/// somewhere to point and must not float over anything else.
+static BOOL settingsFrontmost(void) {
+    NSRunningApplication *front = NSWorkspace.sharedWorkspace.frontmostApplication;
+    return [front.bundleIdentifier isEqualToString:settingsBundleID];
+}
+
 static BOOL settingsHasWindow(void) {
     NSArray<NSRunningApplication *> *apps =
         [NSRunningApplication runningApplicationsWithBundleIdentifier:settingsBundleID];
@@ -254,8 +261,7 @@ static BOOL settingsHasWindow(void) {
 int hex_permission_settings_state(void) {
     NSCAssert(NSThread.isMainThread, @"settings state must run on the main thread");
     BOOL open = settingsHasWindow();
-    NSRunningApplication *front = NSWorkspace.sharedWorkspace.frontmostApplication;
-    BOOL frontmost = [front.bundleIdentifier isEqualToString:settingsBundleID];
+    BOOL frontmost = settingsFrontmost();
     BOOL active = NSApp.isActive;
     return (open ? 1 : 0) | (frontmost ? 2 : 0) | (active ? 4 : 0);
 }
@@ -357,9 +363,9 @@ static NSRect appKitFrame(CGRect frame) {
     );
 }
 
-/// System Audio Recording has no public query; TCC's preflight answers it
-/// (0 is granted). Without it, the guide waits for System Settings to close.
-static BOOL systemAudioGranted(void) {
+/// TCC's own answer for `service`, read fresh each time: 0 granted, 1
+/// refused, 2 not asked yet, or -1 when the preflight is unavailable.
+static int tccPreflight(CFStringRef service) {
     static int (*preflight)(CFStringRef, CFDictionaryRef);
     static dispatch_once_t once;
     dispatch_once(&once, ^{
@@ -369,7 +375,30 @@ static BOOL systemAudioGranted(void) {
             preflight = dlsym(handle, "TCCAccessPreflight");
         }
     });
-    return preflight != NULL && preflight(CFSTR("kTCCServiceAudioCapture"), NULL) == 0;
+    return preflight != NULL ? preflight(service, NULL) : -1;
+}
+
+/// System Audio Recording has no public query; TCC's preflight answers it.
+/// Without it, the guide waits for System Settings to close.
+static BOOL systemAudioGranted(void) {
+    return tccPreflight(CFSTR("kTCCServiceAudioCapture")) == 0;
+}
+
+/// Screen Recording, read from TCC: `CGPreflightScreenCaptureAccess` keeps
+/// the answer it read first for the life of the process, so a grant made in
+/// System Settings while Hex runs never reached the guide and it hung there
+/// until Hex restarted. TCC's preflight reads it now; the CoreGraphics one
+/// remains only for a system where that preflight is unavailable.
+static BOOL screenRecordingGranted(void) {
+    int status = tccPreflight(CFSTR("kTCCServiceScreenCapture"));
+    return status >= 0 ? status == 0 : CGPreflightScreenCaptureAccess();
+}
+
+/// AVFoundation keeps the microphone answer it read first until Hex itself
+/// asks, so a grant that came another way (macOS prompting when CoreAudio
+/// opened an input, or the switch in System Settings) reads from TCC.
+int hex_microphone_preflight(void) {
+    return tccPreflight(CFSTR("kTCCServiceMicrophone"));
 }
 
 static BOOL permissionGranted(void) {
@@ -380,11 +409,12 @@ static BOOL permissionGranted(void) {
             return AXIsProcessTrusted();
         case HexPermissionMicrophone:
             return [AVCaptureDevice authorizationStatusForMediaType:AVMediaTypeAudio] ==
-                   AVAuthorizationStatusAuthorized;
+                       AVAuthorizationStatusAuthorized ||
+                   hex_microphone_preflight() == 0;
         case HexPermissionSystemAudio:
             return systemAudioGranted();
         case HexPermissionScreenRecording:
-            return CGPreflightScreenCaptureAccess();
+            return screenRecordingGranted();
     }
     return NO;
 }
@@ -408,6 +438,24 @@ static void closeGuide(void) {
     guideTile = nil;
     guideSettingsURL = nil;
     sawSettingsWindow = NO;
+}
+
+/// Whether the guide for `permission` is open, in front or waiting behind
+/// another app for System Settings to come back.
+bool hex_permission_guide_active(int permission) {
+    NSCAssert(NSThread.isMainThread, @"permission guide must run on the main thread");
+    return guidePanel != nil && activePermission == (HexPermission)permission;
+}
+
+/// Closes the guide for `permission`: Hex read the grant itself (Screen
+/// Recording through a fresh helper, since this process's own preflight keeps
+/// the launch answer), so there is nothing left for the tile to point at.
+void hex_close_permission_guide(int permission) {
+    NSCAssert(NSThread.isMainThread, @"permission guide must run on the main thread");
+    if (guidePanel == nil || activePermission != (HexPermission)permission) {
+        return;
+    }
+    closeGuide();
 }
 
 
@@ -569,6 +617,13 @@ static void updateGuidePosition(void) {
         return;
     }
     sawSettingsWindow = YES;
+    if (!settingsFrontmost()) {
+        // Another app is in front of System Settings: the guide points at
+        // nothing from there, and must not float over what the person is
+        // doing. It comes back when System Settings does.
+        [guidePanel orderOut:nil];
+        return;
+    }
     NSRect settings = appKitFrame(quartzFrame);
     NSSize size = guidePanel.frame.size;
     NSScreen *screen = nil;
@@ -589,6 +644,9 @@ static void updateGuidePosition(void) {
     [guidePanel setFrameOrigin:NSMakePoint(x, y)];
     if (flightPanel != nil && flightStartedAt == 0) {
         flightStartedAt = CACurrentMediaTime();
+    }
+    if (flightPanel != nil) {
+        [flightPanel orderFrontRegardless];
     }
     [guidePanel orderFrontRegardless];
 }

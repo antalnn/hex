@@ -361,7 +361,10 @@ fn stop() -> Input {
 }
 
 fn done() -> Step {
-    Step::Input(Input::Stage(scrawl_capture::capture::Stage::Done))
+    Step::Input(Input::Written {
+        bundle: "example.scrawl".into(),
+        routing: false,
+    })
 }
 
 fn routed(route: Route) -> Step {
@@ -450,7 +453,7 @@ impl Playground {
             | Action::Discard
             | Action::OpenScreenshots { .. }
             | Action::Send { .. }
-            | Action::Paste
+            | Action::Paste(_)
             | Action::Pen
             | Action::Hold(_)
             | Action::Inspect => {}
@@ -469,7 +472,7 @@ impl Playground {
         self.at(4.6, Step::Click(Id::Finish));
         let routed_at = 4.6 + 1.8;
         let gone = if self.rule {
-            routed_at + self.tuning.undo_s + 2.5
+            routed_at + super::flow::send_hold_s() + 2.5
         } else {
             let picked = routed_at + 1.8;
             self.at(picked, Step::Input(Input::SendRow(0)));
@@ -581,8 +584,8 @@ fn on_key(s: &mut CapsuleState, key: &KeyEvent, tx: &mut Tx) -> bool {
         Key::Enter if list => Input::Send {
             always: key.mods.shift,
         },
-        Key::Enter if cycle && !key.mods.shift => Input::Send { always: false },
-        Key::Tab if cycle => Input::Cycle(if key.mods.shift { -1 } else { 1 }),
+        Key::Enter if cycle && search && !key.mods.shift => Input::Send { always: false },
+        Key::Tab if cycle && search => Input::Cycle(if key.mods.shift { -1 } else { 1 }),
         Key::Backspace if list => Input::Backspace,
         Key::Text(t) if list => Input::Type(t.clone()),
         Key::Text(t)

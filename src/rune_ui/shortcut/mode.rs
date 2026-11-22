@@ -13,52 +13,34 @@ use super::super::controls::value_button;
 use super::super::controls::{Paint, copy_row};
 use super::super::explainer::{self, Script};
 use super::super::icons::HAND;
-use crate::app_settings::{
-    AppSettings, ExtraDictationMode, HotkeyBinding, HotkeyKey, HotkeyModifiers,
-};
+use crate::app_settings::{AppSettings, HotkeyBinding, HotkeyKey, HotkeyModifiers};
 use crate::desktop::i18n::{tr, tr_fill};
 use crate::dictation::ShortcutMode;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(in crate::rune_ui) enum Trigger {
-    HoldOrDoubleTap,
-    Hold,
-    Tap,
-    DoubleTap,
-}
+/// The four ways a shortcut triggers, shared with Labs › More dictation
+/// shortcuts' rows, which save it as is.
+pub(in crate::rune_ui) use crate::app_settings::ExtraDictationMode as Trigger;
 
 impl Trigger {
-    /// In the modal's order, the default first.
-    pub(in crate::rune_ui) const ALL: [Self; 4] = [
-        Self::HoldOrDoubleTap,
-        Self::Hold,
-        Self::Tap,
-        Self::DoubleTap,
-    ];
-
     pub(in crate::rune_ui) fn of(settings: &AppSettings) -> Self {
         match settings.shortcut_mode {
             ShortcutMode::Toggle => Self::Tap,
             ShortcutMode::Hold if !settings.double_tap_lock => Self::Hold,
-            ShortcutMode::Hold
-                if settings.double_tap_only
-                    && (settings.dictation_hotkey.key.is_some()
-                        || settings.double_tap_modifiers_allowed()) =>
-            {
-                Self::DoubleTap
-            }
+            ShortcutMode::Hold if settings.double_tap_only => Self::DoubleTap.for_binding(
+                Some(&settings.dictation_hotkey),
+                settings.double_tap_modifiers_allowed(),
+            ),
             ShortcutMode::Hold => Self::HoldOrDoubleTap,
         }
     }
 
     pub(in crate::rune_ui) fn apply(self, settings: &mut AppSettings) {
-        let (mode, lock, only) = match self {
-            Self::HoldOrDoubleTap => (ShortcutMode::Hold, true, false),
-            Self::Hold => (ShortcutMode::Hold, false, false),
-            Self::Tap => (ShortcutMode::Toggle, true, false),
-            Self::DoubleTap => (ShortcutMode::Hold, true, true),
+        let (toggle, lock, only) = self.switches();
+        settings.shortcut_mode = if toggle {
+            ShortcutMode::Toggle
+        } else {
+            ShortcutMode::Hold
         };
-        settings.shortcut_mode = mode;
         settings.double_tap_lock = lock;
         settings.double_tap_only = only;
     }
@@ -101,7 +83,7 @@ impl Trigger {
 
     /// Why this shortcut can't trigger this way, if it can't: a shortcut
     /// without a key can't tell a double-tap from a chord without
-    /// Labs › Double-tap on a lone modifier.
+    /// Labs › Double-tap Option, Command, or Globe.
     pub(in crate::rune_ui) fn unavailable(self, settings: &AppSettings) -> Option<String> {
         self.unavailable_for(
             Some(&settings.dictation_hotkey),
@@ -110,17 +92,14 @@ impl Trigger {
     }
 
     /// [`Self::unavailable`] for a Labs › More dictation shortcuts row, whose
-    /// binding is its own. `modifiers_allowed` is Labs › Double-tap on a lone
-    /// modifier, which the row follows as the dictation shortcut does.
+    /// binding is its own. `modifiers_allowed` is Labs › Double-tap Option,
+    /// Command, or Globe, which the row follows as the dictation shortcut does.
     pub(in crate::rune_ui) fn unavailable_for(
         self,
         binding: Option<&HotkeyBinding>,
         modifiers_allowed: bool,
     ) -> Option<String> {
-        (self == Self::DoubleTap
-            && !modifiers_allowed
-            && binding.is_none_or(|binding| binding.key.is_none()))
-        .then(|| {
+        (self.for_binding(binding, modifiers_allowed) != self).then(|| {
             let mut example = binding.cloned().unwrap_or_else(|| HotkeyBinding {
                 modifiers: HotkeyModifiers::option(),
                 key: None,
@@ -131,28 +110,6 @@ impl Trigger {
                 &example.keycaps().join("+"),
             )
         })
-    }
-
-    /// The choice that saves `mode` on a Labs › More dictation shortcuts row.
-    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
-    pub(super) fn from_extra(mode: ExtraDictationMode) -> Self {
-        match mode {
-            ExtraDictationMode::HoldOrDoubleTap => Self::HoldOrDoubleTap,
-            ExtraDictationMode::Hold => Self::Hold,
-            ExtraDictationMode::Tap => Self::Tap,
-            ExtraDictationMode::DoubleTap => Self::DoubleTap,
-        }
-    }
-
-    /// The mode a Labs › More dictation shortcuts row saves for `self`.
-    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
-    pub(super) fn to_extra(self) -> ExtraDictationMode {
-        match self {
-            Self::HoldOrDoubleTap => ExtraDictationMode::HoldOrDoubleTap,
-            Self::Hold => ExtraDictationMode::Hold,
-            Self::Tap => ExtraDictationMode::Tap,
-            Self::DoubleTap => ExtraDictationMode::DoubleTap,
-        }
     }
 }
 

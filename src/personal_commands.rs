@@ -115,6 +115,13 @@ pub fn native_transformation(id: &str) -> Option<(&'static str, &'static str)> {
     }
 }
 
+/// The built-in transformations' ids, in the order they're listed.
+pub fn builtin_transformation_ids() -> impl Iterator<Item = &'static str> {
+    BUILTIN_TRANSFORMATIONS
+        .iter()
+        .map(|transformation| transformation.id)
+}
+
 /// Whether Hex runs `id` itself: a pure rule ([`apply_builtin_transformation`])
 /// or a native step. Either way the transformation host is not involved.
 pub fn is_builtin_transformation(id: &str) -> bool {
@@ -311,6 +318,27 @@ fn find_config(workspace: &Path) -> Result<Option<&'static str>> {
 pub fn workspace_configured() -> bool {
     crate::app_paths::personal_commands_workspace()
         .is_ok_and(|workspace| matches!(find_config(&workspace), Ok(Some(_)) | Err(_)))
+}
+
+/// Built-ins run natively and never need the script host.
+pub fn custom_transformations_selected(
+    processing: &crate::app_settings::DictationProcessingSettings,
+) -> bool {
+    std::iter::once(&processing.default_mode)
+        .chain(&processing.modes)
+        .flat_map(|mode| &mode.transformations)
+        .any(|id| !is_builtin_transformation(id))
+}
+
+/// Every OS discovers a newly initialized workspace before a transformation
+/// is selected. Call on the host's coarse refresh, not an audio callback.
+pub fn host_needed(custom_selected: bool) -> bool {
+    let allowed = !crate::policy::Policy::current().locks(crate::policy::Lock::Transforms);
+    host_required(custom_selected, allowed && workspace_configured(), allowed)
+}
+
+fn host_required(custom_selected: bool, configured: bool, allowed: bool) -> bool {
+    allowed && (custom_selected || configured)
 }
 
 /// Creates the config folder with Hex's typings and agent notes, and a
@@ -987,6 +1015,45 @@ fn invocation_context(
     }
 }
 
+/// Extensions the script host loads, in any case, shared with the loader so
+/// every file it can import is one the watcher reloads.
+const SCRIPT_EXTENSIONS: [&str; 5] = ["ts", "js", "mjs", "mts", "json"];
+/// Extensions the script host erases types from, and the ones a TypeScript
+/// declaration file can have.
+const TYPESCRIPT_EXTENSIONS: [&str; 2] = ["ts", "mts"];
+
+/// `.ts, .js, .mjs, .mts, .json` for messages about what can be imported.
+fn script_extension_list() -> String {
+    SCRIPT_EXTENSIONS
+        .iter()
+        .map(|extension| format!(".{extension}"))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+/// The last component's stem and lowercased extension, or None when it has no
+/// extension.
+fn script_name_parts(path: &Path) -> Option<(&str, String)> {
+    let name = path.file_name()?.to_str()?;
+    let (stem, extension) = name.rsplit_once('.')?;
+    Some((stem, extension.to_ascii_lowercase()))
+}
+
+/// Whether `path` names a file the script host loads, and so one the reload
+/// watcher tracks. Declaration files only describe the API, so editing one
+/// never needs a reload.
+fn is_script_file(path: &Path) -> bool {
+    let Some((stem, extension)) = script_name_parts(path) else {
+        return false;
+    };
+    if !SCRIPT_EXTENSIONS.contains(&extension.as_str()) {
+        return false;
+    }
+    let declaration = (stem.ends_with(".d") || stem.ends_with(".D"))
+        && TYPESCRIPT_EXTENSIONS.contains(&extension.as_str());
+    !declaration
+}
+
 fn workspace_fingerprint(root: &Path) -> u64 {
     let mut hash = 1469598103934665603;
     let mut queue = VecDeque::from([(root.to_path_buf(), 0_usize)]);
@@ -1020,12 +1087,7 @@ fn workspace_fingerprint(root: &Path) -> u64 {
             }
             if metadata.is_dir() {
                 queue.push_back((path, depth + 1));
-            } else if metadata.is_file()
-                && matches!(
-                    path.extension().and_then(|value| value.to_str()),
-                    Some("ts" | "json")
-                )
-            {
+            } else if metadata.is_file() && is_script_file(&path) {
                 for byte in path.as_os_str().as_encoded_bytes() {
                     hash = hash
                         .wrapping_mul(1099511628211)
@@ -1063,9 +1125,55 @@ fn bounded_status_error(message: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::time::UNIX_EPOCH;
+    use std::sync::atomic::AtomicU64;
 
     mod host_apis;
+
+    /// A temp path no other test, nextest process, or later run shares.
+    fn unique_temp_dir(prefix: &str) -> PathBuf {
+        static NEXT: AtomicU64 = AtomicU64::new(0);
+        let id = NEXT.fetch_add(1, Ordering::Relaxed);
+        let nanos = SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        std::env::temp_dir().join(format!("{prefix}-{}-{id}-{nanos}", std::process::id()))
+    }
+
+    #[test]
+    fn host_startup_discovers_a_config_without_selecting_a_transformation() {
+        for selected in [false, true] {
+            for configured in [false, true] {
+                assert!(!host_required(selected, configured, false), "policy wins");
+            }
+        }
+        assert!(!host_required(false, false, true));
+        assert!(
+            host_required(false, true, true),
+            "Set up discovers the new config"
+        );
+        assert!(
+            host_required(true, false, true),
+            "a missing selected script still reports its status"
+        );
+        assert!(host_required(true, true, true));
+
+        let mut processing = crate::app_settings::DictationProcessingSettings::default();
+        processing.default_mode.transformations =
+            builtin_transformation_ids().map(str::to_owned).collect();
+        assert!(!custom_transformations_selected(&processing));
+        processing.modes.push(crate::app_settings::DictationMode {
+            transformations: vec!["my-script".into()],
+            ..Default::default()
+        });
+        assert!(custom_transformations_selected(&processing));
+        processing.modes.clear();
+        processing
+            .default_mode
+            .transformations
+            .push("another-script".into());
+        assert!(custom_transformations_selected(&processing));
+    }
 
     #[test]
     fn transformation_context_names_its_source() {
@@ -1290,15 +1398,51 @@ mod tests {
         assert_eq!(status.transformations[3].name, "No trailing punctuation");
     }
 
+    #[test]
+    fn workspace_fingerprint_tracks_every_loaded_file_kind() {
+        let root = unique_temp_dir("hex-watch-kinds");
+        fs::create_dir_all(root.join("lib")).unwrap();
+        let watched = [
+            "hex.config.ts",
+            "spelling.js",
+            "lib/words.mjs",
+            "lib/types.mts",
+            "data.json",
+            "lib/upper.JS",
+            "lib/foo.d.js",
+        ];
+        for name in watched {
+            fs::write(root.join(name), "first").unwrap();
+        }
+        fs::write(root.join("notes.md"), "first").unwrap();
+        fs::write(root.join("hex.d.ts"), "first").unwrap();
+        fs::write(root.join("lib/x.d.mts"), "first").unwrap();
+        let mut fingerprint = workspace_fingerprint(&root);
+        for name in watched {
+            fs::write(root.join(name), "second").unwrap();
+            let next = workspace_fingerprint(&root);
+            assert_ne!(next, fingerprint, "editing {name} should reload");
+            fingerprint = next;
+        }
+        fs::write(root.join("lib/new.js"), "first").unwrap();
+        assert_ne!(
+            workspace_fingerprint(&root),
+            fingerprint,
+            "a new .js file should reload"
+        );
+        fingerprint = workspace_fingerprint(&root);
+        fs::write(root.join("notes.md"), "changed").unwrap();
+        fs::write(root.join("hex.d.ts"), "changed").unwrap();
+        fs::write(root.join("lib/x.d.mts"), "changed").unwrap();
+        assert_eq!(workspace_fingerprint(&root), fingerprint);
+        fs::remove_dir_all(root).unwrap();
+    }
+
     #[cfg(unix)]
     #[test]
     fn workspace_fingerprint_does_not_follow_symlinks_or_excessive_depth() {
-        let unique = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
-        let root = std::env::temp_dir().join(format!("hex-watch-{unique}"));
-        let outside = std::env::temp_dir().join(format!("hex-watch-outside-{unique}.ts"));
+        let root = unique_temp_dir("hex-watch");
+        let outside = unique_temp_dir("hex-watch-outside").with_extension("ts");
         fs::create_dir_all(&root).unwrap();
         fs::write(&outside, "first").unwrap();
         std::os::unix::fs::symlink(&outside, root.join("linked.ts")).unwrap();
@@ -1320,11 +1464,7 @@ mod tests {
 
     #[test]
     fn status_snapshot_roundtrips_atomically() {
-        let unique = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
-        let root = std::env::temp_dir().join(format!("hex-status-{unique}"));
+        let root = unique_temp_dir("hex-status");
         let path = root.join("personal-commands.json");
         let status = StatusSnapshot {
             active_generation: Some(4),
@@ -1361,11 +1501,7 @@ mod tests {
 
     impl Harness {
         fn new(config: &str) -> Self {
-            let unique = SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap()
-                .as_nanos();
-            let root = std::env::temp_dir().join(format!("hex-scripts-{unique}"));
+            let root = unique_temp_dir("hex-scripts");
             let workspace = root.join("hex");
             fs::create_dir_all(&workspace).unwrap();
             fs::write(workspace.join("hex.config.ts"), config).unwrap();
@@ -1674,6 +1810,24 @@ export default defineHexConfig({
         );
         assert_eq!(harness.transform(&["shout"], "hi").unwrap(), "HI!");
 
+        fs::write(
+            workspace.join("lib/plain.js"),
+            "export const yell = (text) => text.toUpperCase()\n",
+        )
+        .unwrap();
+        harness.write(
+            "import { yell } from \"./lib/plain.js\"\nexport default { transformations: { yell: { name: \"Yell\", transform: yell } } }\n",
+        );
+        assert_eq!(harness.transform(&["yell"], "hi").unwrap(), "HI");
+
+        fs::write(workspace.join("notes.txt"), "export const x = 1\n").unwrap();
+        harness.write("import { x } from \"./notes.txt\"\nexport default {}\n");
+        assert!(
+            harness.error().contains("./notes.txt"),
+            "a .txt import loaded as JavaScript: {}",
+            harness.error()
+        );
+
         for import in [
             "node:fs",
             "effect",
@@ -1697,11 +1851,7 @@ export default defineHexConfig({
 
     #[test]
     fn initialization_writes_typings_and_a_starter_config_but_keeps_the_users() {
-        let unique = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
-        let workspace = std::env::temp_dir().join(format!("hex-init-{unique}"));
+        let workspace = unique_temp_dir("hex-init");
         initialize_workspace_at(&workspace).unwrap();
         assert!(
             check_workspace_at(&workspace)

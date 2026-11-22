@@ -1,10 +1,12 @@
 //! The shared vocabulary: names Hex should know (people, projects,
 //! products), each with spellings a transcript may show instead ("sounds
 //! like"). Search uses it to find a term's likely mis-transcriptions,
-//! prompts can read it through [`terms`], and Whisper and Qwen3-ASR read it
-//! as their context prompt through [`transcription_prompt`].
+//! prompts can read it through [`terms`], Whisper and Qwen3-ASR read it as
+//! their context prompt through [`transcription_prompt`], and a prompt run
+//! replaces its "sounds like" spellings afterwards through
+//! [`correct_sounds_like`].
 
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::io::Read as _;
 use std::path::Path;
 use std::sync::{OnceLock, RwLock};
@@ -12,12 +14,15 @@ use std::sync::{OnceLock, RwLock};
 use serde::{Deserialize, Serialize};
 
 use crate::dictation::context::ContextSnapshot;
+use crate::dictation::text_replacements::{ReplacementSet, TextReplacement};
+
+pub(crate) mod csv;
 
 /// Longest term or "sounds like" entry, in characters.
-const MAX_TERM_CHARS: usize = 64;
+pub(crate) const MAX_TERM_CHARS: usize = 64;
 /// Most entries in the list, and most "sounds like" spellings per entry.
 pub const MAX_ENTRIES: usize = 500;
-const MAX_SOUNDS_LIKE: usize = 16;
+pub(crate) const MAX_SOUNDS_LIKE: usize = 16;
 /// Read limit for settings.json when reading it without loading `AppSettings`.
 const SETTINGS_READ_LIMIT: u64 = 4 * 1024 * 1024;
 
@@ -95,6 +100,9 @@ static FOCUS: OnceLock<RwLock<Option<ContextSnapshot>>> = OnceLock::new();
 
 thread_local! {
     static DICTATING: Cell<bool> = const { Cell::new(false) };
+    /// Labs › Words on screen's terms for the capture this thread is
+    /// transcribing, set by [`for_capture`]; empty for a job that has none.
+    static SCREEN_TERMS: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
 }
 
 /// Records the focused app and page, so the next dictation's transcription
@@ -120,8 +128,27 @@ pub(crate) fn for_dictation<R>(work: impl FnOnce() -> R) -> R {
     work()
 }
 
+/// Runs one dictation's inference with the terms Labs › Words on screen
+/// read from its window. The terms belong to that run alone: a nested run
+/// restores the outside value, and a job with none clears it, so a meeting or
+/// a local API request never hears another capture's screen.
+pub(crate) fn for_capture<R>(terms: &[String], work: impl FnOnce() -> R) -> R {
+    struct Restore(Vec<String>);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            SCREEN_TERMS.with(|slot| *slot.borrow_mut() = std::mem::take(&mut self.0));
+        }
+    }
+    let previous =
+        SCREEN_TERMS.with(|slot| std::mem::replace(&mut *slot.borrow_mut(), terms.to_vec()));
+    let _restore = Restore(previous);
+    work()
+}
+
 /// The focused mode's own terms first, so they lead the context prompt, then
-/// the shared list, each term once.
+/// the shared list, then the terms this capture read from its window, each
+/// term once. Screen terms are lowest priority because they change with every
+/// window, and only a dictation hears them.
 fn transcription_entries() -> Vec<VocabularyEntry> {
     let shared = entries();
     if !DICTATING.with(Cell::get) {
@@ -133,13 +160,33 @@ fn transcription_entries() -> Vec<VocabularyEntry> {
         .unwrap_or_else(|error| error.into_inner())
         .clone();
     #[cfg(target_os = "macos")]
-    if let Some(context) = focused {
-        let own = crate::dictation::config::dictation_profiles().vocabulary_for(&context);
-        return merged(&own, &shared);
-    }
+    let shared = match &focused {
+        Some(context) => {
+            let own = crate::dictation::config::dictation_profiles().vocabulary_for(context);
+            merged(&own, &shared)
+        }
+        None => shared,
+    };
     #[cfg(not(target_os = "macos"))]
     let _ = focused;
-    shared
+    let screen = SCREEN_TERMS.with(|terms| screen_entries(&terms.borrow()));
+    if screen.is_empty() {
+        return shared;
+    }
+    merged(&shared, &screen)
+}
+
+/// Labs › Words on screen's terms as entries with no "sounds like"
+/// spellings.
+fn screen_entries(terms: &[String]) -> Vec<VocabularyEntry> {
+    terms
+        .iter()
+        .map(|term| VocabularyEntry {
+            term: term.clone(),
+            sounds_like: Vec::new(),
+            code: false,
+        })
+        .collect()
 }
 
 /// `first`, then the entries of `then` whose term `first` lacks, in any case.
@@ -168,6 +215,123 @@ pub fn entries() -> Vec<VocabularyEntry> {
         .read()
         .unwrap_or_else(|error| error.into_inner())
         .clone()
+}
+
+/// Whether the selected dictation model would read vocabulary terms at all:
+/// Whisper and Qwen3-ASR read them as a prompt; Parakeet, Apple Speech and
+/// other models ignore them. Read as a capture becomes real, before reading
+/// the screen, and again before giving up its live stream.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+pub(crate) fn uses_terms() -> bool {
+    let (_, selection) = crate::app_settings::transcription_selection();
+    let definition = crate::transcription::models::definition(selection.model);
+    terms_used(definition.vocabulary_use())
+}
+
+fn terms_used(vocabulary_use: crate::transcription::models::VocabularyUse) -> bool {
+    use crate::transcription::models::VocabularyUse;
+    match vocabulary_use {
+        VocabularyUse::Prompt => true,
+        VocabularyUse::None => false,
+    }
+}
+
+/// The whole-word, case-insensitive "sounds like" corrections a prompt-based
+/// transcript needs: each listed spelling replaced by its term. `None` when
+/// the list holds no usable spelling.
+pub(crate) fn sounds_like_corrections() -> Option<SoundsLikeCorrections> {
+    corrections_for(&transcription_entries())
+}
+
+/// The spelling corrections one run applies, split by where they can match.
+pub(crate) struct SoundsLikeCorrections {
+    /// Every listed spelling, for the text and its segments.
+    phrases: ReplacementSet,
+    /// Only single-word spellings, for the timed words: a multi-word spelling
+    /// cannot match inside one word.
+    words: ReplacementSet,
+}
+
+/// Every usable spelling replaced by its term, for entries that list one.
+/// Each entry's term is a protection rule, so a spelling inside its own term
+/// cannot win the longest match: "next" never turns "Next.js" into
+/// "Next.js.js", and "open code" never turns "Open Code Hub" into
+/// "Open Code Hub Hub". A protection rule writes back the text it matched, so
+/// other occurrences of the term keep their own casing too. These replace text
+/// after a run instead of steering its decode.
+fn corrections_for(entries: &[VocabularyEntry]) -> Option<SoundsLikeCorrections> {
+    let mut phrases = Vec::new();
+    let mut words = Vec::new();
+    // Every entry's term is protected, even one that lists no spellings, so
+    // a spelling from another entry cannot rewrite it or change its casing.
+    let protected = entries
+        .iter()
+        .map(|entry| entry.term.trim())
+        .filter(|term| !term.is_empty())
+        .collect::<Vec<_>>();
+    for entry in entries {
+        let term = entry.term.trim();
+        // An empty term would compile as a deletion rule.
+        if term.is_empty() {
+            continue;
+        }
+        let spellings = entry
+            .sounds_like
+            .iter()
+            .filter(|spelling| spelling_is_usable(spelling) && !same(spelling, term))
+            .collect::<Vec<_>>();
+        if spellings.is_empty() {
+            continue;
+        }
+        for spelling in spellings {
+            let replacement = TextReplacement {
+                matched_phrase: spelling.clone(),
+                output: term.to_string(),
+            };
+            if !spelling.contains(char::is_whitespace) {
+                words.push(replacement.clone());
+            }
+            phrases.push(replacement);
+        }
+    }
+    (!phrases.is_empty()).then(|| SoundsLikeCorrections {
+        phrases: ReplacementSet::new(&phrases).protecting(&protected),
+        words: ReplacementSet::new(&words).protecting(&protected),
+    })
+}
+
+/// Whether a spelling is long enough for the engine's exact-spelling pass: at
+/// least two characters, counting ASCII letters and digits and every non-ASCII
+/// code point, after dropping ASCII spaces and punctuation. The engine never
+/// lowercases, so `İ` counts once; it ignores a shorter spelling, so this does.
+fn spelling_is_usable(spelling: &str) -> bool {
+    spelling
+        .chars()
+        .filter(|character| !character.is_ascii() || character.is_ascii_alphanumeric())
+        .count()
+        >= 2
+}
+
+/// Replaces each listed "sounds like" spelling in `transcript` with its term.
+/// Called after a whole-clip run whose model read the vocabulary as a prompt
+/// (Whisper, Qwen3-ASR). A model with no vocabulary slot never read the list,
+/// so it is not corrected here. The text and its segments get every spelling;
+/// the timed words get only single-word spellings and keep their times.
+pub(crate) fn correct_sounds_like(transcript: &mut transcribe_cpp::Transcript) {
+    let Some(corrections) = sounds_like_corrections() else {
+        return;
+    };
+    correct(transcript, &corrections);
+}
+
+fn correct(transcript: &mut transcribe_cpp::Transcript, corrections: &SoundsLikeCorrections) {
+    transcript.text = corrections.phrases.replace(&transcript.text);
+    for segment in &mut transcript.segments {
+        segment.text = corrections.phrases.replace(&segment.text);
+    }
+    for word in &mut transcript.words {
+        word.text = corrections.words.replace(&word.text);
+    }
 }
 
 /// How much of the vocabulary a context prompt carries, in characters, for a
@@ -284,11 +448,11 @@ pub fn parse_sounds_like(raw: &str) -> Vec<String> {
         .collect()
 }
 
-fn clean(text: &str) -> String {
+pub(crate) fn clean(text: &str) -> String {
     text.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
-fn same(left: &str, right: &str) -> bool {
+pub(crate) fn same(left: &str, right: &str) -> bool {
     left.to_lowercase() == right.to_lowercase()
 }
 
@@ -568,6 +732,26 @@ mod tests {
     }
 
     #[test]
+    fn a_captures_screen_terms_come_last_and_leave_with_it() {
+        apply(&[entry("OpenCode", &[])]);
+        let terms = vec!["opencode".to_string(), "Qdrant".to_string()];
+        let inside = for_dictation(|| for_capture(&terms, transcription_entries));
+        assert_eq!(inside, [entry("OpenCode", &[]), entry("Qdrant", &[])]);
+        // A later job, such as a local API request or a meeting, hears none.
+        assert_eq!(
+            for_dictation(transcription_entries),
+            [entry("OpenCode", &[])]
+        );
+    }
+
+    #[test]
+    fn only_prompt_models_read_terms() {
+        use crate::transcription::models::VocabularyUse;
+        assert!(terms_used(VocabularyUse::Prompt));
+        assert!(!terms_used(VocabularyUse::None));
+    }
+
+    #[test]
     fn adding_dedupes_by_case_and_merges_spellings() {
         let mut list = Vec::new();
         assert!(
@@ -619,6 +803,203 @@ mod tests {
         assert!(remove(&mut list, "opencode"));
         assert!(!remove(&mut list, "opencode"));
         assert_eq!(list, [entry("Rune", &[])]);
+    }
+
+    #[test]
+    fn sounds_like_spellings_become_their_terms_after_transcription() {
+        let entries = [
+            entry("GitHub", &["JetHub", "гитхаб"]),
+            entry("OpenCode", &["open code"]),
+        ];
+        let corrections = corrections_for(&entries).unwrap();
+        assert_eq!(
+            corrections.phrases.replace("push to JetHub"),
+            "push to GitHub"
+        );
+        assert_eq!(corrections.phrases.replace("jethub"), "GitHub");
+        assert_eq!(
+            corrections.phrases.replace("JETHUB, jEtHuB."),
+            "GitHub, GitHub."
+        );
+        assert_eq!(
+            corrections.phrases.replace("запушить в гитхаб"),
+            "запушить в GitHub"
+        );
+        assert_eq!(corrections.phrases.replace("open code"), "OpenCode");
+        // Only a whole word: a longer word keeps its spelling, and so does a
+        // spelling split across two words that is not listed.
+        assert_eq!(corrections.phrases.replace("JetHubber"), "JetHubber");
+        assert_eq!(corrections.phrases.replace("Jet Hub"), "Jet Hub");
+    }
+
+    #[test]
+    fn a_spelling_inside_its_own_term_keeps_the_term() {
+        // The term is a longer match than the spelling inside it.
+        let next = corrections_for(&[entry("Next.js", &["next"])]).unwrap();
+        assert_eq!(next.phrases.replace("Next.js"), "Next.js");
+        assert_eq!(next.phrases.replace("next.js"), "next.js");
+        assert_eq!(
+            next.phrases.replace("deploy Next.js now"),
+            "deploy Next.js now"
+        );
+        assert_eq!(
+            next.phrases.replace("wait for next week"),
+            "wait for Next.js week"
+        );
+
+        let hub = corrections_for(&[entry("Open Code Hub", &["open code"])]).unwrap();
+        assert_eq!(hub.phrases.replace("Open Code Hub"), "Open Code Hub");
+        assert_eq!(hub.phrases.replace("open code"), "Open Code Hub");
+    }
+
+    fn corrected_text(entries: &[VocabularyEntry], text: &str) -> String {
+        corrections_for(entries).map_or_else(
+            || text.to_owned(),
+            |corrections| corrections.phrases.replace(text),
+        )
+    }
+
+    #[test]
+    fn a_term_without_spellings_still_protects_itself() {
+        let corrections =
+            corrections_for(&[entry("Next.js", &[]), entry("Nest", &["next"])]).unwrap();
+        assert_eq!(corrections.phrases.replace("next.js"), "next.js");
+        assert_eq!(corrections.phrases.replace("Next.js"), "Next.js");
+        assert_eq!(
+            corrections.phrases.replace("wait for next"),
+            "wait for Nest"
+        );
+    }
+
+    #[test]
+    fn an_entry_without_a_term_is_skipped() {
+        assert!(corrections_for(&[entry("  ", &["next"])]).is_none());
+        let corrections =
+            corrections_for(&[entry("", &["next"]), entry("Rust", &["rost"])]).unwrap();
+        assert_eq!(
+            corrections.phrases.replace("wait for next"),
+            "wait for next"
+        );
+        assert_eq!(corrections.phrases.replace("push to rost"), "push to Rust");
+    }
+
+    #[test]
+    fn a_term_keeps_its_casing_outside_its_spellings() {
+        let corrections = corrections_for(&[entry("Rust", &["rost"])]).unwrap();
+        assert_eq!(
+            corrections.phrases.replace("rust on the car"),
+            "rust on the car"
+        );
+        assert_eq!(
+            corrections.phrases.replace("RUST on the car"),
+            "RUST on the car"
+        );
+        assert_eq!(corrections.phrases.replace("push to rost"), "push to Rust");
+    }
+
+    #[test]
+    fn a_timed_word_keeps_its_casing_and_takes_a_spelling() {
+        let corrections = corrections_for(&[entry("Rust", &["rost"])]).unwrap();
+        let mut transcript = timed_transcript("rust or rost", &["rust", "or", "rost"]);
+        correct(&mut transcript, &corrections);
+        assert_eq!(timed_words(&transcript), ["rust", "or", "Rust"]);
+    }
+
+    #[test]
+    fn a_one_letter_spelling_is_ignored() {
+        // The engine ignores a spelling under two letters, counted after
+        // dropping ASCII spaces and punctuation, so "I" for "AI" leaves
+        // "I think" alone.
+        assert_eq!(corrected_text(&[entry("AI", &["I"])], "I think"), "I think");
+        assert_eq!(
+            corrected_text(&[entry("AI", &["a."])], "a. test"),
+            "a. test"
+        );
+        assert!(!spelling_is_usable("Ж"), "a non-ASCII letter counts once");
+        assert!(
+            !spelling_is_usable("İ"),
+            "the engine never lowercases, so İ stays one character"
+        );
+        assert!(spelling_is_usable("Жж"));
+        assert_eq!(
+            corrections_for(&[entry("AI", &["a.b"])])
+                .unwrap()
+                .phrases
+                .replace("a.b test"),
+            "AI test"
+        );
+    }
+
+    #[test]
+    fn sounds_like_corrections_skip_the_terms_own_spelling() {
+        let entries = [
+            entry("GitHub", &["jethub", "GitHub", "JETHUB"]),
+            entry("Rune", &[]),
+        ];
+        let corrected = corrections_for(&entries).unwrap();
+        assert_eq!(
+            corrected.phrases.replace("GitHub is jethub"),
+            "GitHub is GitHub"
+        );
+        assert_eq!(corrected_text(&entries, "push to jethub"), "push to GitHub");
+        assert!(corrections_for(&[entry("Rune", &[])]).is_none());
+        // An entry whose only spelling restates its term adds nothing, so no
+        // identity rule survives on its own.
+        assert!(corrections_for(&[entry("Next.js", &["next.js"])]).is_none());
+    }
+
+    fn timed_transcript(text: &str, words: &[&str]) -> transcribe_cpp::Transcript {
+        transcribe_cpp::Transcript {
+            text: text.into(),
+            segments: vec![transcribe_cpp::Segment {
+                text: text.into(),
+                ..Default::default()
+            }],
+            words: words
+                .iter()
+                .map(|text| transcribe_cpp::Word {
+                    text: (*text).into(),
+                    ..Default::default()
+                })
+                .collect(),
+            ..Default::default()
+        }
+    }
+
+    fn timed_words(transcript: &transcribe_cpp::Transcript) -> Vec<&str> {
+        transcript
+            .words
+            .iter()
+            .map(|word| word.text.as_str())
+            .collect()
+    }
+
+    #[test]
+    fn a_transcripts_text_segments_and_words_are_corrected() {
+        let replacement = || TextReplacement {
+            matched_phrase: "JetHub".into(),
+            output: "GitHub".into(),
+        };
+        let corrections = SoundsLikeCorrections {
+            phrases: ReplacementSet::new(&[replacement()]),
+            words: ReplacementSet::new(&[replacement()]),
+        };
+        let mut transcript = timed_transcript("push to JetHub.", &["push", "to", "JetHub."]);
+        correct(&mut transcript, &corrections);
+        assert_eq!(transcript.text, "push to GitHub.");
+        assert_eq!(transcript.segments[0].text, "push to GitHub.");
+        assert_eq!(timed_words(&transcript), ["push", "to", "GitHub."]);
+    }
+
+    #[test]
+    fn a_multi_word_spelling_corrects_text_and_segments_but_not_words() {
+        let corrections = corrections_for(&[entry("OpenCode", &["open code"])]).unwrap();
+        let mut transcript = timed_transcript("use open code now", &["use", "open", "code", "now"]);
+        correct(&mut transcript, &corrections);
+        assert_eq!(transcript.text, "use OpenCode now");
+        assert_eq!(transcript.segments[0].text, "use OpenCode now");
+        // A multi-word spelling cannot match inside one timed word.
+        assert_eq!(timed_words(&transcript), ["use", "open", "code", "now"]);
     }
 
     #[test]

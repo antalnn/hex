@@ -11,6 +11,7 @@ use std::time::{Duration, Instant};
 use color_eyre::eyre::{Result, WrapErr, bail, eyre};
 use serde::Serialize;
 
+use crate::app_settings::AppSettings;
 use crate::desktop::events::{EventLog, VoiceEvent, now_ms};
 
 mod dictation;
@@ -26,8 +27,10 @@ mod transcriptions;
 #[cfg_attr(not(target_os = "macos"), allow(unused_imports))]
 pub use discovery::call_developer;
 use discovery::*;
+pub(crate) use discovery::{Discovered, Endpoint, discover, error_code};
+#[cfg(not(target_os = "macos"))]
+pub use discovery::{ExitWatch, watch_running};
 pub use discovery::{call_control, running_pid};
-pub(crate) use discovery::{error_code, post_wav};
 use http::*;
 pub use processing::Processing;
 pub use timestamps::Timestamps;
@@ -374,6 +377,10 @@ pub fn run_service(
     };
     let events = EventLog::create(&service_event_path)?;
     let local_api = if embedded {
+        // This service runs no launch that publishes settings, so read them
+        // here: transcription biases on the saved vocabulary rather than an
+        // empty one.
+        AppSettings::apply_for_embedded_service();
         let api = LocalApi::start_embedded(events)?;
         thread::Builder::new()
             .name("embedded-host-lease".into())

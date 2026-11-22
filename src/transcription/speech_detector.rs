@@ -4,13 +4,14 @@
 //! The detector is optional. While its file is missing it downloads in the
 //! background, and every caller falls back to its level-only silence check.
 
+use std::ops::Range;
 use std::path::Path;
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering;
 use std::sync::{Mutex, MutexGuard};
 
 use color_eyre::eyre::Result;
-use transcribe_cpp::{Backend, Model, ModelOptions, VadOptions, VadSession};
+use transcribe_cpp::{Backend, Model, ModelOptions, VadOptions, VadSegment, VadSession};
 
 use crate::transcription::models as transcription_models;
 
@@ -48,16 +49,92 @@ pub(crate) fn contains_speech(samples: &[f32]) -> Option<bool> {
     }
     #[cfg(not(test))]
     {
-        let mut state = lock_state();
-        let session = loaded_session(&mut state)?;
-        match detect(session, samples) {
-            Ok(speech) => Some(speech),
-            Err(error) => {
-                if !RUN_FAILURE_LOGGED.swap(true, Ordering::Relaxed) {
-                    tracing::warn!(%error, "speech detection failed");
-                }
-                None
+        heard(samples).map(|segments| !segments.is_empty())
+    }
+}
+
+/// Recovery never starts a download, and fails closed without a detector.
+#[cfg(all(target_os = "macos", hex_capture))]
+pub(crate) fn installed_speech(samples: &[f32]) -> bool {
+    #[cfg(test)]
+    {
+        if let Some(verdict) = OVERRIDE.with(|v| v.get()) {
+            return verdict;
+        }
+    }
+    let mut state = lock_state();
+    if matches!(*state, State::Unloaded)
+        && let Ok(path) = transcription_models::speech_detector_path()
+        && path.is_file()
+        && let Ok(session) = load(&path)
+    {
+        *state = State::Loaded(session);
+    }
+    match &mut *state {
+        State::Loaded(s) => segments(s, samples).is_ok_and(|v| !v.is_empty()),
+        _ => false,
+    }
+}
+
+/// First and last speech sample of 16 kHz mono `samples`, or `None` when the
+/// detector is not available or hears no speech. The bounds are Silero's own
+/// segments, which already carry its `speech_pad_ms`.
+pub(crate) fn speech_bounds(samples: &[f32]) -> Option<Range<usize>> {
+    #[cfg(test)]
+    {
+        let _ = samples;
+        None
+    }
+    #[cfg(not(test))]
+    {
+        let segments = heard(samples)?;
+        bounds(
+            segments
+                .iter()
+                .map(|segment| (segment.start_sample, segment.end_sample)),
+            samples.len(),
+        )
+    }
+}
+
+/// The span of `segments`, each a first speech sample and the first sample
+/// after it, in a clip of `len` samples; clamped to the clip.
+fn bounds(segments: impl Iterator<Item = (i64, i64)>, len: usize) -> Option<Range<usize>> {
+    let (mut first, mut last) = (i64::MAX, i64::MIN);
+    let mut heard = false;
+    for (start, end) in segments {
+        heard = true;
+        first = first.min(start);
+        last = last.max(end);
+    }
+    if !heard {
+        return None;
+    }
+    let start = usize::try_from(first.max(0)).unwrap_or(usize::MAX).min(len);
+    let end = usize::try_from(last.max(0)).unwrap_or(usize::MAX).min(len);
+    (start < end).then_some(start..end)
+}
+
+/// `bounds` widened by `margin` samples on each side and clamped to a clip of
+/// `len` samples.
+pub(crate) fn edge_bounds(len: usize, bounds: Range<usize>, margin: usize) -> Range<usize> {
+    let start = bounds.start.min(len).saturating_sub(margin);
+    let end = bounds.end.min(len).saturating_add(margin).min(len);
+    start..end.max(start)
+}
+
+/// The detector's segments, or `None` when it is unavailable or failed.
+#[cfg(not(test))]
+fn heard(samples: &[f32]) -> Option<Vec<VadSegment>> {
+    let mut state = lock_state();
+    let session = loaded_session(&mut state)?;
+    match segments(session, samples) {
+        Ok(segments) => Some(segments),
+        Err(error) => {
+            if !RUN_FAILURE_LOGGED.swap(true, Ordering::Relaxed) {
+                tracing::warn!(%error, "speech detection failed");
             }
+            None
         }
     }
 }
@@ -146,13 +223,20 @@ fn load(path: &Path) -> Result<VadSession> {
     Ok(model.vad_session()?)
 }
 
+/// Whether one run hears speech, for the ignored tests that load the real
+/// detector.
+#[cfg(test)]
 fn detect(session: &mut VadSession, samples: &[f32]) -> Result<bool> {
+    Ok(!segments(session, samples)?.is_empty())
+}
+
+fn segments(session: &mut VadSession, samples: &[f32]) -> Result<Vec<VadSegment>> {
     let options = VadOptions {
         threshold: THRESHOLD,
         min_speech_ms: MIN_SPEECH_MS,
         ..VadOptions::default()
     };
-    Ok(!session.run(samples, &options)?.segments.is_empty())
+    Ok(session.run(samples, &options)?.segments)
 }
 
 /// Silence kept on each side of a speech span when a whole clip is trimmed.
@@ -320,6 +404,50 @@ mod tests {
         assert!(trim_with(&samples, Some(Vec::new())).is_none());
         // A saving under a quarter second is not worth the risk.
         assert!(trim_with(&samples, Some(vec![(0, 31_900)])).is_none());
+    }
+
+    #[test]
+    fn detected_segments_bound_the_speech_inside_the_clip() {
+        assert_eq!(
+            bounds([(1_000, 4_000), (9_000, 12_000)].into_iter(), 16_000),
+            Some(1_000..12_000)
+        );
+        assert_eq!(
+            bounds([(12_000, 16_000)].into_iter(), 16_000),
+            Some(12_000..16_000)
+        );
+        assert_eq!(
+            bounds([(12_000, 20_000)].into_iter(), 16_000),
+            Some(12_000..16_000),
+            "a segment past the clip is clamped to it"
+        );
+        assert_eq!(bounds([].into_iter(), 16_000), None);
+        assert_eq!(
+            bounds([(16_000, 18_000)].into_iter(), 16_000),
+            None,
+            "speech past the clip leaves nothing to keep"
+        );
+    }
+
+    #[test]
+    fn a_margin_around_the_speech_clamps_to_the_clip() {
+        // 1 s of speech inside 3 s, with the 500 ms margin a Whisper run uses.
+        assert_eq!(edge_bounds(48_000, 16_000..32_000, 8_000), 8_000..40_000);
+        assert_eq!(
+            edge_bounds(48_000, 2_000..4_000, 8_000),
+            0..12_000,
+            "the leading margin stops at the clip's start"
+        );
+        assert_eq!(
+            edge_bounds(48_000, 44_000..47_000, 8_000),
+            36_000..48_000,
+            "the trailing margin stops at the clip's end"
+        );
+        assert_eq!(
+            edge_bounds(48_000, 40_000..80_000, 8_000),
+            32_000..48_000,
+            "bounds past the end still clamp"
+        );
     }
 
     #[test]

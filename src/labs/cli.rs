@@ -86,6 +86,7 @@ pub fn run(command: Option<&LabsCommand>) -> Result<()> {
             crate::control::ControlReply::Error { message, .. } => Err(eyre!("{message}")),
             _ => {
                 println!("Turned {} {state}.", feature.name());
+                announce_note(feature, on);
                 Ok(())
             }
         };
@@ -93,17 +94,50 @@ pub fn run(command: Option<&LabsCommand>) -> Result<()> {
     let mut settings = AppSettings::load()?;
     if feature.on(&settings) == on {
         println!("{} is already {state}.", feature.name());
+        announce_note(feature, on);
         return Ok(());
     }
+    let base = settings.clone();
     feature.set(&mut settings, on);
-    settings.save()?;
+    base.update(&settings)?;
     println!("Turned {} {state}.", feature.name());
+    announce_note(feature, on);
     Ok(())
+}
+
+/// Says why a lab just turned on can't work in this session (Labs › Live
+/// typing on a compositor that offers no input method).
+fn announce_note(feature: Feature, on: bool) {
+    if on
+        && feature == Feature::LiveTyping
+        && feature.managed().is_none()
+        && let Some(note) = live_typing_note()
+    {
+        println!("Note: {note}.");
+    }
+}
+
+/// Why Labs › Live typing can't work here, on this Wayland compositor: it
+/// offers no input method Hex can use (GNOME). `None` when it can work, off
+/// Wayland, and on every other OS.
+#[cfg(target_os = "linux")]
+fn live_typing_note() -> Option<&'static str> {
+    if !crate::linux::session::LinuxSession::detect().is_wayland() {
+        return None;
+    }
+    (!crate::linux::paste::wayland_offers("zwp_input_method_manager_v2")).then_some(
+        "This desktop doesn't offer the input method Live typing needs (GNOME doesn't), so dictations paste normally",
+    )
+}
+
+#[cfg(not(target_os = "linux"))]
+fn live_typing_note() -> Option<&'static str> {
+    None
 }
 
 /// The feature `name` names, if this OS has it and `reaches` admits it.
 /// Features that left Labs: `hex labs` still knows their names.
-const GRADUATED: [(&str, &str); 2] = [
+const GRADUATED: [(&str, &str); 24] = [
     (
         "custom-models",
         "custom-models graduated: adding a model file and models found on this computer are always on now",
@@ -111,6 +145,94 @@ const GRADUATED: [(&str, &str); 2] = [
     (
         "meeting-platform-icons",
         "meeting-platform-icons graduated: the Meetings list always shows each recording's call app icon now",
+    ),
+    (
+        "transcribe-files",
+        "transcribe-files graduated: hex transcribe <file> is always available now",
+    ),
+    (
+        "restore-shortcut-default",
+        "restore-shortcut-default graduated: Paste last dictation's shortcut always offers Reset when it isn't the default now",
+    ),
+    (
+        "follow-live-transcript",
+        "follow-live-transcript graduated: a recording meeting's transcript always follows the newest line now",
+    ),
+    (
+        "more-call-apps",
+        "more-call-apps graduated: Hex always offers to record calls in every call app and website it knows now",
+    ),
+    (
+        "meeting-notes-vocabulary",
+        "meeting-notes-vocabulary graduated: meeting titles and summaries always read your vocabulary now",
+    ),
+    (
+        "meeting-finished-event",
+        "meeting-finished-event graduated: the local API's GET /meetings/events is always available now",
+    ),
+    (
+        "subtitle-export",
+        "subtitle-export graduated: hex meetings show --srt and --vtt are always available now",
+    ),
+    (
+        "movable-meeting-capsules",
+        "movable-meeting-capsules graduated: every meeting capsule can be thrown to another corner now",
+    ),
+    (
+        "expire-meeting-audio",
+        "expire-meeting-audio moved: set Keep audio in Meetings › Settings › After a meeting, or hex settings set meetings.audio_retention",
+    ),
+    (
+        "stop-when-call-ends",
+        "stop-when-call-ends moved: turn on Stop when the call ends in Meetings › Settings › Detected calls, or hex settings set meetings.stop_when_call_ends true",
+    ),
+    (
+        "meeting-descriptive-filenames",
+        "meeting-descriptive-filenames moved: turn on Descriptive meeting file names in Meetings › Settings › Export, or hex settings set meetings.export.descriptive_filenames true",
+    ),
+    (
+        "meeting-notes-file",
+        "meeting-notes-file moved: turn on Separate notes file in Meetings › Settings › Export, or hex settings set meetings.export.notes_file true",
+    ),
+    (
+        "yearly-stats",
+        "yearly-stats moved: turn on Dictation stats in Settings › Labs, or hex labs on history-stats (it includes the year heatmap and all-time totals now)",
+    ),
+    (
+        "shell-completions",
+        "shell-completions graduated: hex completions <shell> always prints a completion script",
+    ),
+    (
+        "print-start",
+        "print-start graduated: hex dictation start --print works on macOS without a switch",
+    ),
+    (
+        "vocabulary-biasing",
+        "vocabulary-biasing graduated: Parakeet uses your vocabulary unless the boost is Off",
+    ),
+    (
+        "history-multi-select",
+        "history-multi-select graduated: select, copy, or delete several dictations in History",
+    ),
+    (
+        "picker-active-first",
+        "picker-active-first graduated: the speech model in use comes first in the picker",
+    ),
+    (
+        "release-notes-link",
+        "release-notes-link graduated: select the version in the sidebar to read a published build's notes",
+    ),
+    (
+        "app-model-switching",
+        "app-model-switching left Labs: saved mode choices and the existing opt-in still work",
+    ),
+    (
+        "quit-closes-window",
+        "quit-closes-window was removed: ⌘Q quits Hex",
+    ),
+    (
+        "api-browser-access",
+        "api-browser-access was removed: the local API no longer allows cross-origin browser requests",
     ),
 ];
 
@@ -141,8 +263,13 @@ fn list(settings: &AppSettings) -> String {
         let on = feature.on(settings)
             || (feature == Feature::VoiceFilter
                 && crate::audio::hex_microphone::driver_bundle_installed());
+        let note = (feature == Feature::LiveTyping && feature.managed().is_none())
+            .then(live_typing_note)
+            .flatten()
+            .map(|note| format!(" ({note})"))
+            .unwrap_or_default();
         out.push_str(&format!(
-            "{:<width$}  {:<7}  {:<8}  {} (hex settings {})\n",
+            "{:<width$}  {:<7}  {:<8}  {}{note} (hex settings {})\n",
             feature.name(),
             if feature.managed().is_some() {
                 "managed"

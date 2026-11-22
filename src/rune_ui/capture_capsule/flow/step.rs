@@ -8,31 +8,32 @@ impl Flow {
             self.silent = true;
             return actions;
         }
+        if input == Input::CopyFailed {
+            self.uncopied = true;
+            return actions;
+        }
         if let Input::Drawing(on) = input {
             self.drawing = on;
             return actions;
         }
         if input == Input::Stage(Stage::Recording) {
             self.silent = false;
+            self.uncopied = false;
             if !matches!(self.phase, Phase::Recording { .. }) {
                 self.drawing = false;
             }
         }
         if matches!(input, Input::Stage(_)) {
             self.closed = false;
-            self.waiting = None;
-            self.settled = false;
             self.undoing = false;
             self.superseded = false;
         }
-        if let Input::Undone(undone) = input {
+        if matches!(input, Input::Undone(_)) {
             // The earlier send's, taken back before the pick went.
             if std::mem::take(&mut self.superseded) {
                 return actions;
             }
             self.undoing = false;
-            // Too late, it stays where it went.
-            self.settled |= undone == Undone::TooLate;
         }
         // The send an Undo takes back, arriving late (it went, queued, or
         // failed), changes nothing: the list it reopened stays.
@@ -55,20 +56,25 @@ impl Flow {
         {
             return actions;
         }
-        if matches!(input, Input::Settled | Input::Delivered(_)) {
-            self.waiting = None;
-            if input == Input::Settled {
-                self.settled = true;
-                self.hold_floor = self.hold_floor.max(now + tuning::get().brief_hold_s);
-                // A rule's send went: it sounds Sent, once.
-                if let Phase::Routed(routed) = &mut self.phase
-                    && matches!(routed.route, Route::Rule { .. })
-                    && !std::mem::replace(&mut routed.delivered, true)
-                {
-                    self.cues.push(Cue::Sent);
-                }
-                return actions;
+        if input == Input::Sending {
+            if !self.undoing
+                && let Phase::Routed(routed) = &mut self.phase
+                && !routed.taken_back
+            {
+                routed.sending = true;
             }
+            return actions;
+        }
+        if input == Input::Settled {
+            self.hold_floor = self.hold_floor.max(now + tuning::get().brief_hold_s);
+            // A rule's send went: it sounds Sent, once.
+            if let Phase::Routed(routed) = &mut self.phase
+                && !std::mem::replace(&mut routed.delivered, true)
+                && matches!(routed.route, Route::Rule { .. })
+            {
+                self.cues.push(Cue::Sent);
+            }
+            return actions;
         }
         match input {
             // A capture finishing without its screen: its capsule says
@@ -136,8 +142,6 @@ impl Flow {
             }
             return actions;
         }
-        let switching = matches!(input, Input::Stage(_) | Input::Failed(..) | Input::Gone)
-            && std::mem::take(&mut self.switching);
         let phase = std::mem::replace(&mut self.phase, Phase::Hidden);
         self.phase = match (phase, input) {
             (_, Input::Stage(stage)) => match stage {
@@ -158,10 +162,7 @@ impl Flow {
             },
             (_, Input::Failed(what, why)) => Phase::Failed {
                 at: now,
-                what: match what {
-                    Failure::Save if switching => Failure::Start,
-                    what => what,
-                },
+                what,
                 why: why.as_deref().and_then(plain_reason),
             },
             (Phase::Recording { discard_until, .. }, Input::Chips) => Phase::Recording {
@@ -190,29 +191,7 @@ impl Flow {
             // Closed before the router answered (dismissed, or the answer
             // came after the hold): it stays closed, and `hex capture list`
             // and `hex capture send` still offer the capture.
-            // A guess still waits for Send to….
-            (Phase::Hidden, Input::Routed(route)) if self.closed => {
-                if !self.settled {
-                    self.waiting = waits(Routed {
-                        route,
-                        at: now,
-                        open: None,
-                        taken_back: false,
-                        already_with: None,
-                        taken_from: None,
-                        delivered: false,
-                    });
-                }
-                Phase::Hidden
-            }
-            (Phase::Hidden, Input::Delivered(_)) if self.closed => Phase::Hidden,
-            // Closed with nothing picked: Send to… brings the list
-            // back.
-            (Phase::Hidden | Phase::Kept { .. }, Input::OpenList) if self.waiting.is_some() => {
-                let routed = self.waiting.take().expect("checked");
-                self.phase = Phase::Routed(Routed { at: now, ..routed });
-                return self.step(Input::OpenList, now);
-            }
+            (Phase::Hidden, Input::Routed(_) | Input::Delivered(_)) if self.closed => Phase::Hidden,
             // A queued send went on a retry: Hex can't take it back.
             (_, Input::Delivered(delivered)) => match delivered {
                 Delivered::Sent { to } => Phase::Sent(Sent {
@@ -241,6 +220,7 @@ impl Flow {
                     already_with: None,
                     taken_from: None,
                     delivered: false,
+                    sending: false,
                 })
             }
             (Phase::Routed(routed), Input::OpenList)
@@ -400,11 +380,12 @@ impl Flow {
                         actions
                     };
                 }
-                // The chip is only there while the window runs; a click that
-                // lands as it ends still counts, and the router answers too
-                // late if it was.
+                // The chip is there until the router posts the send; a click
+                // that lands as it goes says nothing, since Undo stops a
+                // send and never chases one that went.
+                let going = routed.delivered || routed.sending;
                 match (rule_to(&routed.route).cloned(), !routed.taken_back) {
-                    (Some(to), true) => {
+                    (Some(to), true) if !going => {
                         actions.push(Action::Undo {
                             to: to.name.clone(),
                         });

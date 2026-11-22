@@ -21,14 +21,13 @@ pub enum ExtraDictationMode {
     /// Tap to talk hands-free, tap again to paste.
     Tap,
     /// Double-tap to talk hands-free, tap again to paste. Needs a binding
-    /// with a key, or with Labs › Double-tap on a lone modifier, one without
+    /// with a key, or with Labs › Double-tap Option, Command, or Globe, one without
     /// a key; otherwise it folds to [`Self::HoldOrDoubleTap`].
     DoubleTap,
 }
 
 impl ExtraDictationMode {
-    /// Every choice, in the order Settings shows them.
-    #[cfg_attr(not(test), allow(dead_code))]
+    /// Every choice, in the order Settings shows them, the default first.
     pub const ALL: [Self; 4] = [
         Self::HoldOrDoubleTap,
         Self::Hold,
@@ -37,9 +36,8 @@ impl ExtraDictationMode {
     ];
 
     /// The shortcut machine's switches: toggle, double-tap enabled, and
-    /// double-tap only, exactly as `Trigger::apply` saves the dictation
-    /// shortcut's (`rune_ui::shortcut_mode`).
-    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+    /// double-tap only, which `Trigger::apply` saves for the dictation
+    /// shortcut (`rune_ui::shortcut_mode`).
     pub const fn switches(self) -> (bool, bool, bool) {
         match self {
             Self::HoldOrDoubleTap => (false, true, false),
@@ -51,7 +49,7 @@ impl ExtraDictationMode {
 
     /// `self`, folded to a mode its binding can trigger: double-tap only
     /// needs a shortcut with a key or, with `modifiers_allowed` (Labs ›
-    /// Double-tap on a lone modifier), a shortcut without one, as
+    /// Double-tap Option, Command, or Globe), a shortcut without one, as
     /// `normalize_double_tap_settings` folds the dictation shortcut's.
     pub fn for_binding(self, binding: Option<&HotkeyBinding>, modifiers_allowed: bool) -> Self {
         if self == Self::DoubleTap
@@ -182,7 +180,7 @@ mod tests {
             ExtraDictationMode::DoubleTap.for_binding(None, false),
             ExtraDictationMode::HoldOrDoubleTap
         );
-        // Labs › Double-tap on a lone modifier keeps Double-tap on a shortcut
+        // Labs › Double-tap Option, Command, or Globe keeps Double-tap on a shortcut
         // without a key, as it does the dictation shortcut's; an unbound row
         // keeps the choice too, and folds it once it gets a lone modifier
         // with the lab off.

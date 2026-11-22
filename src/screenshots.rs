@@ -8,17 +8,24 @@
 //! by ScreenCaptureKit at the display's own pixels, with Hex's overlays and
 //! the pointer left out, on its own thread.
 //!
-//! The record shortcut (unbound until set) opens the same picker to record
-//! what it picks as an Annotate capture, and pressing it again stops; the
-//! recording then lands on the same card ([`recording`]).
+//! The record shortcut (⌘⇧5) opens the recording toolbar ([`toolbar`]):
+//! an area or a window through the same picker, or a whole display, with
+//! the sound it keeps. It records as an Annotate capture, and pressing the
+//! shortcut again stops; the recording then lands on the same card
+//! ([`recording`]).
 
+mod dim;
 pub(crate) mod narration;
+mod picker;
 mod recording;
 pub(crate) mod save;
 pub(crate) mod system_shortcut;
+mod toolbar;
+mod toolbar_level;
 
-use std::sync::OnceLock;
-use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
+use std::sync::{Mutex, OnceLock};
 
 use crate::app_settings::RuntimeHotkey;
 use crate::capture_host::{CaptureNeed, CaptureTarget};
@@ -34,13 +41,48 @@ struct Overlays {
 
 static OVERLAYS: OnceLock<Overlays> = OnceLock::new();
 /// While the picker shows, the tap hands it Escape and Space.
-static PICKING: AtomicBool = AtomicBool::new(false);
-/// Whether it picks a window rather than an area.
-static WINDOW_MODE: AtomicBool = AtomicBool::new(false);
-/// Whether the open picker records what it picks rather than shooting it.
-static RECORDING: AtomicBool = AtomicBool::new(false);
+static PICKER: Mutex<picker::Picker> = Mutex::new(picker::Picker::new());
 /// The picker's window, left out of the shot; 0 before it's made.
 static PICKER_WINDOW: AtomicU32 = AtomicU32::new(0);
+/// The folder the last shot, recording, or editor save couldn't be written
+/// to and why, which Labs › Screenshots' card names until a save works or
+/// another folder is chosen. It keeps its own folder: the setting may have
+/// changed since through `hex settings` or `settings.json`.
+static SAVE_ERROR: Mutex<Option<(PathBuf, String)>> = Mutex::new(None);
+/// How many times [`SAVE_ERROR`] was recorded or cleared. A window's poll
+/// that reports nothing redraws nothing, so the card compares this count
+/// with the one it last drew and reports the difference.
+static SAVE_ERROR_CHANGES: AtomicU64 = AtomicU64::new(0);
+
+/// The last failed save's folder and reason, for the card.
+pub(crate) fn save_error() -> Option<(PathBuf, String)> {
+    SAVE_ERROR
+        .lock()
+        .unwrap_or_else(|error| error.into_inner())
+        .clone()
+}
+
+/// How many times the last failed save changed: a save recorded an error or
+/// cleared one.
+pub(crate) fn save_error_generation() -> u64 {
+    SAVE_ERROR_CHANGES.load(Ordering::Relaxed)
+}
+
+/// Forgets the last failed save: a later one saved fine, or the folder
+/// changed.
+pub(crate) fn clear_save_error() {
+    *SAVE_ERROR.lock().unwrap_or_else(|error| error.into_inner()) = None;
+    SAVE_ERROR_CHANGES.fetch_add(1, Ordering::Relaxed);
+}
+
+/// Remembers a failed save of `folder` for the card, bounded so a long path
+/// can't grow the note without limit.
+pub(crate) fn record_save_error(folder: &Path, error: &anyhow::Error) {
+    let bounded: String = error.to_string().chars().take(300).collect();
+    *SAVE_ERROR.lock().unwrap_or_else(|error| error.into_inner()) =
+        Some((folder.to_path_buf(), bounded));
+    SAVE_ERROR_CHANGES.fetch_add(1, Ordering::Relaxed);
+}
 
 /// Adds the screenshot picker, thumbnail, and editor, hidden. They're made at
 /// launch only while the Lab is on then.
@@ -57,7 +99,9 @@ pub(crate) fn install<S: 'static>(app: &mut rune::App<S>) {
         },
     );
     let thumbnail = Thumbnail::install(app);
+    toolbar::install(app);
     crate::rune_ui::screenshot_thumbnail::editor::install(app);
+    dim::install(app);
     let _ = OVERLAYS.set(Overlays { picker, thumbnail });
     crate::capture_host::on_clip_written(recording::written);
 }
@@ -70,8 +114,8 @@ pub(crate) fn begin() -> bool {
 }
 
 /// The record shortcut: stops the Screenshots recording under way, or opens
-/// the picker to record what it picks. Nothing while an Annotate capture
-/// records. Safe from any thread.
+/// the recording toolbar. Nothing while an Annotate capture records. Safe
+/// from any thread.
 pub(crate) fn record() -> bool {
     match crate::capture_host::snapshot().recording {
         Some(recording) if recording.clip => {
@@ -85,34 +129,39 @@ pub(crate) fn record() -> bool {
             true
         }
         Some(_) => false,
-        None => open(true),
+        None => crate::labs::screenshots() && toolbar::open(),
     }
 }
 
 /// Opens the picker to shoot or, with `record`, to record. The picker's own
 /// permission helper calls this again once its grant is made.
 pub(crate) fn open(record: bool) -> bool {
+    open_as(record, false)
+}
+
+/// Opens the picker on an area, or with `window` on a window.
+fn open_as(record: bool, window: bool) -> bool {
     if !crate::labs::screenshots() || OVERLAYS.get().is_none() {
         return false;
     }
-    if PICKING.swap(true, Ordering::AcqRel) {
+    let Some(id) = PICKER
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .begin(record, window)
+    else {
         return false;
-    }
-    WINDOW_MODE.store(false, Ordering::Release);
-    RECORDING.store(record, Ordering::Release);
-    if let Some(overlays) = OVERLAYS.get() {
-        overlays.picker.set_screen_label(if record {
-            crate::desktop::i18n::tr("Full screen · Click to record")
-        } else {
-            crate::desktop::i18n::tr("Full screen · Click to capture")
-        });
-    }
+    };
     // Off the tap's thread: a fresh Screen Recording read may take a moment.
     let spawned = std::thread::Builder::new()
         .name("hex-screenshot-open".into())
         .spawn(move || {
-            if crate::capture_host::permission_state(CaptureNeed::ScreenRecording, true).is_some() {
-                PICKING.store(false, Ordering::Release);
+            let allowed =
+                crate::capture_host::permission_state(CaptureNeed::ScreenRecording, true).is_none();
+            let mut picker = PICKER.lock().unwrap_or_else(|e| e.into_inner());
+            if !picker.permission(id, allowed) {
+                return;
+            }
+            if !allowed {
                 tracing::info!("screenshot needs Screen Recording");
                 // The helper returns here, to the picker, once it's granted:
                 // never to Annotate's whole-screen recording.
@@ -122,10 +171,20 @@ pub(crate) fn open(record: bool) -> bool {
                 );
                 return;
             }
-            show(Some(Mode::Area));
+            if let Some(overlays) = OVERLAYS.get() {
+                overlays.picker.set_screen_label(if record {
+                    crate::desktop::i18n::tr("Full screen · Click to record")
+                } else {
+                    crate::desktop::i18n::tr("Full screen · Click to capture")
+                });
+            }
+            show(id, Some(if window { Mode::Window } else { Mode::Area }));
         });
     if spawned.is_err() {
-        PICKING.store(false, Ordering::Release);
+        PICKER
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .permission(id, false);
     }
     spawned.is_ok()
 }
@@ -147,23 +206,48 @@ pub(crate) fn can_restore() -> bool {
 
 /// Closes the picker without a shot.
 pub(crate) fn cancel() {
-    PICKING.store(false, Ordering::Release);
-    show(None);
+    let mut picker = PICKER.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(pick) = picker.active.take() {
+        show(pick.id, None);
+    }
 }
 
 /// Switches the open picker between an area and a window.
 fn toggle() {
-    let window = !WINDOW_MODE.fetch_xor(true, Ordering::AcqRel);
-    show(Some(if window { Mode::Window } else { Mode::Area }));
+    let mut picker = PICKER.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(pick) = picker.active.as_mut().filter(|pick| pick.ready) {
+        pick.window = !pick.window;
+        show(
+            pick.id,
+            Some(if pick.window {
+                Mode::Window
+            } else {
+                Mode::Area
+            }),
+        );
+    }
 }
 
 pub(crate) fn picking() -> bool {
-    PICKING.load(Ordering::Acquire)
+    PICKER
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .active
+        .is_some()
 }
 
-fn show(mode: Option<Mode>) {
+fn show(id: u64, mode: Option<Mode>) {
     if let Some(overlays) = OVERLAYS.get() {
-        overlays.picker.set(mode);
+        overlays.picker.set_if(mode, move || {
+            let picker = PICKER.lock().unwrap_or_else(|e| e.into_inner());
+            if mode.is_some() {
+                picker.current(id)
+            } else {
+                // Hide is enqueued under the same lock as every show, before
+                // a later opening can queue its show (even while it waits for permission).
+                true
+            }
+        });
     }
 }
 
@@ -173,8 +257,17 @@ fn picked(action: Action) {
     let Action::Start(target) = action else {
         return;
     };
-    cancel();
-    if RECORDING.swap(false, Ordering::AcqRel) {
+    let record = {
+        let mut picker = PICKER.lock().unwrap_or_else(|e| e.into_inner());
+        if !picker.active.as_ref().is_some_and(|pick| pick.ready) {
+            return;
+        }
+        let pick = picker.active.take().unwrap();
+        show(pick.id, None);
+        pick.record
+    };
+    if record {
+        dim::expect(target);
         let clip = crate::capture_host::CaptureControl::Command(
             crate::capture_host::CaptureCommand::Clip(target),
         );
@@ -217,8 +310,16 @@ fn take(target: CaptureTarget) -> anyhow::Result<std::path::PathBuf> {
     let png = save::encode(image.width, image.height, &image.rgba, scale)?;
     let folder = crate::app_settings::screenshot_settings().folder();
     let path = save::write(&folder, &png);
-    if let Err(error) = &path {
-        tracing::warn!(%error, folder = %folder.display(), "could not save the screenshot");
+    match &path {
+        Ok(_) => {
+            // The shot reached the folder this time, even if the clipboard
+            // copy below fails.
+            clear_save_error();
+        }
+        Err(error) => {
+            tracing::warn!(%error, folder = %folder.display(), "could not save the screenshot");
+            record_save_error(&folder, error);
+        }
     }
     save::copy(&png, path.as_deref().ok())?;
     let path = path?;
@@ -234,14 +335,17 @@ fn take(target: CaptureTarget) -> anyhow::Result<std::path::PathBuf> {
         (width, height, &small),
     );
     if let Some(overlays) = OVERLAYS.get() {
-        overlays.thumbnail.show(
-            path.clone(),
-            width,
-            height,
-            small,
-            shot.screen,
-            shot.capture,
-        );
+        overlays
+            .thumbnail
+            .show(crate::rune_ui::screenshot_thumbnail::Taken {
+                path: path.clone(),
+                width,
+                height,
+                rgba: small,
+                sharp: sharp(image.width, image.height, &image.rgba),
+                screen: shot.screen,
+                capture: shot.capture,
+            });
     }
     Ok(path)
 }
@@ -286,11 +390,30 @@ fn remember(capture: Remembered, (width, height, rgba): (u32, u32, &[u8])) {
 
 /// What was said over the shot saved at `file` in the editor, for
 /// Captures' search. Off the caller's thread.
-pub(crate) fn remember_words(file: std::path::PathBuf, words: String) {
-    let spawned = std::thread::Builder::new()
-        .name("hex-capture-words".into())
-        .spawn(move || captures::set_words(&file, &words));
-    if let Err(error) = spawned {
+pub(crate) fn append_words(file: std::path::PathBuf, words: String) {
+    use std::sync::mpsc::{SyncSender, sync_channel};
+    type Words = (std::path::PathBuf, String);
+    static WRITER: OnceLock<Option<SyncSender<Words>>> = OnceLock::new();
+    let writer = WRITER.get_or_init(|| {
+        let (send, receive) = sync_channel::<Words>(32);
+        match std::thread::Builder::new()
+            .name("hex-capture-words".into())
+            .spawn(move || {
+                // Preserve the UI's append order without doing disk I/O there.
+                for (file, words) in receive {
+                    captures::append_words(&file, &words);
+                }
+            }) {
+            Ok(_) => Some(send),
+            Err(error) => {
+                tracing::warn!(%error, "could not start the capture words writer");
+                None
+            }
+        }
+    });
+    if let Some(writer) = writer
+        && let Err(error) = writer.try_send((file, words))
+    {
         tracing::warn!(%error, "could not keep the words said over the shot");
     }
 }
@@ -307,6 +430,16 @@ fn screen_under_pointer() -> (f32, f32) {
 
 /// The thumbnail's long edge, in pixels.
 const THUMB_PX: u32 = 480;
+/// The long edge of the copy a card shows while it's still large, flying
+/// in from where it was taken.
+const SHARP_PX: u32 = 2560;
+
+/// A copy of a shot `width` × `height` pixels for the first frames of its
+/// card, at most [`SHARP_PX`] on its long edge; none when the thumbnail
+/// is already the whole shot.
+fn sharp(width: u32, height: u32, rgba: &[u8]) -> Option<(u32, u32, Vec<u8>)> {
+    (width.max(height) > THUMB_PX).then(|| shrink(width, height, rgba, SHARP_PX))
+}
 
 /// What ScreenCaptureKit shoots for `target`: its source, its width in
 /// points, the display it lands on, and where on that display it was taken
@@ -327,6 +460,10 @@ fn source(target: CaptureTarget) -> anyhow::Result<Shot> {
             .ok_or_else(|| anyhow::anyhow!("no display there"))
     };
     let screen = |display: &screens::Screen| (display.frame[2] as f32, display.frame[3] as f32);
+    let whole = |display: &screens::Screen| {
+        let (w, h) = screen(display);
+        [0.0, 0.0, w, h]
+    };
     Ok(match target {
         CaptureTarget::Window { id } => {
             let bounds = scrawl_capture::windows::raw_windows()
@@ -351,7 +488,7 @@ fn source(target: CaptureTarget) -> anyhow::Result<Shot> {
                 source: capture_core::Source::Display(display.id),
                 points_wide: display.frame[2],
                 screen: screen(display),
-                capture: None,
+                capture: Some(whole(display)),
             }
         }
         CaptureTarget::Phone => anyhow::bail!("a screenshot is never of an iPhone"),
@@ -361,7 +498,7 @@ fn source(target: CaptureTarget) -> anyhow::Result<Shot> {
                 source: capture_core::Source::Display(display.id),
                 points_wide: display.frame[2],
                 screen: screen(display),
-                capture: None,
+                capture: Some(whole(display)),
             }
         }
         CaptureTarget::Area { rect: [x, y, w, h] } => {
@@ -452,6 +589,10 @@ enum Effect {
     Record,
     Cancel,
     Toggle,
+    /// Escape, or the record shortcut, while the recording toolbar shows.
+    CloseToolbar,
+    /// Return while the recording toolbar shows: records what it shows.
+    RecordNow,
     /// A key for the card under the pointer.
     Card(CardKey),
 }
@@ -487,6 +628,17 @@ fn card_key(code: u16, flags: u64) -> Option<CardKey> {
     }
 }
 
+/// What's open that takes keys: the picker, the recording toolbar, or
+/// neither. While one of the toolbar's menus is open, Escape and Return are
+/// the menu's.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Open {
+    Nothing,
+    Picker,
+    Toolbar,
+    ToolbarMenu,
+}
+
 /// The keys this took the press of, so their releases go too.
 #[derive(Default)]
 struct Taken(u128);
@@ -496,7 +648,7 @@ impl Taken {
         &mut self,
         key: Key,
         shortcuts: Shortcuts,
-        picking: bool,
+        open: Open,
         card: bool,
         suspended: bool,
     ) -> (Take, Effect) {
@@ -520,13 +672,20 @@ impl Taken {
             hotkey.is_some_and(|h| h.matches_key_press(key.code, key.flags))
         };
         let (shot, record) = (pressed(shortcuts.shot), pressed(shortcuts.record));
+        let alone = key.flags & MODIFIERS == 0;
         let effect = match key.code {
-            _ if (shot || record) && picking => Effect::None,
+            _ if (shot || record) && open == Open::Picker => Effect::None,
+            _ if record && matches!(open, Open::Toolbar | Open::ToolbarMenu) => {
+                Effect::CloseToolbar
+            }
+            _ if shot && matches!(open, Open::Toolbar | Open::ToolbarMenu) => Effect::None,
             _ if shot => Effect::Begin,
             _ if record => Effect::Record,
-            ESCAPE if picking => Effect::Cancel,
-            SPACE if picking => Effect::Toggle,
-            code if card && !picking => match card_key(code, key.flags) {
+            ESCAPE if open == Open::Picker => Effect::Cancel,
+            ESCAPE if open == Open::Toolbar => Effect::CloseToolbar,
+            RETURN if open == Open::Toolbar && alone => Effect::RecordNow,
+            SPACE if open == Open::Picker => Effect::Toggle,
+            code if card && open == Open::Nothing => match card_key(code, key.flags) {
                 Some(card) => Effect::Card(card),
                 None => return (Take::No, Effect::None),
             },
@@ -552,8 +711,18 @@ pub(crate) struct Key {
 pub(crate) fn key(key: Key) -> Take {
     static TAKEN: std::sync::Mutex<Taken> = std::sync::Mutex::new(Taken(0));
     let mut taken = TAKEN.lock().unwrap_or_else(|error| error.into_inner());
-    let picking = picking();
-    if taken.0 == 0 && !picking && !crate::labs::screenshots() {
+    let open = if picking() {
+        Open::Picker
+    } else if toolbar::is_open() {
+        if crate::rune_ui::capture_capsule::toolbar::menu_open() {
+            Open::ToolbarMenu
+        } else {
+            Open::Toolbar
+        }
+    } else {
+        Open::Nothing
+    };
+    if taken.0 == 0 && open == Open::Nothing && !crate::labs::screenshots() {
         return Take::No;
     }
     let shortcuts = Shortcuts {
@@ -563,7 +732,7 @@ pub(crate) fn key(key: Key) -> Take {
     let (take, effect) = taken.decide(
         key,
         shortcuts,
-        picking,
+        open,
         crate::rune_ui::screenshot_thumbnail::hovered(),
         crate::app_settings::shortcuts_suspended(),
     );
@@ -578,6 +747,8 @@ pub(crate) fn key(key: Key) -> Take {
         }
         Effect::Cancel => cancel(),
         Effect::Toggle => toggle(),
+        Effect::CloseToolbar => toolbar::close(),
+        Effect::RecordNow => toolbar::record(),
         Effect::Card(card) => {
             if let Some(overlays) = OVERLAYS.get() {
                 overlays.thumbnail.key(card);
@@ -587,23 +758,27 @@ pub(crate) fn key(key: Key) -> Take {
     take
 }
 
-/// Whether macOS's own screenshot shortcut takes Hex's now: it's matched
-/// in the window server before any app's tap, so Hex never sees the press.
-/// Read again at most every 2 s, since Settings draws it each frame.
+/// Whether macOS's own screenshot shortcuts take one of Hex's now (⌘⇧4,
+/// or ⌘⇧5 for the toolbar): they're matched in the window server before any
+/// app's tap, so Hex never sees the press. Read again at most every 2 s,
+/// since Settings draws it each frame.
 pub(crate) fn system_takes_shortcut() -> bool {
     use std::time::{Duration, Instant};
-    static LAST: std::sync::Mutex<Option<(Instant, Option<RuntimeHotkey>, bool)>> =
-        std::sync::Mutex::new(None);
-    let hotkey = crate::app_settings::screenshot_hotkey();
+    type Hotkeys = [Option<RuntimeHotkey>; 2];
+    static LAST: std::sync::Mutex<Option<(Instant, Hotkeys, bool)>> = std::sync::Mutex::new(None);
+    let hotkeys = [
+        crate::app_settings::screenshot_hotkey(),
+        crate::app_settings::screenshot_record_hotkey(),
+    ];
     let mut last = LAST.lock().unwrap_or_else(|error| error.into_inner());
     if let Some((at, read_for, takes)) = *last
-        && read_for == hotkey
+        && read_for == hotkeys
         && at.elapsed() < Duration::from_secs(2)
     {
         return takes;
     }
-    let takes = hotkey.is_some_and(system_shortcut::takes);
-    *last = Some((Instant::now(), hotkey, takes));
+    let takes = hotkeys.into_iter().flatten().any(system_shortcut::takes);
+    *last = Some((Instant::now(), hotkeys, takes));
     takes
 }
 
@@ -643,11 +818,17 @@ mod tests {
     fn the_shortcut_opens_the_picker_and_its_release_stays_with_it() {
         let mut taken = Taken::default();
         assert_eq!(
-            taken.decide(press(21, COMMAND_SHIFT), hotkey(), false, false, false),
+            taken.decide(
+                press(21, COMMAND_SHIFT),
+                hotkey(),
+                Open::Nothing,
+                false,
+                false
+            ),
             (Take::AfterListener, Effect::Begin)
         );
         assert_eq!(
-            taken.decide(release(21), hotkey(), true, false, false),
+            taken.decide(release(21), hotkey(), Open::Picker, false, false),
             (Take::AfterListener, Effect::None)
         );
         assert_eq!(taken.0, 0);
@@ -658,9 +839,15 @@ mod tests {
         let mut taken = Taken::default();
         let mut repeat = press(21, COMMAND_SHIFT);
         repeat.repeat = true;
-        taken.decide(press(21, COMMAND_SHIFT), hotkey(), false, false, false);
+        taken.decide(
+            press(21, COMMAND_SHIFT),
+            hotkey(),
+            Open::Nothing,
+            false,
+            false,
+        );
         assert_eq!(
-            taken.decide(repeat, hotkey(), true, false, false),
+            taken.decide(repeat, hotkey(), Open::Picker, false, false),
             (Take::AfterListener, Effect::None)
         );
     }
@@ -669,20 +856,20 @@ mod tests {
     fn escape_and_space_belong_to_the_open_picker_only() {
         let mut taken = Taken::default();
         assert_eq!(
-            taken.decide(press(ESCAPE, 0), hotkey(), false, false, false),
+            taken.decide(press(ESCAPE, 0), hotkey(), Open::Nothing, false, false),
             (Take::No, Effect::None)
         );
         assert_eq!(
-            taken.decide(press(SPACE, 0), hotkey(), true, false, false),
+            taken.decide(press(SPACE, 0), hotkey(), Open::Picker, false, false),
             (Take::AfterListener, Effect::Toggle)
         );
         assert_eq!(
-            taken.decide(press(ESCAPE, 0), hotkey(), true, false, false),
+            taken.decide(press(ESCAPE, 0), hotkey(), Open::Picker, false, false),
             (Take::Only, Effect::Cancel)
         );
         // Escape's release goes with it even once the picker closed.
         assert_eq!(
-            taken.decide(release(ESCAPE), hotkey(), false, false, false),
+            taken.decide(release(ESCAPE), hotkey(), Open::Nothing, false, false),
             (Take::Only, Effect::None)
         );
     }
@@ -691,18 +878,18 @@ mod tests {
     fn other_keys_and_other_chords_pass() {
         let mut taken = Taken::default();
         assert_eq!(
-            taken.decide(press(21, 0x10_0000), hotkey(), false, false, false),
+            taken.decide(press(21, 0x10_0000), hotkey(), Open::Nothing, false, false),
             (Take::No, Effect::None)
         );
         assert_eq!(
-            taken.decide(press(0, 0), hotkey(), true, false, false),
+            taken.decide(press(0, 0), hotkey(), Open::Picker, false, false),
             (Take::No, Effect::None)
         );
         assert_eq!(
             taken.decide(
                 press(21, COMMAND_SHIFT),
                 Shortcuts::default(),
-                false,
+                Open::Nothing,
                 false,
                 false
             ),
@@ -718,12 +905,24 @@ mod tests {
             shot: None,
         };
         assert_eq!(
-            taken.decide(press(21, COMMAND_SHIFT), shortcuts, false, false, false),
+            taken.decide(
+                press(21, COMMAND_SHIFT),
+                shortcuts,
+                Open::Nothing,
+                false,
+                false
+            ),
             (Take::AfterListener, Effect::Record)
         );
-        taken.decide(release(21), shortcuts, false, false, false);
+        taken.decide(release(21), shortcuts, Open::Nothing, false, false);
         assert_eq!(
-            taken.decide(press(21, COMMAND_SHIFT), shortcuts, true, false, false),
+            taken.decide(
+                press(21, COMMAND_SHIFT),
+                shortcuts,
+                Open::Picker,
+                false,
+                false
+            ),
             (Take::AfterListener, Effect::None)
         );
     }
@@ -733,34 +932,40 @@ mod tests {
         let mut taken = Taken::default();
         let command = |code| press(code, COMMAND | 0x8);
         assert_eq!(
-            taken.decide(command(KEY_C), hotkey(), false, true, false),
+            taken.decide(command(KEY_C), hotkey(), Open::Nothing, true, false),
             (Take::AfterListener, Effect::Card(CardKey::Copy))
         );
-        taken.decide(release(KEY_C), hotkey(), false, true, false);
+        taken.decide(release(KEY_C), hotkey(), Open::Nothing, true, false);
         assert_eq!(
-            taken.decide(command(KEY_W), hotkey(), false, true, false),
+            taken.decide(command(KEY_W), hotkey(), Open::Nothing, true, false),
             (Take::AfterListener, Effect::Card(CardKey::Close))
         );
         assert_eq!(
-            taken.decide(press(ESCAPE, 0), hotkey(), false, true, false),
+            taken.decide(press(ESCAPE, 0), hotkey(), Open::Nothing, true, false),
             (Take::Only, Effect::Card(CardKey::Close))
         );
         assert_eq!(
-            taken.decide(press(RETURN, 0), hotkey(), false, true, false),
+            taken.decide(press(RETURN, 0), hotkey(), Open::Nothing, true, false),
             (Take::AfterListener, Effect::Card(CardKey::Keep))
         );
         // Off the cards, with another modifier, or while picking: not ours.
         let mut taken = Taken::default();
         assert_eq!(
-            taken.decide(command(KEY_C), hotkey(), false, false, false),
+            taken.decide(command(KEY_C), hotkey(), Open::Nothing, false, false),
             (Take::No, Effect::None)
         );
         assert_eq!(
-            taken.decide(press(KEY_C, COMMAND_SHIFT), hotkey(), false, true, false),
+            taken.decide(
+                press(KEY_C, COMMAND_SHIFT),
+                hotkey(),
+                Open::Nothing,
+                true,
+                false
+            ),
             (Take::No, Effect::None)
         );
         assert_eq!(
-            taken.decide(press(ESCAPE, 0), hotkey(), true, true, false),
+            taken.decide(press(ESCAPE, 0), hotkey(), Open::Picker, true, false),
             (Take::Only, Effect::Cancel)
         );
     }
@@ -769,7 +974,13 @@ mod tests {
     fn recording_a_shortcut_takes_nothing() {
         let mut taken = Taken::default();
         assert_eq!(
-            taken.decide(press(21, COMMAND_SHIFT), hotkey(), false, false, true),
+            taken.decide(
+                press(21, COMMAND_SHIFT),
+                hotkey(),
+                Open::Nothing,
+                false,
+                true
+            ),
             (Take::No, Effect::None)
         );
     }
@@ -782,5 +993,57 @@ mod tests {
         assert_eq!(&small[..4], &[10, 20, 30, 255]);
         let (w, h, same) = shrink(8, 4, &rgba, 8);
         assert_eq!((w, h, same.len()), (8, 4, rgba.len()));
+    }
+
+    #[test]
+    fn the_toolbar_takes_escape_return_and_its_shortcut_and_leaves_the_shot() {
+        let mut taken = Taken::default();
+        let shortcuts = Shortcuts {
+            shot: Some(HotkeyBinding::screenshot_default().runtime()),
+            record: Some(HotkeyBinding::screenshot_record_default().runtime()),
+        };
+        // With one of its menus open, Escape and Return go to the menu.
+        let menu = Open::ToolbarMenu;
+        for code in [ESCAPE, RETURN] {
+            assert_eq!(
+                taken.decide(press(code, 0), shortcuts, menu, false, false),
+                (Take::No, Effect::None)
+            );
+            taken.decide(release(code), shortcuts, menu, false, false);
+        }
+        let toolbar = Open::Toolbar;
+        assert_eq!(
+            taken.decide(press(ESCAPE, 0), shortcuts, toolbar, false, false),
+            (Take::Only, Effect::CloseToolbar)
+        );
+        taken.decide(release(ESCAPE), shortcuts, toolbar, false, false);
+        assert_eq!(
+            taken.decide(press(RETURN, 0), shortcuts, toolbar, true, false),
+            (Take::AfterListener, Effect::RecordNow)
+        );
+        taken.decide(release(RETURN), shortcuts, toolbar, false, false);
+        assert_eq!(
+            taken.decide(press(RETURN, COMMAND), shortcuts, toolbar, false, false),
+            (Take::No, Effect::None)
+        );
+        assert_eq!(
+            taken.decide(press(23, COMMAND_SHIFT), shortcuts, toolbar, false, false),
+            (Take::AfterListener, Effect::CloseToolbar)
+        );
+        taken.decide(release(23), shortcuts, toolbar, false, false);
+        assert_eq!(
+            taken.decide(press(21, COMMAND_SHIFT), shortcuts, toolbar, false, false),
+            (Take::AfterListener, Effect::None)
+        );
+        assert_eq!(
+            taken.decide(
+                press(23, COMMAND_SHIFT),
+                shortcuts,
+                Open::Nothing,
+                false,
+                false
+            ),
+            (Take::AfterListener, Effect::Record)
+        );
     }
 }

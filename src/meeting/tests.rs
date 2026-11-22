@@ -1,3 +1,4 @@
+use super::delete::{delete_in, delete_meeting};
 use super::retention::{
     audio_expired_meetings, expired_meetings, trash_audio_tracks, trash_expired,
 };
@@ -550,41 +551,114 @@ fn chapters_extend_every_title_but_one_the_user_typed() {
 }
 
 #[test]
+fn an_old_twelve_hour_default_title_stays_the_default_in_another_language() {
+    let (base, directory) = finished_meeting("old-default-title", "Meeting");
+    let mut manifest = read_manifest(&directory).unwrap();
+    let started = transcript::LocalTime::from_ms(manifest.created_at_ms);
+    manifest.title = format!("Meeting — {}", started.twelve_hour_clock());
+    assert!(
+        manifest.title.ends_with(" AM") || manifest.title.ends_with(" PM"),
+        "{}",
+        manifest.title
+    );
+    assert_eq!(manifest.title_source, None);
+
+    crate::desktop::i18n::apply(Some("de"));
+    assert_ne!(manifest.title, default_title(None, manifest.created_at_ms));
+    assert_eq!(manifest.title_source(), TitleSource::Default);
+    crate::desktop::i18n::apply(Some("en"));
+    assert_eq!(manifest.title, default_title(None, manifest.created_at_ms));
+    fs::remove_dir_all(base).unwrap();
+}
+
+#[test]
 fn deleting_trashes_the_markdown_then_the_recording_and_refuses_while_recording() {
     let (base, directory) = finished_meeting("trash", "Design sync");
     let export = read_manifest(&directory).unwrap().export_path.unwrap();
     let mut trashed = Vec::new();
 
+    let mut manifest = read_manifest(&directory).unwrap();
+    manifest.status = MeetingStatus::Recording;
+    write_manifest(&directory, &manifest).unwrap();
     let active = ActiveMeeting::acquire(&directory).unwrap();
-    let refused = trash_meeting(&directory, |path| {
+    let refused = delete_meeting(&directory, |path| {
         trashed.push(path.to_path_buf());
         Ok(())
     });
-    assert!(
-        refused
-            .unwrap_err()
-            .to_string()
-            .contains("Stop the recording")
-    );
+    let error = refused.unwrap_err();
+    assert_eq!(error.code(), "meeting-recording");
+    assert!(error.to_string().contains("Stop the recording"));
     assert!(trashed.is_empty());
     drop(active);
 
-    trash_meeting(&directory, |path| {
+    let mut manifest = read_manifest(&directory).unwrap();
+    manifest.status = MeetingStatus::Complete;
+    write_manifest(&directory, &manifest).unwrap();
+    let deleted = delete_meeting(&directory, |path| {
         trashed.push(path.to_path_buf());
         Ok(())
     })
     .unwrap();
+    assert_eq!(deleted.id, "1760000000000-1");
+    assert_eq!(deleted.title, "Design sync");
+    assert!(deleted.markdown);
     assert_eq!(trashed, [export.clone(), directory.clone()]);
 
     // Without a Markdown copy only the recording moves.
     fs::remove_file(&export).unwrap();
     trashed.clear();
-    trash_meeting(&directory, |path| {
+    let deleted = delete_meeting(&directory, |path| {
         trashed.push(path.to_path_buf());
         Ok(())
     })
     .unwrap();
+    assert!(!deleted.markdown);
     assert_eq!(trashed, [directory]);
+    fs::remove_dir_all(base).unwrap();
+}
+
+#[test]
+fn deleting_refuses_a_transcribing_meeting_and_one_still_awaiting_its_final_transcript() {
+    let (base, directory) = finished_meeting("trash-busy", "Design sync");
+    let mut manifest = read_manifest(&directory).unwrap();
+    manifest.status = MeetingStatus::Transcribing;
+    write_manifest(&directory, &manifest).unwrap();
+    let active = ActiveMeeting::acquire(&directory).unwrap();
+    let refused = delete_meeting(&directory, |_| Ok(())).unwrap_err();
+    assert_eq!(refused.code(), "meeting-transcribing");
+    assert!(refused.message().contains("transcript"));
+    drop(active);
+
+    // A quit mid-final-pass leaves final.pending until the next launch
+    // finishes it: that draft is not deleted.
+    manifest.status = MeetingStatus::Interrupted;
+    write_manifest(&directory, &manifest).unwrap();
+    fs::write(directory.join(FINAL_PENDING_FILE), b"").unwrap();
+    let refused = delete_meeting(&directory, |_| Ok(())).unwrap_err();
+    assert_eq!(refused.code(), "meeting-final-pending");
+    assert!(directory.exists());
+    fs::remove_dir_all(base).unwrap();
+}
+
+#[test]
+fn deleting_refuses_ids_that_are_not_one_meeting_folder() {
+    let base = std::env::temp_dir().join(format!("hex-trash-unknown-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&base);
+    fs::create_dir_all(base.join("1760000000000-1")).unwrap();
+    let mut trashed = Vec::new();
+    for id in ["", ".", "..", "../1760000000000-1", "a/b", r"a\b"] {
+        let refused = delete_in(&base, id, |path| {
+            trashed.push(path.to_path_buf());
+            Ok(())
+        })
+        .unwrap_err();
+        assert_eq!(refused.code(), "not-found", "{id:?}");
+    }
+    // A folder with no manifest isn't a meeting either.
+    let refused = delete_in(&base, "1760000000000-1", |_| Ok(())).unwrap_err();
+    assert_eq!(refused.code(), "not-found");
+    assert!(trashed.is_empty());
+    assert!(base.join("1760000000000-1").exists());
     fs::remove_dir_all(base).unwrap();
 }
 
@@ -600,7 +674,7 @@ fn deleting_trashes_a_tracked_notes_file_after_the_transcript() {
     write_manifest(&directory, &manifest).unwrap();
 
     let mut trashed = Vec::new();
-    trash_meeting(&directory, |path| {
+    delete_meeting(&directory, |path| {
         trashed.push(path.to_path_buf());
         Ok(())
     })
@@ -966,6 +1040,30 @@ fn retention_expires_meetings_by_when_they_ended_and_skips_active_ones() {
     let pending = vec!["pending".to_string()];
 
     let chosen = Some(MeetingRetention::Day);
+    let readable = meetings
+        .iter()
+        .filter(|meeting| {
+            retention::readable(
+                meeting,
+                meeting.status,
+                pending.contains(&meeting.id),
+                chosen,
+                now,
+            )
+        })
+        .map(|meeting| meeting.id.as_str())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        readable,
+        [
+            "long-call",
+            "recent-start",
+            "recording",
+            "transcribing",
+            "pending",
+            "edge"
+        ]
+    );
     assert_eq!(
         expired_meetings(&meetings, chosen, &pending, now),
         ["old", "no-end"]
@@ -1126,14 +1224,20 @@ fn paste_cursor_counts_coalesced_turns_and_advances_only_on_success() {
         entry(MeetingSource::System, 2_500, 3_500, "Got it."),
     ];
     let mut cursor = MeetingPasteCursor::default();
-    assert_eq!(cursor.pending_turn_count("meeting-a", &initial), 2);
+    assert_eq!(
+        cursor.pending("meeting-a", &initial),
+        PendingDelta {
+            turns: 2,
+            span_ms: 3_500
+        }
+    );
 
     // A failed paste or clipboard write must not advance the cursor.
     let failed = cursor.consume_entries("meeting-a", &initial, |_| {
         Err(eyre!("clipboard unavailable"))
     });
     assert!(failed.is_err());
-    assert_eq!(cursor.pending_turn_count("meeting-a", &initial), 2);
+    assert_eq!(cursor.pending("meeting-a", &initial).turns, 2);
 
     // A successful copy/paste commits the entries and drops the count to 0.
     let mut copied = String::new();
@@ -1145,7 +1249,10 @@ fn paste_cursor_counts_coalesced_turns_and_advances_only_on_success() {
         .unwrap();
     assert_eq!(text, "You: First. Still me.\n\nThem: Got it.");
     assert_eq!(copied, text);
-    assert_eq!(cursor.pending_turn_count("meeting-a", &initial), 0);
+    assert_eq!(
+        cursor.pending("meeting-a", &initial),
+        PendingDelta::default()
+    );
     assert!(
         cursor
             .consume_entries("meeting-a", &initial, |_| Ok(()))
@@ -1160,15 +1267,22 @@ fn paste_cursor_counts_coalesced_turns_and_advances_only_on_success() {
         7_000,
         "Next point.",
     ));
-    assert_eq!(cursor.pending_turn_count("meeting-a", &extended), 1);
+    // Its span is at least a second, so a short turn still reads "1 sec new".
+    assert_eq!(
+        cursor.pending("meeting-a", &extended),
+        PendingDelta {
+            turns: 1,
+            span_ms: 1_000
+        }
+    );
     let delta = cursor
         .consume_entries("meeting-a", &extended, |_| Ok(()))
         .unwrap();
     assert_eq!(delta, "You: Next point.");
-    assert_eq!(cursor.pending_turn_count("meeting-a", &extended), 0);
+    assert_eq!(cursor.pending("meeting-a", &extended).turns, 0);
 
     // Switching to a new meeting starts from the beginning.
-    assert_eq!(cursor.pending_turn_count("meeting-b", &initial), 2);
+    assert_eq!(cursor.pending("meeting-b", &initial).turns, 2);
 }
 
 #[test]

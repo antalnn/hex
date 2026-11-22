@@ -6,11 +6,45 @@ use std::path::Path;
 use color_eyre::eyre::{Result, eyre};
 
 use super::{
-    FINAL_PENDING_FILE, MeetingManifest, MeetingStatus, exported_markdown, file_sha256, list,
+    FINAL_PENDING_FILE, MeetingManifest, MeetingStatus, exported_markdown, file_sha256, list_all,
     meeting_is_active, notes_in_progress, now_ms, os, pending_final_transcripts, read_manifest,
     root, write_manifest,
 };
 use crate::app_settings::MeetingRetention;
+
+/// Every meeting whose final transcript is still owed: one with a
+/// `final.pending` marker, or one the launch recovery will finish while it
+/// can actually run. With Meetings off or no installed model, unfinished
+/// meetings expire like any other.
+fn awaiting_final_transcript(meetings: &[MeetingManifest]) -> Vec<String> {
+    let mut ids = pending_final_transcripts();
+    if super::recovery::can_recover() {
+        ids.extend(super::recovery::stranded_among(meetings));
+    }
+    ids.sort();
+    ids.dedup();
+    ids
+}
+
+/// User-facing readers omit expired meetings even before the Trash sweep.
+pub fn list() -> Result<Vec<MeetingManifest>> {
+    let chosen = crate::app_settings::meeting_retention();
+    let now = now_ms();
+    let meetings = list_all()?;
+    let pending = awaiting_final_transcript(&meetings);
+    Ok(meetings
+        .into_iter()
+        .filter(|meeting| {
+            readable(
+                meeting,
+                meeting.status,
+                pending.contains(&meeting.id),
+                chosen,
+                now,
+            )
+        })
+        .collect())
+}
 
 /// How long `manifest` is kept: the retention the user chose, else
 /// [`MeetingRetention::DEFAULT`] for meetings recorded since it began, and
@@ -26,21 +60,22 @@ pub fn retention_for(
     })
 }
 
-/// Whether a finished meeting outlived its retention, counted from when it
-/// ended (or, with no end, started). A meeting that records or transcribes
-/// never has.
-pub fn expired(
+/// Read admission and retention share the same pending-final exception.
+/// A retained draft must remain readable while its final pass waits or fails.
+pub(super) fn readable(
     manifest: &MeetingManifest,
     status: MeetingStatus,
+    pending_final: bool,
     chosen: Option<MeetingRetention>,
     now_ms: u64,
 ) -> bool {
-    !status.is_active()
-        && retention_for(manifest, chosen)
+    pending_final
+        || status.is_active()
+        || retention_for(manifest, chosen)
             .max_age_ms()
-            .is_some_and(|max_age_ms| {
+            .is_none_or(|max_age_ms| {
                 let ended = manifest.ended_at_ms.unwrap_or(manifest.created_at_ms);
-                now_ms.saturating_sub(ended) > max_age_ms
+                now_ms.saturating_sub(ended) <= max_age_ms
             })
 }
 
@@ -49,8 +84,8 @@ pub fn expired(
 /// transcribing, writing notes, or waiting for its final transcript stays
 /// for a later pass. Returns how many moved.
 pub fn expire(chosen: Option<MeetingRetention>) -> Result<usize> {
-    let meetings = list()?;
-    let pending = pending_final_transcripts();
+    let meetings = list_all()?;
+    let pending = awaiting_final_transcript(&meetings);
     let root = root()?;
     let mut moved = 0;
     for id in expired_meetings(&meetings, chosen, &pending, now_ms()) {
@@ -76,8 +111,15 @@ pub(super) fn expired_meetings<'a>(
 ) -> Vec<&'a str> {
     meetings
         .iter()
-        .filter(|meeting| !pending.contains(&meeting.id))
-        .filter(|meeting| expired(meeting, meeting.status, chosen, now_ms))
+        .filter(|meeting| {
+            !readable(
+                meeting,
+                meeting.status,
+                pending.contains(&meeting.id),
+                chosen,
+                now_ms,
+            )
+        })
         .map(|meeting| meeting.id.as_str())
         .collect()
 }
@@ -147,8 +189,8 @@ pub fn expire_audio(chosen: Option<MeetingRetention>) -> Result<usize> {
     let Some(chosen) = chosen else {
         return Ok(0);
     };
-    let meetings = list()?;
-    let pending = pending_final_transcripts();
+    let meetings = list_all()?;
+    let pending = awaiting_final_transcript(&meetings);
     let root = root()?;
     let mut removed = 0;
     for id in audio_expired_meetings(&meetings, chosen, &pending, now_ms()) {

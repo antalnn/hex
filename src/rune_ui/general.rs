@@ -9,13 +9,15 @@ use std::time::Duration;
 use rune::{Color, El, Tx, col, el, row, text};
 use rune_kit::{Placement, Select, SelectAppearance};
 
+#[cfg(target_os = "macos")]
+use super::controls::icon_button;
 use super::controls::{
     self, ButtonKind, CardRow, DEVICE_SELECT_WIDTH, KeySize, METRICS, Paint, button, folding,
-    icon_button, icon_described_row, icon_row, icon_toggle_row, key_tray, keycap, note,
-    pressable_row, row_switch, section, value_button, value_font,
+    icon_described_row, icon_row, icon_toggle_row, key_tray, keycap, note, pressable_row,
+    quiet_button, row_switch, section, value_button, value_font,
 };
 use super::icons::*;
-use super::lists::{PermissionControl, permission_control, slider};
+use super::lists::{PermissionControl, inline_slider, permission_control, slider};
 use super::platform::PlatformRequest;
 use super::settings::{self as s, Capture, Face};
 use super::{Menu, Pane, Request, ShortcutTarget, Ui};
@@ -26,14 +28,14 @@ use crate::desktop::login_item::LoginItemStatus;
 use crate::desktop::onboarding::PermissionKind;
 use crate::transcription::models as transcription_models;
 
-mod search;
+mod page;
 mod shortcuts;
 
 /// Labs › More dictation shortcuts (macOS): General's extra shortcut rows.
 #[cfg(target_os = "macos")]
 mod extra_shortcuts;
 
-pub(super) use self::search::{focus_search_key, pane};
+pub(super) use self::page::pane;
 pub(super) use self::shortcuts::shortcut_rows;
 
 // ---------------------------------------------------------------------------
@@ -41,146 +43,106 @@ pub(super) use self::shortcuts::shortcut_rows;
 
 /// The pane's top group, one card per section: the hardware, the keys, the
 /// mode they share, and Vocabulary. Each card opens with a section heading,
-/// as the Models pane's do; an empty section (a search with no match) draws
-/// nothing.
-pub(super) fn basics(ui: &Ui, p: Paint, layer: &mut Vec<El>, query: &str) -> Vec<El> {
+/// as the Models pane's do.
+pub(super) fn basics(ui: &Ui, p: Paint, layer: &mut Vec<El>) -> Vec<El> {
     let mut sections = Vec::new();
 
     // The hardware block sits directly under the status card: the input in
     // use, and whether it closes between dictations.
-    let mut rows = search::Rows::new(query);
-    rows.extend(tr("Microphone"), microphone_rows(ui, p, layer));
-    let (description, row) = microphone_release_row(ui, p);
-    rows.push_described(
-        tr("Turn off the mic when not dictating"),
-        Some(description),
-        row,
-    );
-    if !rows.is_empty() {
-        sections.push(section(
-            p,
-            "basics-microphone",
-            tr("Microphone"),
-            rows.into_rows(),
-        ));
-    }
+    let mut rows = microphone_rows(ui, p, layer);
+    let (_, row) = microphone_release_row(ui, p);
+    rows.push(row);
+    sections.push(section(p, "basics-microphone", tr("Microphone"), rows));
 
     if ui.records_shortcuts() {
         // The keys block: the dictation key, the rewrite key (Windows), and
         // the platform's optional keys.
-        let mut keys = search::Rows::new(query);
-        keys.extend(
+        let mut keys = shortcut_rows(
+            ui,
+            p,
+            "dictation-shortcut",
+            &KEYBOARD,
             tr("Dictate shortcut"),
-            shortcut_rows(
-                ui,
-                p,
-                "dictation-shortcut",
-                &KEYBOARD,
-                tr("Dictate shortcut"),
-                ShortcutTarget::Dictation,
-                None,
-            ),
+            ShortcutTarget::Dictation,
+            None,
         );
         // Rewrite the selected text (Windows): records an instruction, then
         // replaces the selection with the remote model's result.
         #[cfg(target_os = "windows")]
-        search::rewrite_rows(&mut keys, ui, p);
+        keys.extend(page::rewrite_rows(ui, p));
         // Labs › Second dictation shortcut: another key that dictates like
         // the one above, such as on an external keyboard.
         if crate::labs::Feature::SecondDictationShortcut.on(&ui.settings) {
-            keys.extend_described(
+            keys.extend(shortcut_rows(
+                ui,
+                p,
+                "second-dictation-shortcut",
+                &KEYBOARD,
                 tr("Second dictation shortcut"),
+                ShortcutTarget::SecondDictation,
                 Some(tr("Dictates like the shortcut above")),
-                shortcut_rows(
-                    ui,
-                    p,
-                    "second-dictation-shortcut",
-                    &KEYBOARD,
-                    tr("Second dictation shortcut"),
-                    ShortcutTarget::SecondDictation,
-                    Some(tr("Dictates like the shortcut above")),
-                ),
-            );
+            ));
         }
         // Labs › More dictation shortcuts (macOS): up to four more keys that
         // each dictate like the one above, each with its own shortcut mode.
         #[cfg(target_os = "macos")]
         if crate::labs::Feature::MoreDictationShortcuts.on(&ui.settings) {
-            rows.extend(
-                tr("Extra dictation shortcut"),
-                extra_shortcuts::rows(ui, p, layer),
-            );
+            keys.extend(extra_shortcuts::rows(ui, p, layer));
         }
         // Labs › Terminal paste shortcut (Windows, Linux): another key that
         // dictates like the one above and always pastes with Ctrl+Shift+V.
         #[cfg(any(target_os = "windows", target_os = "linux"))]
         if crate::labs::Feature::TerminalPasteShortcut.on(&ui.settings) {
-            keys.extend_described(
+            keys.extend(shortcut_rows(
+                ui,
+                p,
+                "terminal-paste-shortcut",
+                &KEYBOARD,
                 tr("Terminal paste shortcut"),
+                ShortcutTarget::TerminalPaste,
                 Some(tr("Dictates like the shortcut above")),
-                shortcut_rows(
-                    ui,
-                    p,
-                    "terminal-paste-shortcut",
-                    &KEYBOARD,
-                    tr("Terminal paste shortcut"),
-                    ShortcutTarget::TerminalPaste,
-                    Some(tr("Dictates like the shortcut above")),
-                ),
-            );
+            ));
         }
         // Annotate's shortcut beside dictation's on Linux, where the desktop
         // lists both and a lone F9 is otherwise easy to miss (#723).
         #[cfg(all(target_os = "linux", hex_capture))]
         if ui.platform.scrawl.is_some() && ui.settings.capture.enabled {
-            keys.extend(
-                tr("Annotate"),
-                shortcut_rows(
-                    ui,
-                    p,
-                    "annotate-shortcut",
-                    &super::sidebar::SCRAWL_ICON,
-                    tr("Annotate"),
-                    ShortcutTarget::Capture,
-                    None,
-                ),
-            );
-        }
-        if !keys.is_empty() {
-            sections.push(section(p, "basics-keys", tr("Keys"), keys.into_rows()));
-        }
-
-        // The mode the keys share, and its cancel key.
-        let mut mode = search::Rows::new(query);
-        mode.push(tr("Shortcut mode"), super::shortcut::mode::row(ui, p));
-        // Toggle has a cancel shortcut; Hold has none.
-        if ui.settings.shortcut_mode == crate::dictation::ShortcutMode::Toggle {
-            let (description, cancel) = search::cancel_rows(ui, p);
-            mode.extend_described(tr("Cancel"), Some(description), cancel);
-        }
-        if let Some(row) = configure_shortcuts_row(ui, p) {
-            mode.push_described(
-                tr("Desktop shortcuts"),
-                Some(tr("Change the keys your desktop gave Hex")),
-                row,
-            );
-        }
-        if !mode.is_empty() {
-            sections.push(section(
+            keys.extend(shortcut_rows(
+                ui,
                 p,
-                "basics-shortcut-mode",
-                tr("Shortcut mode"),
-                mode.into_rows(),
+                "annotate-shortcut",
+                &super::sidebar::SCRAWL_ICON,
+                tr("Annotate"),
+                ShortcutTarget::Capture,
+                None,
             ));
         }
+        sections.push(section(p, "basics-keys", tr("Keys"), keys));
+
+        // The mode the keys share, and its cancel key.
+        let mut mode = vec![CardRow::from(super::shortcut::mode::row(ui, p))];
+        // Toggle has a cancel shortcut; Hold has none.
+        if ui.settings.shortcut_mode == crate::dictation::ShortcutMode::Toggle {
+            let (_, cancel) = page::cancel_rows(ui, p);
+            mode.extend(cancel);
+        }
+        if let Some(row) = configure_shortcuts_row(ui, p) {
+            mode.push(row.into());
+        }
+        sections.push(section(
+            p,
+            "basics-shortcut-mode",
+            tr("Shortcut mode"),
+            mode,
+        ));
     }
 
-    let mut vocabulary = search::Rows::new(query);
     let vocabulary_note = super::vocabulary::unused_note(ui);
-    vocabulary.push_described(
+    sections.push(section(
+        p,
+        "basics-vocabulary",
         tr("Vocabulary"),
-        vocabulary_note.as_deref(),
-        icon_row(
+        vec![CardRow::from(icon_row(
             p,
             "vocabulary",
             &BOOK,
@@ -194,20 +156,11 @@ pub(super) fn basics(ui: &Ui, p: Paint, layer: &mut Vec<El>, query: &str) -> Vec
                 &rune_theme_opencode::icons::CHEVRON_RIGHT,
                 super::vocabulary::open,
             ),
-        ),
-    );
-    if !vocabulary.is_empty() {
-        sections.push(section(
-            p,
-            "basics-vocabulary",
-            tr("Vocabulary"),
-            vocabulary.into_rows(),
-        ));
-    }
+        ))],
+    ));
 
     sections
 }
-
 /// The selected speech model's download, while it is not installed, so
 /// Hex can't listen yet. Fixtures that name no installed models say nothing,
 /// so their rows never depend on this machine's models.
@@ -392,7 +345,7 @@ pub(super) fn language_row(ui: &Ui, p: Paint, layer: &mut Vec<El>) -> Option<El>
     let selection = &ui.settings.transcription;
     let model = transcription_models::definition(selection.model);
     let current = transcription_models::language_name(&selection.language);
-    let codes = model.language_choices();
+    let codes = transcription_models::menu_order(&model.language_choices());
     let fallback = super::picker::fallback_note(ui);
     if codes.len() <= 1 && fallback.is_none() {
         return None;
@@ -417,6 +370,7 @@ pub(super) fn language_row(ui: &Ui, p: Paint, layer: &mut Vec<El>) -> Option<El>
             .iter()
             .position(|code| *code == selection.language)
             .unwrap_or(0);
+        let menu_codes = codes.clone();
         pick_select(
             ui,
             p,
@@ -424,9 +378,8 @@ pub(super) fn language_row(ui: &Ui, p: Paint, layer: &mut Vec<El>) -> Option<El>
             tr("Language"),
             labels,
             selected,
-            |ui, index| {
-                let model = transcription_models::definition(ui.settings.transcription.model);
-                if let Some(code) = model.language_choices().get(index) {
+            move |ui, index| {
+                if let Some(code) = menu_codes.get(index).copied() {
                     super::picker::choose_language(ui, code);
                 }
             },
@@ -796,68 +749,51 @@ fn launch_at_login_rows(ui: &Ui, p: Paint) -> Vec<CardRow> {
 
 /// How the shortcut triggers and the microphone's idle release, and the apps
 /// whose keys Hex leaves alone.
-pub(super) fn dictation(ui: &Ui, p: Paint, layer: &mut Vec<El>, query: &str) -> Vec<CardRow> {
+pub(super) fn dictation(ui: &Ui, p: Paint, layer: &mut Vec<El>) -> Vec<CardRow> {
     use super::platform_settings::{SIDES, picked_side, side_binding};
     let settings = &ui.settings;
-    let mut rows = search::Rows::new(query);
+    let mut rows = Vec::<CardRow>::new();
     // The apps where Hex's shortcuts stay out of the way, so a game keeps its
     // own keys (Windows: its hook is the one that swallows). It opens the
     // section because it gates every key.
     #[cfg(target_os = "windows")]
     if ui.records_shortcuts() {
-        rows.push(
-            tr("Excluded apps"),
-            super::shortcut::guard::general_row(ui, p),
-        );
+        rows.push(super::shortcut::guard::general_row(ui, p).into());
     }
     if ui.records_shortcuts()
         && let Some(side) = picked_side(ui, ShortcutTarget::Dictation)
     {
-        rows.push(
-            tr("Shortcut side"),
-            side_row(
-                ui,
-                p,
-                "dictation-side",
-                side,
-                |ui, index| {
-                    let target = ShortcutTarget::Dictation;
-                    if let Some(candidate) = side_binding(&ui.settings, target, SIDES[index]) {
-                        ui.update(|settings| s::set_binding(settings, target, candidate));
-                    }
-                },
-                layer,
-            ),
-        );
+        rows.push(side_row(
+            ui,
+            p,
+            "dictation-side",
+            side,
+            |ui, index| {
+                let target = ShortcutTarget::Dictation;
+                if let Some(candidate) = side_binding(&ui.settings, target, SIDES[index]) {
+                    ui.update(|settings| s::set_binding(settings, target, candidate));
+                }
+            },
+            layer,
+        ));
     }
     // Labs › Switch model with keyboard language: its mappings, while on.
     if ui.platform.caps.keyboard_model_switching {
-        rows.push(
-            tr("Switch model with keyboard language"),
-            folding(
-                "input-source-mappings",
-                if settings.keyboard_model_switching.enabled {
-                    s::input_source_rows(ui, p, layer)
-                } else {
-                    Vec::new()
-                },
-            ),
-        );
+        rows.push(folding(
+            "input-source-mappings",
+            if settings.keyboard_model_switching.enabled {
+                s::input_source_rows(ui, p, layer)
+            } else {
+                Vec::new()
+            },
+        ));
     }
     // macOS runs its models on Metal or Apple's speech engine.
     #[cfg(any(target_os = "linux", target_os = "windows"))]
     if ui.platform.caps.os != super::platform::Os::Macos {
-        rows.push(tr("Speech engine"), speech_engine_row(ui, p, layer));
+        rows.push(speech_engine_row(ui, p, layer));
     }
-    rows.push_described(
-        if ui.platform.caps.os == super::platform::Os::Macos {
-            tr("Use the Mac's microphone instead of Bluetooth")
-        } else {
-            tr("Use another microphone instead of Bluetooth")
-        },
-        Some(tr(
-            "Keeps AirPods and other headsets out of call-quality audio",
-        )),
+    rows.push(
         icon_toggle_row(
             p,
             "avoid-bluetooth-microphone",
@@ -873,37 +809,31 @@ pub(super) fn dictation(ui: &Ui, p: Paint, layer: &mut Vec<El>, query: &str) -> 
                 let enabled = !ui.settings.avoid_bluetooth_microphone;
                 ui.update(|settings| settings.avoid_bluetooth_microphone = enabled);
             },
-        ),
+        )
+        .into(),
     );
-    rows.into_rows()
+    rows
 }
 
 /// Paste last, what happens to other audio while dictating, the HUD, and
 /// terminal paste (Linux and Windows).
-pub(super) fn output(ui: &Ui, p: Paint, layer: &mut Vec<El>, query: &str) -> Vec<CardRow> {
+pub(super) fn output(ui: &Ui, p: Paint, layer: &mut Vec<El>) -> Vec<CardRow> {
     let settings = &ui.settings;
-    let mut rows = search::Rows::new(query);
+    let mut rows = Vec::<CardRow>::new();
     if ui.records_shortcuts() {
-        rows.extend(
+        rows.extend(shortcut_rows(
+            ui,
+            p,
+            "paste-last",
+            &PASTE,
             tr("Paste last dictation"),
-            shortcut_rows(
-                ui,
-                p,
-                "paste-last",
-                &PASTE,
-                tr("Paste last dictation"),
-                ShortcutTarget::PasteLast,
-                None,
-            ),
-        );
+            ShortcutTarget::PasteLast,
+            None,
+        ));
         // The paste family: where the finished text lands. It returns to the
         // window the dictation started in (Windows).
         if ui.platform.caps.os == super::platform::Os::Windows {
-            rows.push_described(
-                tr("Paste where dictation started"),
-                Some(tr(
-                    "Return to the window you were in when you pressed the shortcut",
-                )),
+            rows.push(
                 icon_toggle_row(
                     p,
                     "paste-to-start-window",
@@ -917,43 +847,39 @@ pub(super) fn output(ui: &Ui, p: Paint, layer: &mut Vec<El>, query: &str) -> Vec
                             settings.dictation_processing.paste_to_start_window = enabled;
                         });
                     },
-                ),
+                )
+                .into(),
             );
         }
     }
     let behaviors = RecordingAudioBehavior::ALL;
-    rows.push(
+    rows.push(pick_row(
+        ui,
+        p,
+        "while-dictating",
+        &MUTE,
         tr("While dictating"),
-        pick_row(
-            ui,
-            p,
-            "while-dictating",
-            &MUTE,
-            tr("While dictating"),
-            behaviors
-                .iter()
-                .map(|behavior| tr(behavior.label()))
-                .collect(),
-            behaviors
-                .iter()
-                .position(|behavior| *behavior == settings.recording_audio_behavior)
-                .unwrap_or(0),
-            |ui, index| {
-                let behavior = RecordingAudioBehavior::ALL[index];
-                if ui.settings.recording_audio_behavior != behavior {
-                    ui.update(|settings| settings.recording_audio_behavior = behavior);
-                }
-            },
-            layer,
-        ),
-    );
+        behaviors
+            .iter()
+            .map(|behavior| tr(behavior.label()))
+            .collect(),
+        behaviors
+            .iter()
+            .position(|behavior| *behavior == settings.recording_audio_behavior)
+            .unwrap_or(0),
+        |ui, index| {
+            let behavior = RecordingAudioBehavior::ALL[index];
+            if ui.settings.recording_audio_behavior != behavior {
+                ui.update(|settings| settings.recording_audio_behavior = behavior);
+            }
+        },
+        layer,
+    ));
     if settings.recording_audio_behavior == RecordingAudioBehavior::Duck {
         let volume = ui
             .duck_volume_drag
             .unwrap_or(settings.recording_duck_volume);
-        rows.push_described(
-            tr("Lower to"),
-            Some(tr("Percent of the current output volume")),
+        rows.push(
             icon_row(
                 p,
                 "recording-duck-volume",
@@ -975,49 +901,41 @@ pub(super) fn output(ui: &Ui, p: Paint, layer: &mut Vec<El>, query: &str) -> Vec
                         }
                     },
                 ),
-            ),
+            )
+            .into(),
         );
     }
     if ui.platform.caps.os == super::platform::Os::Macos
         && settings.recording_audio_behavior == RecordingAudioBehavior::PauseMedia
     {
-        rows.extend_described(
-            tr("Screen & System Audio Recording"),
-            Some(tr("Lets Hex hear whether a tab is playing")),
-            pause_browser_rows(ui, p).into_iter().map(CardRow::from),
-        );
+        rows.extend(pause_browser_rows(ui, p).into_iter().map(CardRow::from));
     }
-    rows.push(
+    rows.push(pick_row(
+        ui,
+        p,
+        "indicator",
+        &PANEL,
         tr("Dictation HUD"),
-        pick_row(
-            ui,
-            p,
-            "indicator",
-            &PANEL,
-            tr("Dictation HUD"),
-            vec![tr("Top"), tr("Bottom"), tr("Off")],
-            match settings.indicator_position {
-                IndicatorPosition::Top => 0,
-                IndicatorPosition::Bottom => 1,
-                IndicatorPosition::Hidden => 2,
-            },
-            |ui, index| {
-                let position = [
-                    IndicatorPosition::Top,
-                    IndicatorPosition::Bottom,
-                    IndicatorPosition::Hidden,
-                ][index];
-                if ui.settings.indicator_position != position {
-                    ui.update(|settings| settings.indicator_position = position);
-                }
-            },
-            layer,
-        ),
-    );
+        vec![tr("Top"), tr("Bottom"), tr("Off")],
+        match settings.indicator_position {
+            IndicatorPosition::Top => 0,
+            IndicatorPosition::Bottom => 1,
+            IndicatorPosition::Hidden => 2,
+        },
+        |ui, index| {
+            let position = [
+                IndicatorPosition::Top,
+                IndicatorPosition::Bottom,
+                IndicatorPosition::Hidden,
+            ][index];
+            if ui.settings.indicator_position != position {
+                ui.update(|settings| settings.indicator_position = position);
+            }
+        },
+        layer,
+    ));
     if ui.platform.caps.terminal_paste {
-        rows.push_described(
-            tr("Terminal paste"),
-            Some(tr("Paste with Ctrl+Shift+V so terminals accept it")),
+        rows.push(
             icon_toggle_row(
                 p,
                 "terminal-paste",
@@ -1029,20 +947,17 @@ pub(super) fn output(ui: &Ui, p: Paint, layer: &mut Vec<El>, query: &str) -> Vec
                     let enabled = !ui.settings.paste_with_shift;
                     ui.update(|settings| settings.paste_with_shift = enabled);
                 },
-            ),
+            )
+            .into(),
         );
     }
     if clipboard_note_shown(ui) {
         let copy = tr(
             "This desktop doesn't let Hex put your clipboard back after a paste. Turn on Labs › Restore clipboard on GNOME to try it.",
         );
-        rows.push_described(
-            tr("Restore clipboard on GNOME"),
-            Some(copy),
-            note("clipboard-restore-note", copy, p.muted()),
-        );
+        rows.push(note("clipboard-restore-note", copy, p.muted()).into());
     }
-    rows.into_rows()
+    rows
 }
 
 /// Output's note on a Wayland desktop without data-control (GNOME) while
@@ -1052,14 +967,13 @@ fn clipboard_note_shown(ui: &Ui) -> bool {
         && !crate::labs::Feature::GnomeClipboardRestore.on(&ui.settings)
 }
 
-/// Enable dictation on launch (Linux and Windows), Launch at login, the Dock
-/// icon, sounds, the interface language, and the update channel.
-pub(super) fn application(ui: &Ui, p: Paint, layer: &mut Vec<El>, query: &str) -> Vec<CardRow> {
+/// Enable dictation on launch (Linux and Windows), Launch at login, the Dock icon, sounds, the
+/// interface language, and the update channel.
+pub(super) fn application(ui: &Ui, p: Paint, layer: &mut Vec<El>) -> Vec<CardRow> {
     let settings = &ui.settings;
-    let mut rows = search::Rows::new(query);
+    let mut rows = Vec::<CardRow>::new();
     if ui.platform.caps.listener_control {
         rows.push(
-            tr("Enable dictation on launch"),
             icon_toggle_row(
                 p,
                 "enable-on-launch",
@@ -1071,13 +985,13 @@ pub(super) fn application(ui: &Ui, p: Paint, layer: &mut Vec<El>, query: &str) -
                     let enabled = !ui.settings.enable_on_launch;
                     ui.update(|settings| settings.enable_on_launch = enabled);
                 },
-            ),
+            )
+            .into(),
         );
     }
-    rows.extend(tr("Launch at login"), launch_at_login_rows(ui, p));
+    rows.extend(launch_at_login_rows(ui, p));
     if ui.platform.caps.dock_icon {
         rows.push(
-            tr("Show Dock icon"),
             icon_toggle_row(
                 p,
                 "dock-icon",
@@ -1089,39 +1003,54 @@ pub(super) fn application(ui: &Ui, p: Paint, layer: &mut Vec<El>, query: &str) -
                     let show = !ui.settings.show_dock_icon;
                     ui.update(|settings| settings.show_dock_icon = show);
                 },
-            ),
+            )
+            .into(),
         );
     }
+    let volume = ui
+        .sound_volume_drag
+        .unwrap_or_else(|| s::sound_volume(settings));
     rows.push(
-        tr("Sound volume"),
-        pick_row(
-            ui,
+        icon_row(
             p,
             "sound-volume",
             &VOLUME,
             tr("Sound volume"),
-            s::SOUND_VOLUME_STEPS
-                .iter()
-                .map(|(label, _)| tr(label))
-                .collect(),
-            s::sound_volume_index(settings),
-            |ui, index| {
-                let volume = s::SOUND_VOLUME_STEPS[index].1;
-                let saved = ui.update(|settings| {
-                    settings.sound_effects = volume > 0.0;
-                    if volume > 0.0 {
-                        settings.sound_effect_volume = volume;
+            None,
+            inline_slider(
+                p,
+                "sound-volume-slider",
+                tr("Sound volume"),
+                volume,
+                if volume > 0.0 {
+                    format!("{:.0}%", volume * 100.0)
+                } else {
+                    tr("Off").to_owned()
+                },
+                160.0,
+                |ui, value, done| {
+                    let volume = (value * 100.0).round() / 100.0;
+                    ui.sound_volume_drag = if done { None } else { Some(volume) };
+                    if !done {
+                        return;
                     }
-                });
-                if saved && volume > 0.0 && ui.live() {
-                    crate::feedback::play(crate::feedback::Tone::DictationStart);
-                }
-            },
-            layer,
-        ),
+                    // Zero turns tones off and keeps the last level, as
+                    // `hex settings set sound_effect_volume 0` does.
+                    let saved = ui.update(|settings| {
+                        settings.sound_effects = volume > 0.0;
+                        if volume > 0.0 {
+                            settings.sound_effect_volume = volume;
+                        }
+                    });
+                    if saved && volume > 0.0 && ui.live() {
+                        crate::feedback::play(crate::feedback::Tone::DictationStart);
+                    }
+                },
+            ),
+        )
+        .into(),
     );
     rows.push(
-        tr("Sounds"),
         icon_row(
             p,
             "sound-set",
@@ -1136,74 +1065,67 @@ pub(super) fn application(ui: &Ui, p: Paint, layer: &mut Vec<El>, query: &str) -
                 &rune_theme_opencode::icons::CHEVRON_RIGHT,
                 super::sound_sets::open,
             ),
-        ),
+        )
+        .into(),
     );
-    let languages = crate::desktop::i18n::LANGUAGE_CHOICES;
-    rows.push(
+    let languages = crate::desktop::i18n::language_menu_order();
+    rows.push(pick_row(
+        ui,
+        p,
+        "interface-language",
+        &GLOBE,
         tr("Interface language"),
-        pick_row(
-            ui,
-            p,
-            "interface-language",
-            &GLOBE,
-            tr("Interface language"),
-            languages.iter().map(|(_, name)| tr(name)).collect(),
-            languages
-                .iter()
-                .position(|(code, _)| *code == settings.ui_language.as_deref())
-                .unwrap_or(0),
-            |ui, index| {
-                let code = crate::desktop::i18n::LANGUAGE_CHOICES[index]
-                    .0
-                    .map(str::to_string);
-                if ui.update(|settings| settings.ui_language = code.clone()) {
-                    crate::desktop::i18n::apply(code.as_deref());
-                }
-            },
-            layer,
-        ),
-    );
+        languages.iter().map(|(_, name)| tr(name)).collect(),
+        languages
+            .iter()
+            .position(|(code, _)| *code == settings.ui_language.as_deref())
+            .unwrap_or(0),
+        move |ui, index| {
+            let code = languages[index].0.map(str::to_string);
+            if ui.update(|settings| settings.ui_language = code.clone()) {
+                crate::desktop::i18n::apply(code.as_deref());
+            }
+        },
+        layer,
+    ));
     if s::updates_itself(ui) {
         let shown = settings
             .updates
             .channel
             .unwrap_or_else(crate::updater::build_channel);
-        rows.push(
+        rows.push(pick_row(
+            ui,
+            p,
+            "update-channel",
+            &REFRESH,
             tr("Update channel"),
-            pick_row(
-                ui,
-                p,
-                "update-channel",
-                &REFRESH,
-                tr("Update channel"),
-                UpdateChannel::ALL
-                    .iter()
-                    .map(|channel| tr(channel.label()))
-                    .collect(),
-                UpdateChannel::ALL
-                    .iter()
-                    .position(|item| *item == shown)
-                    .unwrap_or(0),
-                |ui, index| {
-                    // Choosing the channel already in effect saves nothing, so an
-                    // unset channel keeps following the build.
-                    let channel = UpdateChannel::ALL[index];
-                    let shown = ui
-                        .settings
-                        .updates
-                        .channel
-                        .unwrap_or_else(crate::updater::build_channel);
-                    if channel != shown
-                        && ui.update(|settings| settings.updates.channel = Some(channel))
-                    {
-                        ui.send(Request::Desktop(DesktopAction::CheckForUpdates));
-                    }
-                },
-                layer,
-            ),
-        );
+            UpdateChannel::ALL
+                .iter()
+                .map(|channel| tr(channel.label()))
+                .collect(),
+            UpdateChannel::ALL
+                .iter()
+                .position(|item| *item == shown)
+                .unwrap_or(0),
+            |ui, index| {
+                // Choosing the channel already in effect saves nothing, so an
+                // unset channel keeps following the build.
+                let channel = UpdateChannel::ALL[index];
+                let shown = ui
+                    .settings
+                    .updates
+                    .channel
+                    .unwrap_or_else(crate::updater::build_channel);
+                if channel != shown
+                    && ui.update(|settings| settings.updates.channel = Some(channel))
+                {
+                    ui.send(Request::Desktop(DesktopAction::CheckForUpdates));
+                }
+            },
+            layer,
+        ));
     }
-    rows.into_rows()
+    rows
 }
 
 /// Left, Either, or Right for a modifier-only shortcut (macOS); sides that
@@ -1241,12 +1163,16 @@ pub(super) fn advanced_open(ui: &Ui, pane: Pane) -> bool {
 /// The disclosure for a pane's settings most people never change, which
 /// follow it.
 pub(super) fn advanced_toggle(ui: &Ui, p: Paint, pane: Pane) -> El {
+    disclosure_toggle(ui, p, pane, tr("Advanced"))
+}
+
+pub(super) fn disclosure_toggle(ui: &Ui, p: Paint, pane: Pane, label: &str) -> El {
     let c = &p.k.c;
     let open = advanced_open(ui, pane);
     row()
         .key("advanced-toggle")
         .role("button")
-        .label(tr("Advanced"))
+        .label(label)
         .h(18.0)
         .px(6.0)
         .ml(METRICS.row_px - 6.0)
@@ -1266,7 +1192,7 @@ pub(super) fn advanced_toggle(ui: &Ui, p: Paint, pane: Pane) -> El {
             }
         })
         .child(
-            text(tr("Advanced"))
+            text(label)
                 .key("title")
                 .font(p.k.ty.ui.lh(16.0))
                 .color(c.text_muted),
@@ -1285,8 +1211,8 @@ pub(super) fn advanced_toggle(ui: &Ui, p: Paint, pane: Pane) -> El {
         )
 }
 
-/// Where the speech model runs (#856): Auto, GPU or CPU, and why Auto
-/// stays on the CPU after a GPU failed.
+/// Where the speech model runs (#856): Auto, GPU or CPU, and why this
+/// process runs on the CPU after a GPU failed.
 #[cfg(any(target_os = "linux", target_os = "windows"))]
 fn speech_engine_row(ui: &Ui, p: Paint, layer: &mut Vec<El>) -> CardRow {
     use crate::app_settings::TranscriptionDevice;
@@ -1330,16 +1256,30 @@ fn speech_engine_row(ui: &Ui, p: Paint, layer: &mut Vec<El>) -> CardRow {
     // Launched on CPU, Hex loaded no GPU driver (#1253).
     let restart_note = (ui.live() && crate::transcription::local_transcriber::gpu_after_restart())
         .then(|| tr("Turns on when Hex restarts").to_owned());
-    let note = vulkan_note.or(restart_note).or_else(|| failed.map(|failure| {
-        tr_named(
-            if failure.slow {
-                "Auto uses the CPU because it runs speech faster than {device}. Choose GPU to use it anyway."
-            } else {
-                "Auto uses the CPU because {device} stopped responding. Choose GPU to try it again."
-            },
-            &[("device", failure.device.as_str())],
-        )
-    }));
+    // This process fell back after the GPU ran out of memory (#1984). The
+    // record is not saved, so it goes away when a GPU loads again or Hex
+    // restarts.
+    let out_of_memory_note = (ui.live() && device != TranscriptionDevice::Cpu)
+        .then(crate::transcription::gpu_health::out_of_memory_fallback)
+        .flatten()
+        .map(|failure| {
+            tr_named(
+                "Hex switched to the CPU because {device} failed during transcription (out of memory). Restart Hex to use the GPU again.",
+                &[("device", failure.device.as_str())],
+            )
+        });
+    let note = vulkan_note.or(restart_note).or(out_of_memory_note).or_else(|| {
+        failed.map(|failure| {
+            tr_named(
+                if failure.slow {
+                    "Auto uses the CPU because it runs speech faster than {device}. Choose GPU to use it anyway."
+                } else {
+                    "Auto uses the CPU because {device} stopped responding. Choose GPU to try it again."
+                },
+                &[("device", failure.device.as_str())],
+            )
+        })
+    });
     icon_row(
         p,
         "speech-engine",
@@ -1361,7 +1301,7 @@ pub(super) fn pick_row(
     title: &str,
     labels: Vec<&'static str>,
     selected: usize,
-    pick: fn(&mut Ui, usize),
+    pick: impl Fn(&mut Ui, usize) + 'static,
     layer: &mut Vec<El>,
 ) -> CardRow {
     let control = pick_select(ui, p, key, title, labels, selected, pick, layer);
@@ -1379,7 +1319,7 @@ pub(super) fn pick_select(
     name: &str,
     labels: Vec<&'static str>,
     selected: usize,
-    pick: fn(&mut Ui, usize),
+    pick: impl Fn(&mut Ui, usize) + 'static,
     layer: &mut Vec<El>,
 ) -> El {
     quiet_select(
@@ -1388,14 +1328,15 @@ pub(super) fn pick_select(
         Menu::Pick(key),
         format!("{key}-control"),
         name,
-        labels,
+        labels.into_iter().map(str::to_owned).collect(),
         selected,
         pick,
         layer,
     )
 }
 
-/// [`pick_select`] for rows made at run time, opened as `menu`.
+/// [`pick_select`] for rows made at run time, opened as `menu`. Labels are
+/// owned so a card can build them from its own choices.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn quiet_select(
     ui: &Ui,
@@ -1403,28 +1344,34 @@ pub(super) fn quiet_select(
     menu: Menu,
     key: String,
     name: &str,
-    labels: Vec<&'static str>,
+    labels: Vec<String>,
     selected: usize,
     pick: impl Fn(&mut Ui, usize) + 'static,
     layer: &mut Vec<El>,
 ) -> El {
     let choices = labels.clone();
     let pick = std::rc::Rc::new(pick);
-    let current = labels.get(selected).copied().unwrap_or_default();
-    Select::new(key, &labels)
+    let current = labels.get(selected).cloned().unwrap_or_default();
+    let open = ui.open == Some(menu);
+    Select::new(key.clone(), &labels)
         .appearance(SelectAppearance::Inline)
-        .current(labels.get(selected).copied())
-        .open(ui.open == Some(menu))
+        .current(labels.get(selected).map(String::as_str))
+        .open(open)
         .placement(Placement::BottomEnd)
-        .on_toggle(move |ui: &mut Ui| s::toggle_menu(ui, menu))
         .on_close(|ui: &mut Ui| ui.open = None)
         .on_choose(move |ui: &mut Ui, value: &str, _: &mut rune::Tx| {
             ui.open = None;
-            if let Some(index) = choices.iter().position(|label| *label == value) {
+            if let Some(index) = choices.iter().position(|label| label == value) {
                 pick(ui, index);
             }
         })
         .build(p.k, layer)
+        .on_press_tx(super::controls::revealing_press(
+            open,
+            format!("{key}-content"),
+            Some(format!("option{selected}")),
+            move |ui: &mut Ui| s::toggle_menu(ui, menu),
+        ))
         .label(name)
         .a11y_value(current)
         .mr(-8.0)

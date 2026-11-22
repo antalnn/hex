@@ -25,7 +25,7 @@ use super::hex_meter::hex_meter;
 use super::hud_stage::{flow_box, frame_slot, voice_or_idle_slot};
 use super::landing::{LEAD, arrives, keys, ready, title_font};
 use super::live::{Live, ModelStep};
-use super::login::{self, Login, login_ask};
+use super::login::{self, Login, LoginCopy, login_ask};
 use super::mic_line::mic_capsule;
 use super::pill::{CAPSULE, FLY, PILL, after_flight, language_capsule, pill, slot};
 use super::sparks::impacts;
@@ -157,30 +157,22 @@ fn corner_skip(p: Paint, s: &Onboard) -> Option<El> {
 }
 
 /// Hex's shortcut didn't start after setup and Hex won't relaunch itself
-/// again: one line at the top with Reopen Hex.
+/// again: one line at the top with Reopen Hex. The practice shows it in
+/// place of its invitation to press the shortcut instead.
 fn reopen(p: Paint, s: &Onboard) -> Option<El> {
-    s.live.as_ref().filter(|live| live.reopen).map(|_| {
-        row()
-            .key("reopen")
-            .absolute(0.0, 8.0)
-            .w_full()
-            .gap(10.0)
-            .center()
-            .transition(arrives())
-            .child(
-                text(tr("Hex's shortcut didn't start."))
-                    .key("why")
-                    .font(LEAD)
-                    .color(p.muted()),
-            )
-            .child(
-                Button::new(tr("Reopen Hex"))
-                    .variant(ButtonVariant::Neutral)
-                    .on_press(live::reopen)
-                    .build_push(p.k)
-                    .key("reopen-hex"),
-            )
-    })
+    let practice = matches!(s.step, Step::Try | Step::TryHearing | Step::TryHeard);
+    s.live
+        .as_ref()
+        .filter(|live| live.reopen && !practice)
+        .map(|_| {
+            row()
+                .key("reopen-at")
+                .absolute(0.0, 8.0)
+                .w_full()
+                .center()
+                .transition(arrives())
+                .child(live::recovery(p))
+        })
 }
 
 /// Back to the model step, on the pages after it, once the person chose
@@ -299,6 +291,7 @@ fn ready_page(p: Paint, s: &Onboard) -> El {
     let core = ready(
         p,
         &s.caps,
+        s.toggle,
         (!s.had_model).then_some(PILL),
         s.ready_age(),
         s.reduced.get(),
@@ -313,8 +306,19 @@ fn ready_page(p: Paint, s: &Onboard) -> El {
             .items_center()
             .child(core)
             .children(
-                login_ask(p, &s.login, s.now, s.reduced.get(), false, login::toggle)
-                    .map(|ask| ask.transition(arrives())),
+                login_ask(
+                    p,
+                    &s.login,
+                    s.now,
+                    s.reduced.get(),
+                    false,
+                    LoginCopy {
+                        home: s.home,
+                        toggle: s.toggle,
+                    },
+                    login::toggle,
+                )
+                .map(|ask| ask.transition(arrives())),
             )
             .child(
                 row()
@@ -345,6 +349,10 @@ fn ready_page(p: Paint, s: &Onboard) -> El {
         s.now,
         s.reduced.get(),
         true,
+        LoginCopy {
+            home: s.home,
+            toggle: s.toggle,
+        },
         |s: &mut Onboard| {
             let next = if s.login.login == Login::On {
                 Login::Off
@@ -416,15 +424,18 @@ fn heading(p: Paint, s: &Onboard, key: &str, title: &str, under: El) -> El {
     )
 }
 
-fn hold(p: Paint, s: &Onboard, rest: &str, down: bool) -> El {
+/// `sentence` with the shortcut's keycaps at its `{keys}`.
+fn hold(p: Paint, s: &Onboard, sentence: &str, down: bool) -> El {
     row()
         .key("hold")
         .gap(8.0)
         .center_y()
         .transition(Transition::opacity())
-        .child(text(tr("Hold")).key("hold").font(LEAD).color(p.muted()))
-        .child(keys(p, "keys", &s.caps, down))
-        .child(text(rest).key("rest").font(LEAD).color(p.muted()))
+        .children(super::landing::around_keys(
+            sentence,
+            keys(p, "keys", &s.caps, down),
+            |words| text(words).font(LEAD).color(p.muted()),
+        ))
 }
 
 fn download_page(p: Paint, s: &Onboard, waiting: bool) -> El {
@@ -706,7 +717,9 @@ fn try_flights(s: &Onboard) -> Vec<(Flight, super::field_text::Slot<'static>)> {
 fn try_page(p: Paint, s: &Onboard) -> El {
     let holding = s.step == Step::TryHearing || s.live_hold_from.is_some();
     let warming = s.live.as_ref().is_some_and(|live| live.warming);
+    let reopen = s.live.as_ref().is_some_and(|live| live.reopen);
     let head = match s.step {
+        _ if reopen => heading(p, s, "try", tr("Your turn"), live::recovery(p)),
         Step::TryHeard => heading(
             p,
             s,
@@ -720,7 +733,16 @@ fn try_page(p: Paint, s: &Onboard) -> El {
             s,
             "try",
             tr("Your turn"),
-            hold(p, s, tr("and say anything."), holding),
+            hold(
+                p,
+                s,
+                if s.toggle {
+                    tr("Tap {keys} and say anything.")
+                } else {
+                    tr("Hold {keys} and say anything.")
+                },
+                holding,
+            ),
         ),
     };
     let stage = if s.interactive_try() {
@@ -822,8 +844,9 @@ fn interactive_try_stage(p: Paint, s: &Onboard) -> El {
     let stage = practice_stage(p);
     let reduced = s.reduced.get();
     let warming = s.live.as_ref().is_some_and(|live| live.warming);
+    let reopen = s.live.as_ref().is_some_and(|live| live.reopen);
     let editor = TextArea::new(&s.practice)
-        .placeholder(if s.dictated.hearing() {
+        .placeholder(if s.dictated.hearing() || reopen {
             String::new()
         } else if warming {
             live::warming_copy().to_owned()

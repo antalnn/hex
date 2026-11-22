@@ -3,6 +3,7 @@ use std::io::{ErrorKind, Write};
 use std::os::fd::AsRawFd;
 use std::os::unix::fs::PermissionsExt;
 use std::os::unix::process::CommandExt;
+use std::path::Path;
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, PoisonError, Weak};
@@ -16,7 +17,9 @@ use x11rb::protocol::xproto::{ConnectionExt, KeyButMask};
 use x11rb::protocol::xtest;
 use x11rb::rust_connection::RustConnection;
 
+use crate::continuation::Continuation;
 use crate::linux::clipboard::{Selection, Snapshot};
+use crate::linux::input::activity;
 use crate::linux::input::{
     KEY_PRESS, KEY_RELEASE, Keymap, ShortcutKeys, XK_CONTROL_L, XK_SHIFT_L, connect_x11,
 };
@@ -26,6 +29,7 @@ use crate::linux::session::LinuxSession;
 const XK_A: u32 = 0x61;
 const XK_C: u32 = 0x63;
 const XK_V: u32 = 0x76;
+const XK_RETURN: u32 = 0xff0d;
 const HELPER_TIMEOUT: Duration = Duration::from_secs(3);
 const PASTE_SETTLE: Duration = Duration::from_millis(100);
 const PORTAL_FOCUS_SETTLE: Duration = Duration::from_millis(250);
@@ -51,6 +55,8 @@ pub(crate) struct LinuxPaster {
     keys: ShortcutKeys,
     selection: Selection,
     restore: Arc<Mutex<Restore>>,
+    /// The dictation the next one may join.
+    continuation: Continuation,
 }
 
 /// The clipboard a paste replaced, waiting to come back.
@@ -86,6 +92,15 @@ impl Restore {
     fn failed(&mut self) {
         self.inserted = None;
         self.original = None;
+    }
+
+    /// Labs › Keep dictation on clipboard: an earlier paste's pending restore
+    /// stands down and nothing is kept to put back, so a later restoring
+    /// paste never brings an older clipboard back over this one.
+    fn keep(&mut self) {
+        self.generation = self.generation.wrapping_add(1);
+        self.original = None;
+        self.inserted = None;
     }
 }
 
@@ -147,6 +162,8 @@ pub(crate) enum Chord {
     SelectAll,
     Copy,
     Paste,
+    /// Return alone, after a paste (Labs › YOLO mode).
+    Return,
 }
 
 impl WaylandKeys {
@@ -338,6 +355,48 @@ fn copied_only(
     )
 }
 
+/// `path` as a `text/uri-list` entry: one absolute `file://` URI, CRLF
+/// terminated, with everything but unreserved characters and `/`
+/// percent-encoded.
+fn file_uri(path: &Path) -> Result<String> {
+    let text = path
+        .to_str()
+        .ok_or_else(|| eyre!("not a UTF-8 path: {}", path.display()))?;
+    if !path.is_absolute() {
+        return Err(eyre!("not an absolute path: {}", path.display()));
+    }
+    let mut uri = String::from("file://");
+    for &byte in text.as_bytes() {
+        if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'.' | b'_' | b'~' | b'/') {
+            uri.push(byte as char);
+        } else {
+            uri.push_str(&format!("%{byte:02X}"));
+        }
+    }
+    uri.push_str("\r\n");
+    Ok(uri)
+}
+
+/// The process's one paster for copies that outlive the call, such as a file
+/// on the clipboard: on X11 it serves the clipboard for as long as it lives,
+/// so what it copied stays pasteable. Built on first use from the saved
+/// terminal-paste preference.
+pub(crate) fn with_paster(use_it: impl FnOnce(&mut LinuxPaster) -> Result<()>) -> Result<()> {
+    static PASTER: Mutex<Option<LinuxPaster>> = Mutex::new(None);
+    let mut paster = PASTER.lock().unwrap_or_else(|error| error.into_inner());
+    if paster.is_none() {
+        let shift = crate::app_settings::AppSettings::load()
+            .map(|settings| settings.paste_with_shift)
+            .unwrap_or(false);
+        *paster = Some(LinuxPaster::new(
+            Arc::default(),
+            Arc::new(AtomicBool::new(shift)),
+            Default::default(),
+        )?);
+    }
+    use_it(paster.as_mut().expect("made above"))
+}
+
 impl LinuxPaster {
     pub(crate) fn new(
         stop: Arc<AtomicBool>,
@@ -362,6 +421,7 @@ impl LinuxPaster {
             keys,
             selection,
             restore: Arc::default(),
+            continuation: Continuation::default(),
         })
     }
 
@@ -369,10 +429,7 @@ impl LinuxPaster {
     /// is served for as long as this paster lives.
     pub(crate) fn copy(&mut self, text: &str) -> Result<()> {
         let mut restore = self.restore.lock().unwrap_or_else(PoisonError::into_inner);
-        *restore = Restore {
-            generation: restore.generation.wrapping_add(1),
-            ..Restore::default()
-        };
+        restore.keep();
         match &mut self.backend {
             Backend::X11(paster) => {
                 let atoms = &paster.clipboard.getter.atoms;
@@ -386,6 +443,35 @@ impl LinuxPaster {
                 let mut copy = Command::new("wl-copy");
                 copy.args(["--type", "text/plain;charset=utf-8"]);
                 run_helper(copy, text.as_bytes(), &self.stop, HELPER_TIMEOUT)
+                    .wrap_err("could not own the Wayland clipboard; install wl-clipboard")
+            }
+        }
+    }
+
+    /// Puts `path` on the clipboard as a `text/uri-list` file, so a chat app
+    /// or agent attaches the file itself (Labs › Copy a capture as one file).
+    pub(crate) fn copy_file_uri(&mut self, path: &Path) -> Result<()> {
+        let uri = file_uri(path)?;
+        let mut restore = self.restore.lock().unwrap_or_else(PoisonError::into_inner);
+        restore.keep();
+        match &mut self.backend {
+            Backend::X11(paster) => {
+                let target = paster
+                    .clipboard
+                    .getter
+                    .get_atom("text/uri-list")
+                    .wrap_err("could not name the X11 text/uri-list target")?;
+                let atoms = &paster.clipboard.getter.atoms;
+                paster
+                    .clipboard
+                    .store(atoms.clipboard, target, uri.as_bytes())
+                    .wrap_err("could not own the X11 clipboard")
+            }
+            Backend::Wayland(_) => {
+                require_wl_copy()?;
+                let mut copy = Command::new(WL_COPY);
+                copy.args(["--type", "text/uri-list"]);
+                run_helper(copy, uri.as_bytes(), &self.stop, HELPER_TIMEOUT)
                     .wrap_err("could not own the Wayland clipboard; install wl-clipboard")
             }
         }
@@ -464,13 +550,23 @@ impl LinuxPaster {
         self.selection.current().restore(snapshot)
     }
 
-    /// Sends Ctrl+A, Ctrl+C, or Ctrl+V through this session's key path.
+    /// Labs › YOLO mode: presses Return after a paste, once the
+    /// paste has had [`crate::dictation::yolo_mode::SETTLE`] to land.
+    pub(crate) fn press_return(&mut self) -> Result<()> {
+        // Return sends the message, so the next dictation starts a new one.
+        self.continuation.clear();
+        thread::sleep(crate::dictation::yolo_mode::SETTLE);
+        self.send_chord(Chord::Return)
+    }
+
+    /// Sends Ctrl+A, Ctrl+C, Ctrl+V, or Return through this session's key
+    /// path.
     fn send_chord(&mut self, chord: Chord) -> Result<()> {
         match &mut self.backend {
             Backend::X11(paster) => paster.chord(chord, &self.stop, &self.keys),
             Backend::Wayland(wayland) => {
                 self.keys.settle(&self.stop)?;
-                wayland.send(&self.stop, chord, false)
+                activity::sending(|| wayland.send(&self.stop, chord, false))
             }
         }
     }
@@ -479,7 +575,28 @@ impl LinuxPaster {
         if text.trim().is_empty() {
             return Err(eyre!("refusing to paste an empty transcript"));
         }
-        self.paste_as(Mime::Text, text.as_bytes(), None, shift)
+        // Read as the paste commits, so the toggle applies at once. A kept
+        // paste snapshots nothing and restores nothing, and an earlier
+        // paste's pending restore stands down.
+        let keep = crate::labs::keep_on_clipboard();
+        self.paste_as(Mime::Text, text.as_bytes(), None, shift, keep)
+    }
+
+    /// Pastes a dictation, joined onto the one before it when the person
+    /// did nothing in between, as macOS and Windows join them. Only where
+    /// [`activity`] reports their input; elsewhere it pastes as is.
+    pub(crate) fn paste_dictation(&mut self, text: &str, shift: bool) -> Result<()> {
+        let Some(revision) = activity::revision() else {
+            return self.paste(text, shift);
+        };
+        let text = self
+            .continuation
+            .join(revision, true, text)
+            .unwrap_or_else(|| text.to_string());
+        self.paste(&text, shift)?;
+        // Only a paste that reached the app is continued by the next one.
+        self.continuation.record(revision, true, text);
+        Ok(())
     }
 
     /// Pastes over a typed-text selection, then puts `original` back: the
@@ -488,58 +605,67 @@ impl LinuxPaster {
         if text.trim().is_empty() {
             return Err(eyre!("refusing to paste an empty transformation"));
         }
-        self.paste_as(Mime::Text, text.as_bytes(), Some(original), false)
+        self.paste_as(Mime::Text, text.as_bytes(), Some(original), false, false)
     }
 
     /// Pastes a PNG (a capture's contact sheet) where the focus is, as the
     /// Mac's capture Paste does before its summary.
     pub(crate) fn paste_png(&mut self, png: &[u8]) -> Result<()> {
-        self.paste_as(Mime::Png, png, None, false)
+        self.paste_as(Mime::Png, png, None, false, false)
     }
 
     /// Pastes through the clipboard, then puts the previous clipboard back
     /// unless something newer replaced the paste first. `original` is the
     /// clipboard a typed-text job saved before it copied the selection.
     /// `shift` asks for Ctrl+Shift+V whatever the saved Terminal paste
-    /// setting says.
+    /// setting says. `keep` leaves the paste on the clipboard instead of
+    /// restoring it (Labs › Keep dictation on clipboard).
     fn paste_as(
         &mut self,
         mime: Mime,
         bytes: &[u8],
         original: Option<Snapshot>,
         shift: bool,
+        keep: bool,
     ) -> Result<()> {
+        // Whatever this inserts, a dictation after it no longer follows the
+        // last one; a dictation's own paste records itself afterwards.
+        self.continuation.clear();
         let restore = self.restore.clone();
         let selection = self.selection.current();
         let mut state = restore.lock().unwrap_or_else(PoisonError::into_inner);
-        state.generation = state.generation.wrapping_add(1);
-        // A paste before the previous one restored keeps that one's original.
-        let previous_pending = state
-            .inserted
-            .take()
-            .is_some_and(|(mime, bytes)| selection.holds(mime.wayland(), &bytes));
-        if let Some(original) = original {
-            state.original = Some(original);
-        } else if !previous_pending {
-            state.original = match selection.snapshot() {
-                Ok(snapshot) => Some(snapshot),
-                Err(error) => {
-                    tracing::info!(
-                        error = format!("{error:#}"),
-                        "not restoring the clipboard after this paste"
-                    );
-                    None
-                }
-            };
+        if keep {
+            state.keep();
+        } else {
+            state.generation = state.generation.wrapping_add(1);
+            // A paste before the previous one restored keeps that one's original.
+            let previous_pending = state
+                .inserted
+                .take()
+                .is_some_and(|(mime, bytes)| selection.holds(mime.wayland(), &bytes));
+            if let Some(original) = original {
+                state.original = Some(original);
+            } else if !previous_pending {
+                state.original = match selection.snapshot() {
+                    Ok(snapshot) => Some(snapshot),
+                    Err(error) => {
+                        tracing::info!(
+                            error = format!("{error:#}"),
+                            "not restoring the clipboard after this paste"
+                        );
+                        None
+                    }
+                };
+            }
         }
         let result = self.send_paste(mime, bytes, shift);
-        if result.is_ok() {
-            state.inserted = Some((mime, bytes.to_vec()));
-            schedule_restore(restore.clone(), state.generation, selection);
-        } else {
+        if result.is_err() {
             // A paste that only reached the clipboard leaves the transcript
             // there for Ctrl+V; a typed-text job restores its own original.
             state.failed();
+        } else if !keep {
+            state.inserted = Some((mime, bytes.to_vec()));
+            schedule_restore(restore.clone(), state.generation, selection);
         }
         drop(state);
         // Give the target time to request the selection before the next queued
@@ -563,8 +689,7 @@ impl LinuxPaster {
                 // wl-copy's parent exits only after the selection is installed.
                 // Never read a pipe inherited by its clipboard-serving daemon.
                 self.keys.settle(&self.stop)?;
-                wayland
-                    .send(&self.stop, Chord::Paste, paste_with_shift)
+                activity::sending(|| wayland.send(&self.stop, Chord::Paste, paste_with_shift))
                     .map_err(|error| copied_only(error, paste_with_shift))?;
             }
         }
@@ -641,13 +766,18 @@ impl X11Paster {
         })
     }
 
-    /// Sends Ctrl+A, Ctrl+C, or Ctrl+V without touching the clipboard.
+    /// Sends Ctrl+A, Ctrl+C, Ctrl+V, or Return without touching the
+    /// clipboard.
     fn chord(&mut self, chord: Chord, stop: &AtomicBool, keys: &ShortcutKeys) -> Result<()> {
         self.wait_for_modifier_release(stop, keys)?;
         let key = match chord {
             Chord::SelectAll => self.keymap.keycode(XK_A)?,
             Chord::Copy => self.keymap.keycode(XK_C)?,
             Chord::Paste => self.v,
+            Chord::Return => {
+                let key = self.keymap.keycode(XK_RETURN)?;
+                return self.send_keys(&[(KEY_PRESS, key), (KEY_RELEASE, key)]);
+            }
         };
         self.send_keys(&[
             (KEY_PRESS, self.control),
@@ -761,6 +891,7 @@ impl X11Paster {
 const EVDEV_KEY_A: usize = 30;
 const EVDEV_KEY_C: usize = 46;
 const EVDEV_KEY_V: usize = 47;
+const EVDEV_KEY_ENTER: usize = 28;
 
 fn chord_keys(chord: Chord, with_shift: bool) -> Vec<String> {
     let (key, evdev, shift) = match chord {
@@ -768,7 +899,9 @@ fn chord_keys(chord: Chord, with_shift: bool) -> Vec<String> {
         Chord::Copy => ("c", EVDEV_KEY_C, false),
         // Only a paste reads the terminal-paste preference.
         Chord::Paste => ("v", EVDEV_KEY_V, with_shift),
+        Chord::Return => ("Return", EVDEV_KEY_ENTER, false),
     };
+    let control = chord != Chord::Return;
     // wtype numbers its keymap in order of first use from evdev code 1, so a
     // bare `-k v` sends evdev 1 (Escape in the standard keymap). Hyprland
     // reads virtual-keyboard keys through its configured layout to match
@@ -779,7 +912,9 @@ fn chord_keys(chord: Chord, with_shift: bool) -> Vec<String> {
     let mut keys: Vec<String> = (0..evdev - 1)
         .flat_map(|index| ["-p".to_owned(), format!("U{:04X}", 0x2460 + index)])
         .collect();
-    keys.extend(["-M".to_owned(), "ctrl".to_owned()]);
+    if control {
+        keys.extend(["-M".to_owned(), "ctrl".to_owned()]);
+    }
     if shift {
         keys.extend(["-M".to_owned(), "shift".to_owned()]);
     }
@@ -787,7 +922,9 @@ fn chord_keys(chord: Chord, with_shift: bool) -> Vec<String> {
     if shift {
         keys.extend(["-m".to_owned(), "shift".to_owned()]);
     }
-    keys.extend(["-m".to_owned(), "ctrl".to_owned()]);
+    if control {
+        keys.extend(["-m".to_owned(), "ctrl".to_owned()]);
+    }
     // GTK 3's reverse keymap lookup skips the final keycode. Keep the key
     // before a neutral VoidSymbol release so its shortcut remains discoverable
     // (#28).
@@ -906,6 +1043,19 @@ mod tests {
         command
     }
 
+    #[test]
+    fn a_file_is_one_percent_encoded_uri_list_line() {
+        assert_eq!(
+            file_uri(Path::new("/home/me/Scrawl 1/12.scrawl.slim.zip")).unwrap(),
+            "file:///home/me/Scrawl%201/12.scrawl.slim.zip\r\n"
+        );
+        assert_eq!(
+            file_uri(Path::new("/tmp/%s#?")).unwrap(),
+            "file:///tmp/%25s%23%3F\r\n"
+        );
+        assert!(file_uri(Path::new("relative/file")).is_err());
+    }
+
     /// A typed-text job may start while a dictation paste still waits to
     /// restore: it must cancel that restore and keep its original, not
     /// snapshot the transcript the paste left behind.
@@ -963,6 +1113,26 @@ mod tests {
         assert_eq!(restore.begin(false), None);
         assert_eq!(restore.generation, 4);
         assert!(restore.original.is_none());
+    }
+
+    /// Labs › Keep dictation on clipboard: a kept paste cancels the restore
+    /// an earlier paste left pending and keeps nothing to put back, so a
+    /// later restoring paste cannot bring an older clipboard back.
+    #[test]
+    fn a_kept_paste_stands_down_the_pending_restore() {
+        let stale = Snapshot::Wayland(vec![(
+            "text/plain;charset=utf-8".into(),
+            b"before the dictation".to_vec(),
+        )]);
+        let mut restore = Restore {
+            generation: 5,
+            original: Some(stale),
+            inserted: Some((Mime::Text, b"the dictation".to_vec())),
+        };
+        restore.keep();
+        assert_eq!(restore.generation, 6, "the pending restore is cancelled");
+        assert!(restore.original.is_none(), "nothing is left to put back");
+        assert!(restore.inserted.is_none());
     }
 
     #[test]
@@ -1046,6 +1216,18 @@ mod tests {
                     ["-M", "ctrl", "-k", key, "-m", "ctrl", "-p", "VoidSymbol"]
                 );
             }
+        }
+    }
+
+    /// Labs › YOLO mode: Return alone, on `KEY_ENTER`, with no
+    /// Ctrl and whatever the paste preference.
+    #[test]
+    fn return_sends_no_modifier() {
+        for with_shift in [false, true] {
+            assert_eq!(
+                chord_keys(Chord::Return, with_shift)[(EVDEV_KEY_ENTER - 1) * 2..],
+                ["-k", "Return", "-p", "VoidSymbol"]
+            );
         }
     }
 
@@ -1253,5 +1435,27 @@ mod tests {
             !wl_paste(&["--list-types"]).status.success(),
             "the transcript stayed on a clipboard that was empty"
         );
+
+        // Labs › Keep dictation on clipboard: the dictation stays, and the
+        // clipboard it replaced never comes back.
+        Selection::Wayland
+            .restore(Snapshot::Wayland(original.clone()))
+            .unwrap();
+        crate::labs::apply(&crate::app_settings::LabsSettings {
+            keep_on_clipboard: true,
+            ..crate::app_settings::LabsSettings::default()
+        });
+        paster.paste(expected, false).unwrap();
+        let thrice = expected.repeat(3);
+        wait_for("GTK to receive the kept transcript", &mut || {
+            std::fs::read_to_string(&path).unwrap_or_default() == thrice
+        });
+        thread::sleep(RESTORE_DELAY * 2);
+        let kept = wl_paste(&["--no-newline", "--type", "text/plain;charset=utf-8"]);
+        assert!(
+            kept.status.success() && kept.stdout == expected.as_bytes(),
+            "a kept paste left the transcript on the clipboard"
+        );
+        crate::labs::apply(&crate::app_settings::LabsSettings::default());
     }
 }

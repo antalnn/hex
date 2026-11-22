@@ -19,9 +19,10 @@ use crate::desktop::i18n::tr;
 use std::sync::Mutex;
 use std::time::Instant;
 
-use rune::{El, TextEdit, Transition, Tx, text};
+use rune::{El, TextEdit, Transition, Tx, row, text};
+use rune_kit::{Button, ButtonVariant};
 
-use super::super::controls::Paint;
+use super::super::controls::{Paint, PushSize};
 use super::super::found_choice::{self, ChoiceRow};
 use super::super::paste_access::{self, PasteAccess};
 use super::super::platform::Os;
@@ -487,6 +488,7 @@ pub(in crate::rune_ui) fn poll(ui: &mut Ui, tx: &mut Tx) -> bool {
     let scanning = ui.found.scanning();
     let caps = ui.settings.dictation_hotkey.keycaps();
     let toggle = ui.settings.shortcut_mode == crate::dictation::ShortcutMode::Toggle;
+    let release_microphone = ui.settings.release_microphone_while_idle;
     let Some(choice) = ui
         .first_run
         .as_ref()
@@ -635,6 +637,7 @@ pub(in crate::rune_ui) fn poll(ui: &mut Ui, tx: &mut Tx) -> bool {
     s.mic_granted = mic_granted;
     s.caps = caps;
     s.toggle = toggle;
+    live.release_microphone = release_microphone;
     if let Some(download) = s.download.as_mut() {
         if let Some(total) = model.and_then(|m| m.download_bytes()) {
             download.total = total;
@@ -650,8 +653,19 @@ pub(in crate::rune_ui) fn poll(ui: &mut Ui, tx: &mut Tx) -> bool {
     // Hex's state arrives between frames, so the first run keeps polling;
     // a fixture shows one moment and stays still.
     advance_to(s, now, tx);
+    let ready = s.step == Step::Ready;
     if live_window {
         tx.wake_after(FRAME);
+    }
+    // Hex is ready ends the tour's practice too, so a run quit on it
+    // resumes there rather than at the practice.
+    if ready
+        && ui
+            .tour
+            .as_ref()
+            .is_some_and(|tour| tour.flow.step() == TourStep::TryIt)
+    {
+        onboarding::input(ui, Input::Skip);
     }
     true
 }
@@ -710,28 +724,15 @@ pub(in crate::rune_ui) fn continue_without_model(ui: &mut Ui) {
     if !offered {
         return;
     }
-    if ui.live()
-        && !crate::desktop::onboarding::completion_recorded()
-        && let Err(error) = crate::desktop::onboarding::record_completion()
-    {
-        tracing::warn!(%error, "could not record onboarding completion");
-    }
-    ui.first_run = None;
-    ui.tour = None;
+    onboarding::close(ui, true);
 }
 
-/// "Start using Hex": closes the first run and the tour under it.
+/// "Start using Hex": closes the first run and the tour under it, and
+/// records the tour finished once setup is ready.
 pub(super) fn finish(ui: &mut Ui) {
     let installed = ui.picker.selected_installed(&ui.settings);
-    if ui.live()
-        && ui.platform.setup_status(installed).ready()
-        && !crate::desktop::onboarding::completion_recorded()
-        && let Err(error) = crate::desktop::onboarding::record_completion()
-    {
-        tracing::warn!(%error, "could not record onboarding completion");
-    }
-    ui.first_run = None;
-    ui.tour = None;
+    let ready = ui.platform.setup_status(installed).ready();
+    onboarding::close(ui, ready);
 }
 
 fn choose(ui: &mut Ui, selection: &TranscriptionSelection) {
@@ -801,12 +802,36 @@ pub(super) fn reopen(ui: &mut Ui) {
     onboarding::input(ui, Input::Reopen);
 }
 
+/// Hex's shortcut didn't start, and Reopen Hex: what a page shows instead
+/// of asking for the shortcut until the listener is ready.
+pub(super) fn recovery(p: Paint) -> El {
+    row()
+        .key("reopen")
+        .gap(10.0)
+        .center_y()
+        .child(
+            text(tr("Hex's shortcut didn't start."))
+                .key("why")
+                .font(super::landing::LEAD)
+                .color(p.muted()),
+        )
+        .child(
+            Button::new(tr("Reopen Hex"))
+                .variant(ButtonVariant::Neutral)
+                .on_press(reopen)
+                .build_push(p.k)
+                .key("reopen-hex"),
+        )
+}
+
 /// "Use a model file…" when the download is blocked: a GGUF chosen here is
 /// imported and selected, and the first run moves on once it is ready.
 pub(super) fn use_file(ui: &mut Ui) {
     super::super::model_import::use_file(ui);
 }
 
+/// "Try again": retries the model the person picked from the list, else the
+/// language capsule's choice.
 pub(super) fn retry_download(ui: &mut Ui) {
     let Some(live) = ui.first_run.as_mut().and_then(|s| s.live.as_mut()) else {
         return;
@@ -815,7 +840,10 @@ pub(super) fn retry_download(ui: &mut Ui) {
     live.stalled = false;
     live.progress = None;
     let choice = live.choice.clone();
-    choose(ui, &choice);
+    match ui.found.picked {
+        Some(index) => found_choice::pick(ui, index),
+        None => choose(ui, &choice),
+    }
 }
 
 /// Allow on a permission row.
@@ -865,7 +893,7 @@ pub(super) fn warming_copy() -> &'static str {
 /// What the practice dictation's last try needs said.
 pub(super) fn hint_copy(live: &Live) -> Option<&'static str> {
     Some(match live.practice {
-        Practice::TooShort => "Keep holding the shortcut while you talk, then let go.",
+        Practice::TooShort => tr("Keep holding the shortcut while you talk, then let go."),
         Practice::NothingHeard => tr("Hex didn't hear any words. Try again a little louder."),
         Practice::Failed => tr("That didn't work. Try again."),
         Practice::Transcribing => tr("Typing what you said…"),
@@ -885,6 +913,9 @@ pub(super) fn use_toggle(ui: &mut Ui) {
 
 /// [`hint_copy`] under the practice field.
 pub(super) fn hint(p: Paint, live: &Live) -> Option<El> {
+    if live.reopen {
+        return None;
+    }
     let copy = hint_copy(live)?;
     Some(
         text(copy)

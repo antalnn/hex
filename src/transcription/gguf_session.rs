@@ -5,6 +5,7 @@
 
 use std::borrow::Cow;
 use std::cell::RefCell;
+use std::ops::Range;
 use std::path::Path;
 use std::time::{Duration, Instant};
 
@@ -13,6 +14,7 @@ use color_eyre::eyre::{Result, WrapErr, eyre};
 use crate::transcription::models::{
     AUTO_LANGUAGE, ModelDefinition, ModelRuntime, TranscriptionSelection,
 };
+use crate::transcription::stream_tuning::{StreamCache, StreamMenus, StreamTuning};
 use crate::transcription::transcript::TimestampLevel;
 
 /// 8 s of audio reaches every stream window shape a dictation can use (the
@@ -128,7 +130,7 @@ impl RunKind {
 }
 
 /// How a session feeds its model the vocabulary.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 enum VocabularySlot {
     /// The context prompt (Whisper, Qwen3-ASR), bounded to this many characters.
     Prompt(usize),
@@ -145,6 +147,14 @@ impl VocabularySlot {
     }
 }
 
+/// Whether a finished run corrects the listed "sounds like" spellings after
+/// it: only a whole-clip run on a model that read the vocabulary as a prompt
+/// (Whisper, Qwen3-ASR). Parakeet's bias already swaps the exact spelling in
+/// the engine, and a model with no vocabulary slot never read the list.
+fn corrects_sounds_like(vocabulary: VocabularySlot, kind: RunKind) -> bool {
+    kind.takes_vocabulary() && matches!(vocabulary, VocabularySlot::Prompt(_))
+}
+
 /// A run this recent leaves the weights resident (ggml keeps them so for three
 /// minutes), so a prewarm after it would only repeat work.
 const RECENT_RUN: Duration = Duration::from_secs(60);
@@ -157,6 +167,20 @@ pub(crate) struct OfflineGgufSession {
     last_run: Option<Instant>,
     /// How runs take the vocabulary.
     vocabulary: VocabularySlot,
+    /// The file's architecture, read once: Whisper trims its near-silent
+    /// edges before a run.
+    architecture: String,
+    /// What this model streams with, and the tuning it was probed for. Its
+    /// tuning stays unset until a probe ran past this session's gates.
+    streaming: StreamCache,
+    /// The Parakeet chunk menus the file carries, read when a tuning needs
+    /// them; `None` until then, and when a model has none.
+    stream_menus: Option<StreamMenus>,
+    /// Whether `stream_menus` was read, so a lab turned on later reads the
+    /// header lazily instead of on every load.
+    stream_menus_read: bool,
+    /// The model file's path, kept for that lazy read.
+    stream_path: Option<std::path::PathBuf>,
 }
 
 impl OfflineGgufSession {
@@ -172,19 +196,27 @@ impl OfflineGgufSession {
         let options = session_options(model.device()?.device_type);
         let session = model.session_with(&options)?;
         let vocabulary = VocabularySlot::of(&model);
+        let architecture = model.arch();
         Ok(Self {
             model,
             session: Some(session),
             options,
             last_run: None,
             vocabulary,
+            architecture,
+            streaming: StreamCache::default(),
+            stream_menus: None,
+            stream_menus_read: false,
+            stream_path: None,
         })
     }
 
     /// `options` with the vocabulary added, read now so a settings change
     /// applies from the next run. Whisper and Qwen3-ASR read it as their
     /// context prompt (`crate::dictation::vocabulary::transcription_prompt`),
-    /// in whole-clip runs only.
+    /// in whole-clip runs only. A run that reads only the prompt has its
+    /// listed "sounds like" spellings corrected after the run instead
+    /// (`crate::dictation::vocabulary::correct_sounds_like`).
     fn with_vocabulary<'a>(
         &self,
         options: &'a transcribe_cpp::RunOptions,
@@ -214,20 +246,21 @@ impl OfflineGgufSession {
     /// Streams only on a GPU (Metal, Vulkan): a CPU stream re-encodes each
     /// overlapping window and would cost several times the offline compute.
     /// The probe also prewarms the stream graph (see
-    /// [`STREAM_PREWARM_SAMPLES`]). Without an extension
-    /// Parakeet buffers with its largest left, chunk, and right context
-    /// (Unified English: 5.6 s, 1.04 s, 1.04 s), its most accurate and least
-    /// compute-intensive setting. `HEX_STREAMING=0` keeps the model offline
-    /// and `HEX_STREAMING=1` streams on any device (diagnostics and CI);
-    /// `HEX_STREAM_CHUNK_MS` overrides the chunk and right context.
-    pub(crate) fn probe_stream(
-        &mut self,
-        options: &transcribe_cpp::RunOptions,
-        architecture: &str,
-    ) -> Option<transcribe_cpp::StreamOptions> {
+    /// [`STREAM_PREWARM_SAMPLES`]). Without an extension, or with one the
+    /// model's menu rejects, Parakeet buffers with its largest left, chunk,
+    /// and right context (Unified English: 5.6 s, 1.04 s, 1.04 s), its most
+    /// accurate and least compute-intensive setting. `HEX_STREAMING=0` keeps
+    /// the model offline and `HEX_STREAMING=1` streams on any device
+    /// (diagnostics and CI); `HEX_STREAM_CHUNK_MS` and `HEX_STREAM_RIGHT_MS`
+    /// override the geometry, and Labs › Faster live text picks a shorter
+    /// tuple from the model's own menus.
+    ///
+    /// Passing these gates is what lets [`Self::refresh_stream`] re-probe
+    /// later: a session that fails one never streams at all.
+    pub(crate) fn probe_stream(&mut self, options: &transcribe_cpp::RunOptions, model_path: &Path) {
         use transcribe_cpp::DeviceType;
         let forced = match std::env::var("HEX_STREAMING").as_deref() {
-            Ok("0") => return None,
+            Ok("0") => return,
             Ok("1") => true,
             _ => false,
         };
@@ -236,52 +269,123 @@ impl OfflineGgufSession {
             .capabilities()
             .is_ok_and(|capabilities| capabilities.supports_streaming)
         {
-            return None;
+            return;
         }
-        let device_type = self.model.device().ok()?.device_type;
-        if !forced && !matches!(device_type, DeviceType::Gpu | DeviceType::Igpu) {
-            return None;
-        }
-        let chunk_ms = std::env::var("HEX_STREAM_CHUNK_MS")
-            .ok()
-            .and_then(|value| value.parse::<i32>().ok());
-        let stream_options = transcribe_cpp::StreamOptions {
-            family: (architecture == "parakeet" && chunk_ms.is_some()).then_some(
-                transcribe_cpp::StreamExtension::ParakeetBuffered(
-                    transcribe_cpp::ParakeetBufferedStreamOptions {
-                        left_ms: None,
-                        chunk_ms,
-                        right_ms: chunk_ms,
-                    },
-                ),
-            ),
-            ..Default::default()
+        let Some(device_type) = self.model.device().ok().map(|device| device.device_type) else {
+            return;
         };
+        if !forced && !matches!(device_type, DeviceType::Gpu | DeviceType::Igpu) {
+            return;
+        }
+        let tuning = self.tuning();
+        if self.architecture == "parakeet" {
+            self.stream_path = Some(model_path.to_path_buf());
+        }
+        if tuning.needs_menus() {
+            self.read_menus();
+        }
         let started = std::time::Instant::now();
-        let probe = self.with_stream(
+        let stream = self.probe_best(options, tuning);
+        self.streaming.record(tuning, stream);
+        if self.streaming.stream().is_some() {
+            tracing::info!(
+                ?device_type,
+                ?tuning,
+                menus = self.stream_menus.is_some(),
+                prewarm_ms = started.elapsed().as_millis(),
+                "streaming transcription is available"
+            );
+        }
+    }
+
+    /// The stream geometry this model streams with, as the last probe found
+    /// it.
+    pub(crate) fn stream_options(&self) -> Option<&transcribe_cpp::StreamOptions> {
+        self.streaming.stream()
+    }
+
+    /// The tuning this model streams with: only a Parakeet buffered model has
+    /// geometry to tune.
+    fn tuning(&self) -> StreamTuning {
+        StreamTuning::for_model(self.architecture == "parakeet", StreamTuning::current())
+    }
+
+    /// Reads the model's chunk menus once, when a tuning needs them: a load
+    /// with the lab off never opens the header for them.
+    fn read_menus(&mut self) {
+        if self.stream_menus_read {
+            return;
+        }
+        self.stream_menus_read = true;
+        self.stream_menus = self.stream_path.as_deref().and_then(StreamMenus::read);
+    }
+
+    /// Re-probes while nothing records, when this process's tuning changed
+    /// since the last probe, so Labs › Faster live text applies to a later
+    /// capture without a restart. A session whose gated probe never ran, or
+    /// never passed, does nothing here.
+    pub(crate) fn refresh_stream(&mut self, options: &transcribe_cpp::RunOptions) {
+        let tuning = self.tuning();
+        if !self.streaming.wants(tuning) {
+            return;
+        }
+        if tuning.needs_menus() {
+            self.read_menus();
+        }
+        let probed = self.probe_best(options, tuning);
+        if !self.streaming.record(tuning, probed) {
+            tracing::warn!(
+                ?tuning,
+                "this stream geometry could not stream here; keeping the geometry in hand"
+            );
+        }
+    }
+
+    /// Probes the tuning's geometry, and the model's own default when that
+    /// geometry cannot stream here: an off-menu env value or a tuple the
+    /// model never trained for warns and keeps streaming, rather than
+    /// turning it off.
+    fn probe_best(
+        &mut self,
+        options: &transcribe_cpp::RunOptions,
+        tuning: StreamTuning,
+    ) -> Option<transcribe_cpp::StreamOptions> {
+        let requested = tuning.options(self.stream_menus.as_ref());
+        let mut probe = self.probe_silence(options, &requested);
+        let mut geometry = requested;
+        if probe.is_err() && geometry.family.is_some() {
+            tracing::warn!(
+                ?tuning,
+                "this stream geometry is outside the model's menu; using its default"
+            );
+            geometry = transcribe_cpp::StreamOptions::default();
+            probe = self.probe_silence(options, &geometry);
+        }
+        match probe {
+            Ok(()) => Some(geometry),
+            Err(error) => {
+                tracing::warn!(%error, "model advertises streaming but could not stream");
+                None
+            }
+        }
+    }
+
+    /// Runs [`STREAM_PREWARM_SAMPLES`] of silence through one stream, which
+    /// prewarms the stream graph too.
+    fn probe_silence(
+        &mut self,
+        options: &transcribe_cpp::RunOptions,
+        stream_options: &transcribe_cpp::StreamOptions,
+    ) -> transcribe_cpp::Result<()> {
+        self.with_stream(
             options,
-            &stream_options,
+            stream_options,
             &transcribe_cpp::CancelToken::new(),
             |stream| {
                 stream.feed(&vec![0.0; STREAM_PREWARM_SAMPLES])?;
                 stream.finalize().map(|_| ())
             },
-        );
-        match probe {
-            Ok(Ok(())) => {
-                tracing::info!(
-                    ?device_type,
-                    chunk_ms,
-                    prewarm_ms = started.elapsed().as_millis(),
-                    "streaming transcription is available"
-                );
-                Some(stream_options)
-            }
-            Ok(Err(error)) | Err(error) => {
-                tracing::warn!(%error, "model advertises streaming but could not stream");
-                None
-            }
-        }
+        )?
     }
 
     /// Runs `drive` against one live stream on this session, then rotates the
@@ -354,6 +458,11 @@ impl OfflineGgufSession {
             true => self.with_vocabulary(options, false),
             false => Cow::Borrowed(options),
         };
+        // Parakeet's engine bias already writes a term in place of an exact
+        // "sounds like" spelling; a prompt model needs the spelling corrected
+        // after the run instead, and a model with no vocabulary slot doesn't
+        // get the list at all.
+        let correct_spellings = corrects_sounds_like(self.vocabulary, kind);
         let result =
             keep_repetition_partial(session.run(samples, &options)).map(|mut transcript| {
                 // Only the vocabulary sets a prompt, and a warm-up leaves it
@@ -363,6 +472,9 @@ impl OfflineGgufSession {
                     drop_prompt_echo(&mut transcript, prompt);
                 }
                 drop_subtitle_credit(&mut transcript);
+                if correct_spellings {
+                    crate::dictation::vocabulary::correct_sounds_like(&mut transcript);
+                }
                 transcript
             });
         drop(session);
@@ -384,12 +496,37 @@ impl OfflineGgufSession {
         }
     }
 
+    /// The audio a whole-clip run gets, and where it starts in `samples`.
+    /// Whisper decodes a whole 30 s window and fills a near-silent opening or
+    /// tail with text nobody said (a Turkish "thanks for watching", #1770), so
+    /// its clip keeps only the speech the detector hears plus
+    /// [`WHISPER_EDGE_MARGIN_SAMPLES`]. Another model, a detector that is
+    /// unavailable, and a clip it hears no speech in all keep every sample.
+    fn whisper_audio<'a>(&self, samples: &'a [f32]) -> (Cow<'a, [f32]>, usize) {
+        let bounds = if self.architecture == "whisper" {
+            crate::transcription::speech_detector::speech_bounds(samples)
+        } else {
+            None
+        };
+        let (audio, trimmed) = trimmed_audio(samples, &self.architecture, bounds);
+        if let Cow::Owned(audio) = &audio {
+            tracing::info!(
+                trimmed_ms = trimmed / 16,
+                kept_ms = audio.len() / 16,
+                "trimmed near-silent edges before a Whisper run"
+            );
+        }
+        (audio, trimmed)
+    }
+
     pub(crate) fn transcribe_chunked(
         &mut self,
         samples: &[f32],
         options: &transcribe_cpp::RunOptions,
         max_audio_samples: Option<usize>,
     ) -> Result<String> {
+        let (audio, _) = self.whisper_audio(samples);
+        let samples = audio.as_ref();
         let Some(max_samples) =
             max_audio_samples.filter(|&max_samples| samples.len() > max_samples)
         else {
@@ -399,7 +536,8 @@ impl OfflineGgufSession {
                 .wrap_err("transcription failed");
         };
         let mut output = Vec::new();
-        for samples in samples.chunks(max_samples) {
+        for range in chunk_ranges(samples, max_samples) {
+            let samples = &samples[range];
             if job_cancel().is_some_and(|cancel| cancel.is_cancelled()) {
                 return Err(eyre!("transcription was cancelled"));
             }
@@ -430,17 +568,21 @@ impl OfflineGgufSession {
         options: &transcribe_cpp::RunOptions,
         max_audio_samples: Option<usize>,
     ) -> Result<crate::transcription::transcript::Transcript> {
+        let (audio, trimmed) = self.whisper_audio(samples);
+        let samples = audio.as_ref();
         let Some(max_samples) =
             max_audio_samples.filter(|&max_samples| samples.len() > max_samples)
         else {
             let transcript = self
                 .run(samples, options)
                 .wrap_err("transcription failed")?;
-            return Ok(timed(transcript, 0));
+            return Ok(timed(transcript, chunk_offset_ms(trimmed, 0)));
         };
         let mut timed = crate::transcription::transcript::Transcript::default();
         let mut texts = Vec::new();
-        for (index, samples) in samples.chunks(max_samples).enumerate() {
+        for range in chunk_ranges(samples, max_samples) {
+            let offset = chunk_offset_ms(trimmed, range.start);
+            let samples = &samples[range];
             if job_cancel().is_some_and(|cancel| cancel.is_cancelled()) {
                 return Err(eyre!("transcription was cancelled"));
             }
@@ -458,9 +600,9 @@ impl OfflineGgufSession {
             if !text.is_empty() {
                 texts.push(text.to_string());
             }
-            // The offset comes from where the chunk sits in the clip, never
+            // The offset comes from where the range sits in the clip, never
             // from how many chunks produced text.
-            let spans = timed_spans(transcript, chunk_offset_ms(index, max_samples));
+            let spans = timed_spans(transcript, offset);
             timed.segments.extend(spans.segments);
             timed.words.extend(spans.words);
         }
@@ -496,9 +638,91 @@ pub(crate) fn timestamp_level(kind: transcribe_cpp::TimestampKind) -> TimestampL
     }
 }
 
-/// Where one chunk starts in the clip, in whole milliseconds.
-pub(crate) fn chunk_offset_ms(index: usize, chunk_samples: usize) -> i64 {
-    i64::try_from(index.saturating_mul(chunk_samples) / 16).unwrap_or(i64::MAX)
+/// 100 ms at 16 kHz: the span a long clip is cut through.
+const QUIET_SPAN_SAMPLES: usize = 1_600;
+/// How far back from a window's end the quietest span is looked for.
+const QUIET_SEARCH_SAMPLES: usize = 5 * 16_000;
+
+/// Where a window is cut into the next one: the middle of the quietest 100 ms
+/// in its last five seconds (or its last half, when that is shorter), never
+/// its first sample. `samples` must hold at least `max_samples`, and only
+/// those are read, so a streaming reader can cut before it has read the rest
+/// of the clip.
+pub(crate) fn quiet_cut(samples: &[f32], max_samples: usize) -> usize {
+    let max_samples = max_samples.max(1);
+    let search = QUIET_SEARCH_SAMPLES.min(max_samples / 2).max(1);
+    let span = QUIET_SPAN_SAMPLES.min(search);
+    let quiet =
+        max_samples - search + quietest_span(&samples[max_samples - search..max_samples], span);
+    quiet.max(1)
+}
+
+/// Splits a clip into consecutive ranges of at most `max_samples`, cutting
+/// each window at the middle of the quietest 100 ms in its last five seconds
+/// (or half the window, when that is shorter), adapted from Cohere's reference
+/// processor. An exact sample cut lands mid-word, and each slice starts a
+/// fresh sentence with a capital and a closing full stop, so a long dictation
+/// reads as many sentences instead of one. Each cut is [`quiet_cut`]'s.
+///
+/// Every sample is covered exactly once by a non-empty range. Ties pick the
+/// latest span, so the ranges are deterministic. The search is energy-based,
+/// so continuous speech with no quieter stretch there still cuts at its
+/// quietest point, which can land inside a word.
+pub(crate) fn chunk_ranges(samples: &[f32], max_samples: usize) -> Vec<Range<usize>> {
+    let max_samples = max_samples.max(1);
+    let mut ranges = Vec::new();
+    let mut start = 0;
+    while start < samples.len() {
+        if samples.len() - start <= max_samples {
+            ranges.push(start..samples.len());
+            break;
+        }
+        let cut = start + quiet_cut(&samples[start..], max_samples);
+        ranges.push(start..cut);
+        start = cut;
+    }
+    ranges
+}
+
+/// The midpoint of the quietest `span` samples, the latest one on a tie.
+fn quietest_span(samples: &[f32], span: usize) -> usize {
+    if samples.is_empty() {
+        return 0;
+    }
+    let span = span.clamp(1, samples.len());
+
+    let sample_energy = |sample: f32| f64::from(sample) * f64::from(sample);
+    let mut energy = samples[..span]
+        .iter()
+        .copied()
+        .map(sample_energy)
+        .sum::<f64>();
+    let mut quietest = energy;
+    let mut quietest_start = 0;
+    for next in 1..=samples.len() - span {
+        let leaving = sample_energy(samples[next - 1]);
+        let entering = sample_energy(samples[next + span - 1]);
+        energy += entering - leaving;
+        // Ties keep the latest span.
+        if energy <= quietest {
+            quietest = energy;
+            quietest_start = next;
+        }
+    }
+    quietest_start + span / 2
+}
+
+/// Where `sample` sits in the clip, in whole milliseconds.
+pub(crate) fn sample_offset_ms(sample: usize) -> i64 {
+    i64::try_from(sample / 16).unwrap_or(i64::MAX)
+}
+
+/// Where a chunk starting at `chunk_start` in the trimmed audio sits in the
+/// original clip, in whole milliseconds. A trimmed clip's segment and word
+/// times move by this, so they stay on the clip's timeline; the whole clip is
+/// the chunk that starts at 0.
+fn chunk_offset_ms(trim_start: usize, chunk_start: usize) -> i64 {
+    sample_offset_ms(trim_start.saturating_add(chunk_start))
 }
 
 fn timed_spans(
@@ -530,11 +754,50 @@ fn timed_spans(
     }
 }
 
-/// Whether one chunk of a long clip goes to the model. The clip as a whole
-/// held speech, but a chunk of it can be only silence (a locked dictation
-/// left waiting before the words), and models such as Cohere invent long,
-/// repeating text for that (#1194). Without the detector every chunk runs.
-fn chunk_may_hold_speech(samples: &[f32]) -> bool {
+/// How much audio a trimmed Whisper run keeps around the speech the detector
+/// hears, on each side.
+const WHISPER_EDGE_MARGIN_SAMPLES: usize = 8_000;
+
+/// The span of a clip of `len` samples a whole-clip run keeps. A Whisper clip
+/// loses everything outside its detected speech plus
+/// [`WHISPER_EDGE_MARGIN_SAMPLES`]; any other model, and a clip without speech
+/// bounds, keeps every sample.
+fn whisper_span(len: usize, architecture: &str, bounds: Option<Range<usize>>) -> Range<usize> {
+    match (architecture, bounds) {
+        ("whisper", Some(bounds)) => crate::transcription::speech_detector::edge_bounds(
+            len,
+            bounds,
+            WHISPER_EDGE_MARGIN_SAMPLES,
+        ),
+        _ => 0..len,
+    }
+}
+
+/// `samples` for a whole-clip run: the span [`whisper_span`] keeps, padded to
+/// the minimum duration every chunk and every caller pads to, and where that
+/// span starts in `samples`. A clip the span covers whole is borrowed, never
+/// copied or padded.
+fn trimmed_audio<'a>(
+    samples: &'a [f32],
+    architecture: &str,
+    bounds: Option<Range<usize>>,
+) -> (Cow<'a, [f32]>, usize) {
+    let span = whisper_span(samples.len(), architecture, bounds);
+    if span.start == 0 && span.end == samples.len() {
+        return (Cow::Borrowed(samples), 0);
+    }
+    let mut audio = samples[span.clone()].to_vec();
+    crate::dictation::pad_for_parakeet(&mut audio);
+    (Cow::Owned(audio), span.start)
+}
+
+/// Whether one chunk of a long clip, or one piece of a long file, goes to the
+/// model. The recording as a whole held speech, but a chunk of it can be only
+/// silence (a locked dictation left waiting before the words, or a pause
+/// between two pieces), and models such as Cohere and Whisper invent long,
+/// repeating text for that (#1194, #1770), or run to their generation cap
+/// (#968). Without the detector every chunk runs.
+pub(crate) fn chunk_may_hold_speech(samples: &[f32]) -> bool {
     crate::transcription::speech_detector::contains_speech(samples) != Some(false)
 }
 
@@ -709,371 +972,5 @@ fn drop_subtitle_credit(transcript: &mut transcribe_cpp::Transcript) {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn normalizes_spoken_numbers_and_punctuation() {
-        assert_eq!(normalize_spoken("Move LEFT, three!"), "move left 3");
-        assert_eq!(normalize_spoken("Ä ä A a ONE one"), "Ä ä a a 1 1");
-    }
-
-    #[test]
-    fn a_chunks_times_move_onto_the_clips_timeline_by_sample_position() {
-        // 30 s chunks at 16 kHz, and a short final chunk: offsets come from
-        // where each chunk starts, never from how many produced text.
-        assert_eq!(chunk_offset_ms(0, 30 * 16_000), 0);
-        assert_eq!(chunk_offset_ms(1, 30 * 16_000), 30_000);
-        assert_eq!(chunk_offset_ms(2, 30 * 16_000), 60_000);
-        assert_eq!(chunk_offset_ms(3, 1_600), 300);
-
-        let shifted = timed_spans(
-            transcribe_cpp::Transcript {
-                text: "hello".into(),
-                segments: vec![transcribe_cpp::Segment {
-                    text: " hello ".into(),
-                    t0_ms: 0,
-                    t1_ms: 480,
-                    ..Default::default()
-                }],
-                words: vec![
-                    transcribe_cpp::Word {
-                        text: "hello".into(),
-                        t0_ms: 10,
-                        t1_ms: 480,
-                        ..Default::default()
-                    },
-                    transcribe_cpp::Word {
-                        text: "  ".into(),
-                        t0_ms: 500,
-                        t1_ms: 600,
-                        ..Default::default()
-                    },
-                ],
-                ..Default::default()
-            },
-            chunk_offset_ms(2, 30 * 16_000),
-        );
-        assert_eq!(shifted.segments.len(), 1);
-        assert_eq!(
-            (
-                shifted.segments[0].start_ms,
-                shifted.segments[0].end_ms,
-                shifted.segments[0].text.as_str()
-            ),
-            (60_000, 60_480, "hello")
-        );
-        assert_eq!(shifted.words.len(), 1, "an empty word is dropped");
-        assert_eq!(
-            (shifted.words[0].start_ms, shifted.words[0].end_ms),
-            (60_010, 60_480)
-        );
-    }
-
-    #[test]
-    fn a_models_timestamp_kind_names_its_finest_level() {
-        for (kind, level) in [
-            (transcribe_cpp::TimestampKind::Word, TimestampLevel::Word),
-            (transcribe_cpp::TimestampKind::Token, TimestampLevel::Word),
-            (
-                transcribe_cpp::TimestampKind::Segment,
-                TimestampLevel::Segment,
-            ),
-            (transcribe_cpp::TimestampKind::Auto, TimestampLevel::Segment),
-            (transcribe_cpp::TimestampKind::None, TimestampLevel::None),
-        ] {
-            assert_eq!(timestamp_level(kind), level, "{kind:?}");
-        }
-    }
-
-    #[test]
-    fn only_a_completed_run_inside_the_window_counts_as_recent() {
-        let now = Instant::now();
-        let window = Duration::from_secs(60);
-        assert!(!ran_within(None, now, window), "a fresh load has not run");
-        assert!(ran_within(Some(now), now, window));
-        assert!(ran_within(Some(now - Duration::from_secs(59)), now, window));
-        assert!(!ran_within(
-            Some(now - Duration::from_secs(60)),
-            now,
-            window
-        ));
-    }
-
-    #[test]
-    fn a_decode_stopped_for_repeating_keeps_its_text_and_truncation_still_fails() {
-        let transcript = |text: &str| {
-            Some(Box::new(transcribe_cpp::Transcript {
-                text: text.into(),
-                ..Default::default()
-            }))
-        };
-        let repeated = keep_repetition_partial(Err(transcribe_cpp::Error::OutputRepetition {
-            message: "loop".into(),
-            partial: transcript("send it now"),
-        }));
-        assert_eq!(repeated.unwrap().text, "send it now");
-        let truncated = keep_repetition_partial(Err(transcribe_cpp::Error::OutputTruncated {
-            message: "budget".into(),
-            partial: transcript("send it"),
-        }));
-        assert!(matches!(
-            truncated,
-            Err(transcribe_cpp::Error::OutputTruncated { .. })
-        ));
-    }
-
-    #[test]
-    fn a_warmup_leaves_the_vocabulary_out_and_counts_when_truncated() {
-        assert!(
-            RunKind::Transcript.takes_vocabulary(),
-            "a transcript still gets the vocabulary"
-        );
-        assert!(
-            !RunKind::Warmup.takes_vocabulary(),
-            "silence plus a term list makes Qwen3-ASR read the list back (#1568)"
-        );
-        assert!(!RunKind::Transcript.counts_when_truncated());
-        assert!(RunKind::Warmup.counts_when_truncated());
-    }
-
-    #[test]
-    fn a_decode_stopped_at_its_output_limit_is_recognised_through_its_context() {
-        let truncated: Result<()> = Err(transcribe_cpp::Error::OutputTruncated {
-            message: "budget".into(),
-            partial: None,
-        })
-        .wrap_err("transcription failed");
-        assert!(output_truncated(&truncated.unwrap_err()));
-        let repeating: Result<()> = Err(transcribe_cpp::Error::OutputRepetition {
-            message: "loop".into(),
-            partial: None,
-        })
-        .wrap_err("transcription failed");
-        assert!(!output_truncated(&repeating.unwrap_err()));
-    }
-
-    #[test]
-    fn a_long_clip_skips_only_chunks_the_detector_hears_no_speech_in() {
-        use crate::transcription::speech_detector::override_for_test;
-        let chunk = [0.0; 16_000];
-        {
-            let _silent = override_for_test(Some(false));
-            assert!(!chunk_may_hold_speech(&chunk));
-        }
-        {
-            let _speech = override_for_test(Some(true));
-            assert!(chunk_may_hold_speech(&chunk));
-        }
-        let _unavailable = override_for_test(None);
-        assert!(
-            chunk_may_hold_speech(&chunk),
-            "no detector keeps every chunk"
-        );
-    }
-
-    #[test]
-    fn gpu_sessions_bound_decoder_threads_and_cpu_sessions_keep_library_default() {
-        use transcribe_cpp::DeviceType;
-        assert_eq!(session_options(DeviceType::Gpu).n_threads, 1);
-        assert_eq!(session_options(DeviceType::Igpu).n_threads, 1);
-        assert_eq!(session_options(DeviceType::Cpu).n_threads, 0);
-        assert_eq!(session_options(DeviceType::Accel).n_threads, 0);
-    }
-
-    fn segment(text: &str, first_word: i32, n_words: i32) -> transcribe_cpp::Segment {
-        transcribe_cpp::Segment {
-            text: text.into(),
-            first_word,
-            n_words,
-            ..Default::default()
-        }
-    }
-
-    fn transcript(segments: &[&str]) -> transcribe_cpp::Transcript {
-        let mut transcript = transcribe_cpp::Transcript::default();
-        let mut first_word = 0;
-        for text in segments {
-            let n_words = text.split_whitespace().count() as i32;
-            transcript.segments.push(segment(text, first_word, n_words));
-            for word in text.split_whitespace() {
-                transcript.words.push(transcribe_cpp::Word {
-                    text: word.into(),
-                    ..Default::default()
-                });
-            }
-            first_word += n_words;
-        }
-        transcript.text = segments.join(" ");
-        transcript
-    }
-
-    fn words(transcript: &transcribe_cpp::Transcript) -> Vec<&str> {
-        transcript
-            .words
-            .iter()
-            .map(|word| word.text.as_str())
-            .collect()
-    }
-
-    #[test]
-    fn prompt_echo_is_dropped() {
-        let mut echo = transcript(&["T3 Code, Ottobit."]);
-        drop_prompt_echo(&mut echo, "t3 code, ottobit");
-        assert_eq!(echo.text, "");
-        assert!(echo.segments.is_empty());
-        assert!(echo.words.is_empty());
-
-        let mut unsegmented = transcribe_cpp::Transcript {
-            text: " T3 Code, Ottobit. ".into(),
-            ..Default::default()
-        };
-        drop_prompt_echo(&mut unsegmented, "T3 Code, Ottobit");
-        assert_eq!(unsegmented.text, "");
-    }
-
-    #[test]
-    fn speech_containing_the_hints_is_kept() {
-        let mut speech = transcript(&["We shipped T3 Code today"]);
-        let before = speech.clone();
-        drop_prompt_echo(&mut speech, "T3 Code");
-        assert_eq!(speech, before);
-    }
-
-    #[test]
-    fn only_the_echo_segment_is_removed() {
-        let mut mixed = transcript(&["Let's ship it.", "T3 Code, Ottobit."]);
-        drop_prompt_echo(&mut mixed, "T3 Code, Ottobit");
-        assert_eq!(mixed.text, "Let's ship it.");
-        assert_eq!(mixed.segments.len(), 1);
-        assert_eq!(words(&mixed), ["Let's", "ship", "it."]);
-
-        let mut leading = transcript(&["T3 Code, Ottobit.", "Let's ship it."]);
-        drop_prompt_echo(&mut leading, "T3 Code, Ottobit");
-        assert_eq!(leading.text, "Let's ship it.");
-        assert_eq!(words(&leading), ["Let's", "ship", "it."]);
-        assert_eq!(
-            (leading.segments[0].first_word, leading.segments[0].n_words),
-            (0, 3)
-        );
-    }
-
-    #[test]
-    fn single_hint_dictation_is_kept() {
-        let mut dictation = transcript(&["Ottobit."]);
-        let before = dictation.clone();
-        drop_prompt_echo(&mut dictation, "Ottobit");
-        assert_eq!(dictation, before);
-
-        let mut spaced = transcript(&["T3 Code Ottobit"]);
-        let before = spaced.clone();
-        drop_prompt_echo(&mut spaced, "T3 Code Ottobit");
-        assert_eq!(spaced, before);
-    }
-
-    #[test]
-    fn hints_without_spaces_after_commas_are_matched() {
-        let mut echo = transcript(&["T3 Code, Ottobit."]);
-        drop_prompt_echo(&mut echo, "T3 Code,Ottobit");
-        assert_eq!(echo.text, "");
-
-        let mut joined = transcript(&["T3 Code;Ottobit"]);
-        drop_prompt_echo(&mut joined, "T3 Code\nOttobit");
-        assert_eq!(joined.text, "");
-    }
-
-    #[test]
-    fn a_trailing_subtitle_credit_is_dropped_from_text_segments_and_words() {
-        let mut own = transcript(&["On se voit demain.", "Sous-titrage Société Radio-Canada"]);
-        drop_subtitle_credit(&mut own);
-        assert_eq!(own.text, "On se voit demain.");
-        assert_eq!(own.segments.len(), 1);
-        assert_eq!(words(&own), ["On", "se", "voit", "demain."]);
-
-        let mut joined = transcript(&["On se voit demain. Sous-titrage Société Radio-Canada"]);
-        drop_subtitle_credit(&mut joined);
-        assert_eq!(joined.text, "On se voit demain.");
-        assert_eq!(joined.segments[0].text, "On se voit demain.");
-        assert_eq!(joined.segments[0].n_words, 4);
-        assert_eq!(words(&joined), ["On", "se", "voit", "demain."]);
-
-        let mut speech = transcript(&["Sous-titrage Société Radio-Canada, c'est la fin."]);
-        let before = speech.clone();
-        drop_subtitle_credit(&mut speech);
-        assert_eq!(speech, before);
-    }
-
-    #[test]
-    fn an_empty_prompt_drops_nothing() {
-        let mut silence = transcribe_cpp::Transcript::default();
-        drop_prompt_echo(&mut silence, "  ");
-        assert_eq!(silence, transcribe_cpp::Transcript::default());
-    }
-
-    fn validate_auto(
-        model: crate::transcription::models::TranscriptionModelId,
-        supports_language_detect: bool,
-    ) -> Result<Option<String>> {
-        let definition = crate::transcription::models::definition(model);
-        let ModelRuntime::Gguf(artifact) = definition.runtime else {
-            panic!("{} is not a GGUF model", definition.name);
-        };
-        validate_gguf_artifact(
-            Path::new("catalog.gguf"),
-            definition,
-            artifact.architecture,
-            artifact.variant,
-            &TranscriptionSelection {
-                model,
-                language: AUTO_LANGUAGE.into(),
-            },
-            supports_language_detect,
-        )
-    }
-
-    #[test]
-    fn auto_needs_detection_only_from_models_that_take_a_language_hint() {
-        use crate::transcription::models::TranscriptionModelId;
-
-        // Parakeet v2 takes the language as a hint and its file detects none.
-        assert!(validate_auto(TranscriptionModelId::ParakeetV2, false).is_err());
-        // A no-hint model never receives Auto as a hint, so the file's
-        // lang_detect metadata does not gate it (Granite's pinned file says 0).
-        for model in [
-            TranscriptionModelId::ParakeetV3,
-            TranscriptionModelId::ParakeetUltra,
-            TranscriptionModelId::Orukeet,
-            TranscriptionModelId::GraniteSpeech5,
-        ] {
-            assert_eq!(validate_auto(model, false).unwrap(), None, "{model:?}");
-        }
-        // A hint-taking model that detects still runs Auto with no hint.
-        assert_eq!(
-            validate_auto(TranscriptionModelId::WhisperLargeV3Turbo, true).unwrap(),
-            None
-        );
-    }
-
-    #[test]
-    fn a_job_cancel_token_is_installed_only_inside_its_scope() {
-        let outer = transcribe_cpp::CancelToken::new();
-        let inner = transcribe_cpp::CancelToken::new();
-        assert!(job_cancel().is_none());
-        with_job_cancel(&outer, || {
-            with_job_cancel(&inner, || {
-                inner.cancel();
-                assert!(job_cancel().unwrap().is_cancelled());
-            });
-            assert!(
-                !job_cancel().unwrap().is_cancelled(),
-                "the outer job is restored"
-            );
-        });
-        assert!(job_cancel().is_none());
-        let _ = std::panic::catch_unwind(|| with_job_cancel(&outer, || panic!("run failed")));
-        assert!(
-            job_cancel().is_none(),
-            "a panicking run still uninstalls its token"
-        );
-    }
-}
+#[path = "gguf_session_tests.rs"]
+mod tests;

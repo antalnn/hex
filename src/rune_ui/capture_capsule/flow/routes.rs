@@ -1,39 +1,6 @@
 //! In-place routing updates preserve a search, its selection and user actions.
 use super::*;
 
-fn pending_name(route: &Route) -> Option<String> {
-    match route {
-        Route::Rule { to, .. } => Some(to.name.clone()),
-        Route::ResolvingRule { name } => Some(name.clone()),
-        _ => None,
-    }
-}
-
-pub(super) fn undoable(phase: &Phase, now: f64) -> Option<Action> {
-    if let Phase::Routed(r) = phase
-        && !r.delivered
-        && !r.taken_back
-        && let Some(to) = pending_name(&r.route)
-    {
-        return Some(Action::Undo { to });
-    }
-    let (to, at) = match phase {
-        Phase::Routed(Routed {
-            route: Route::Rule { to, .. },
-            at,
-            ..
-        }) => (&to.name, *at),
-        Phase::Sent(Sent {
-            to,
-            at,
-            undoable: true,
-            ..
-        }) => (to, *at),
-        _ => return None,
-    };
-    (now - at < undo_s()).then(|| Action::Undo { to: to.clone() })
-}
-
 pub(super) fn sent_to(to: &str) -> String {
     tr_fill("Sent to {}", &short(to))
 }
@@ -272,8 +239,8 @@ mod tests {
             0.0,
         );
         assert_eq!(
-            flow.undoable(10.0),
-            Some(Action::Undo { to: "board".into() })
+            flow.clone().input(Input::Undo, 10.0),
+            [Action::Undo { to: "board".into() }]
         );
         flow.input(
             Input::Refined(Route::Rule {
@@ -287,7 +254,7 @@ mod tests {
         let Pres::Done(done) = flow.pres(2.0) else {
             panic!("missing capsule");
         };
-        assert_eq!(done.countdown, Some(undo_s()));
+        assert_eq!(done.countdown, Some(send_hold_s()));
         let mut unresolved = Flow::new();
         unresolved.input(
             Input::Routed(Route::ResolvingRule {

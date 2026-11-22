@@ -24,6 +24,14 @@ pub(crate) fn sync_directory(directory: &Path) -> io::Result<()> {
     Ok(())
 }
 
+/// Whether a failed try-lock means another handle holds the lock: `flock`'s
+/// `EWOULDBLOCK` on Unix, `ERROR_LOCK_VIOLATION` on Windows (which `io`
+/// does not call `WouldBlock`).
+pub(crate) fn lock_contended(error: &io::Error) -> bool {
+    error.kind() == io::ErrorKind::WouldBlock
+        || error.raw_os_error() == fs2::lock_contended_error().raw_os_error()
+}
+
 /// Replaces `path` with `contents` so a crash leaves either the old file or
 /// the complete new one. The staging file is unique to this write, so
 /// concurrent writers never share one. A symlinked `path` (settings kept in
@@ -31,6 +39,14 @@ pub(crate) fn sync_directory(directory: &Path) -> io::Result<()> {
 /// The file is owner-only on Unix: what this writes includes the remote
 /// endpoint's API key, and a plain create would leave it at the umask's 0644.
 pub(crate) fn write(path: &Path, contents: &[u8]) -> io::Result<()> {
+    write_private(path, contents)
+}
+
+/// The owner-only write behind [`write`], named for callers that want the
+/// promise spelled out: the staging file is created owner-only (0600) before
+/// any bytes go into it, so the new file is never briefly world-readable. On
+/// Windows the profile's ACL owns the file.
+pub(crate) fn write_private(path: &Path, contents: &[u8]) -> io::Result<()> {
     let path = &symlink_target(path)?;
     let parent = path
         .parent()
@@ -204,5 +220,21 @@ mod tests {
     fn concurrent_writers_stage_distinct_files() {
         let path = Path::new("/tmp/settings.json");
         assert_ne!(staging_path(path), staging_path(path));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_private_write_creates_an_owner_only_file() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let directory =
+            std::env::temp_dir().join(format!("hex-durable-private-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&directory);
+        fs::create_dir_all(&directory).unwrap();
+        let path = directory.join("usage.json");
+        write_private(&path, b"{}").unwrap();
+        let mode = fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600);
+        fs::remove_dir_all(directory).unwrap();
     }
 }

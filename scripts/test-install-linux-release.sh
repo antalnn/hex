@@ -77,14 +77,18 @@ jq -n --arg version "$version" --arg target "$target" --arg url "/release/hex/fi
       distributions: [{kind: "direct"}]}}' > "$server/release/hex/desktop/stable.json"
 cp "$server/release/hex/desktop/stable.json" "$temporary/manifest.json"
 
-port=$((38000 + ($$ % 1000)))
-python3 -m http.server "$port" --bind 127.0.0.1 --directory "$server" \
+# The OS picks a free port; the unbuffered server prints it once it listens.
+port=
+python3 -u -m http.server 0 --bind 127.0.0.1 --directory "$server" \
   > "$temporary/server.log" 2>&1 &
 server_pid=$!
 attempt=0
-until curl --fail --silent "http://127.0.0.1:$port/release/hex/desktop/stable.json" >/dev/null; do
+until port=$(sed -n 's/^Serving HTTP on .* port \([0-9][0-9]*\).*/\1/p' "$temporary/server.log" | head -n 1) &&
+  [ -n "$port" ] &&
+  curl --fail --silent --max-time 2 "http://127.0.0.1:$port/release/hex/desktop/stable.json" >/dev/null; do
   attempt=$((attempt + 1))
-  if [ "$attempt" -ge 20 ]; then
+  if [ "$attempt" -ge 100 ] || ! kill -0 "$server_pid" 2>/dev/null; then
+    cat "$temporary/server.log" >&2 || true
     echo "Fixture server did not start." >&2
     exit 1
   fi
@@ -141,9 +145,11 @@ test ! -e "$support_dir/versions/$version/source-build"
 test "$(jq -c . "$support_dir/install.json")" = \
   "$(jq -cn --arg root "$support_dir" '{app: "hex", artifact: "desktop", channel: "stable", method: "direct", root: $root}')"
 
-mkdir -p "$home/.local/share/icons/hicolor/48x48/apps" "$home/.local/share/icons/hicolor/64x64/apps"
+mkdir -p "$home/.local/share/icons/hicolor/48x48/apps" "$home/.local/share/icons/hicolor/64x64/apps" \
+  "$home/.local/share/icons/hicolor/scalable/apps"
 printf 'png X-Hex-Managed=true' > "$home/.local/share/icons/hicolor/48x48/apps/anomaly.hex.png"
 printf 'mine' > "$home/.local/share/icons/hicolor/64x64/apps/anomaly.hex.png"
+printf '<svg>X-Hex-Managed=true</svg>' > "$home/.local/share/icons/hicolor/scalable/apps/anomaly.hex-symbolic.svg"
 # The Background portal's own autostart entry for Hex counts as Hex's.
 portal_entry() {
   printf '[Desktop Entry]\nType=Application\nName=Hex\nX-XDP-Autostart=anomaly.hex\nExec=%s start\n' "$install_dir/hex" > "$home/.config/autostart/anomaly.hex.desktop"
@@ -155,6 +161,7 @@ install uninstall
 test ! -e "$home/.config/autostart/anomaly.hex.desktop"
 test ! -e "$home/.local/share/icons/hicolor/48x48/apps/anomaly.hex.png"
 test -f "$home/.local/share/icons/hicolor/64x64/apps/anomaly.hex.png"
+test ! -e "$home/.local/share/icons/hicolor/scalable/apps/anomaly.hex-symbolic.svg"
 test ! -e "$install_dir/hex"
 test ! -e "$support_dir/versions"
 test ! -e "$support_dir/install.json"
@@ -168,7 +175,10 @@ jq '.channel = "dev"' "$temporary/manifest.json" > "$server/release/hex/desktop/
 HOME="$home" HEX_INSTALL_DIR="$install_dir" HEX_APPLICATION_SUPPORT_DIR="$support_dir" \
   HEX_RELEASE_BASE_URL="http://127.0.0.1:$port/release" HEX_INSTALL_CHANNEL=dev sh "$installer" > /dev/null
 test "$(jq -r .channel "$support_dir/install.json")" = dev
+# A user's own symbolic tray icon is not Hex's to remove.
+printf '<svg>mine</svg>' > "$home/.local/share/icons/hicolor/scalable/apps/anomaly.hex-symbolic.svg"
 install uninstall
+test -f "$home/.local/share/icons/hicolor/scalable/apps/anomaly.hex-symbolic.svg"
 
 jq '.app = "other"' "$temporary/manifest.json" > "$server/release/hex/desktop/stable.json"
 refuses "another app's manifest"
