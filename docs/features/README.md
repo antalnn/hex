@@ -2824,7 +2824,9 @@ text. The route tests (`local_api::openai`) cover the multipart reader, each
 reply shape, a real TCP upload with a fake transcriber and processor, a 31 s
 clip in two pieces, `429`, the staged file's deletion, the listener's end and a
 port already in use. Not observed by any test: a real model, because tests have
-none installed; the live answer to OpenChamber is a manual check.
+none installed. Checked live on 2026-11-22 on Windows x64: the same WebM/Opus
+clip gave identical text through the endpoint and through the bridge it
+replaced, and OpenChamber's dictation came back through it.
 
 The [SDK guide](../../sdk/typescript/README.md),
 [service contract](../specs/local-transcription-service.md), and

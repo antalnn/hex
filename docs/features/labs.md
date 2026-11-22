@@ -3463,9 +3463,11 @@ status, never text. Checks: `local_api::openai` covers the multipart reader
 real TCP upload with a fake transcriber and processor (the processor's text,
 not the raw transcript, comes back), a 31 s clip as two pieces, `429` while one
 request runs, the staged file's deletion on success and failure, a stopped
-listener and a port in use; `labs` tests cover the switch. Not observed: a real
-model through the endpoint, which tests cannot install; item 6 of the plan
-checks it live with OpenChamber.
+listener and a port in use; `labs` tests cover the switch. Observed live on
+2026-11-22 (3.4.0 on Windows x64): a synthesized WebM/Opus clip returned the
+same text through the endpoint as through the Node bridge it replaced, and an
+OpenChamber dictation came back through it (`200`, 398 ms). Tests still cover no
+real model, because none is installed in a test root.
 
 Rewrite semantic match (`rewrite-snippet-match`; Windows; the fork's own lab,
 its row is Dictation's): when a spoken rewrite instruction names no saved
