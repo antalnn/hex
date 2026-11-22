@@ -1,11 +1,15 @@
 # Hex (personal fork)
+Fork of [anomalyco/hex](https://github.com/anomalyco/hex) (local voice dictation for Mac, Windows and Linux) that brings
+new features, more customizations, and improves the set up and configuration experience.
 
-This repository is a fork of
-[anomalyco/hex](https://github.com/anomalyco/hex). It tracks the latest
-upstream `dev` and `main` updates and takes the upstream features that merge
+It tracks the latest upstream `dev` and `main` updates and takes the upstream features that merge
 cleanly, so it stays up-to-date with the official release while the fork contains
 quality-of-life changes. The core transcription, models, meetings and dictation pipeline are the
 upstream app.
+
+It is made primarily for Windows and features like [Application exclusion](#application-exclusion)
+and [Paste where the dictation started](#paste-where-the-dictation-started) will not work on
+the other supported systems.
 
 ## Contents
 
@@ -97,7 +101,8 @@ With it on, the closest prompt applies; unmatched instructions run as spoken.
 
 - Escape cancels a recording in Hold and Toggle, and cancels a rewrite
   recording or a pending rewrite.
-- Turned "sounds like" into a unified Vocabulary that transforms no matter the model.
+- Unified "Sounds like" and "Vocabulary" together - Vocabulary now
+  works for any speech model.
 
 ## Getting started
 
