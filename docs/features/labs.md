@@ -3437,8 +3437,10 @@ when the model lists it), `response_format` (`json`, `text` or `verbose_json`).
 The body is read with a `Content-Length` under the local API's 64 MiB and 30 s
 limits; a chunked body is refused, because OpenChamber sends a length. The
 audio is staged in a temp file for the shared pieces reader and decoded in
-pieces of at most 30 s, each run on the dictation engine's loaded model, so
-Hex never holds a second copy. The joined transcript then goes through exactly
+pieces of at most 30 s, each run on the dictation engine's model while it holds
+that exact model and language, so a request normally adds no second copy; a
+request `language` the engine does not hold makes the service load its own copy
+for that request. The joined transcript then goes through exactly
 what a paste with no matching app or website mode gets, as Process API
 transcripts does, regardless of that lab: global replacements, Global mode
 corrections, the optional OpenCode rewrite and Global's transformations. It

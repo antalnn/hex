@@ -131,6 +131,26 @@ fn find(haystack: &[u8], needle: &[u8], from: usize) -> Option<usize> {
     None
 }
 
+/// The end of a part: `separator` followed by `--` or by line padding and a
+/// line break, so boundary text inside a file's bytes is not taken for it. A
+/// separator that ends the body counts, and the caller reports it truncated.
+fn find_delimiter(body: &[u8], separator: &[u8], from: usize) -> Option<usize> {
+    let mut start = from;
+    loop {
+        let at = find(body, separator, start)?;
+        let rest = &body[at + separator.len()..];
+        let padding = rest
+            .iter()
+            .take_while(|byte| matches!(byte, b' ' | b'\t'))
+            .count();
+        let after = &rest[padding..];
+        if after.is_empty() || after.starts_with(b"\r\n") || rest.starts_with(b"--") {
+            return Some(at);
+        }
+        start = at + 1;
+    }
+}
+
 struct PartHeaders {
     name: Option<String>,
     file_name: Option<String>,
@@ -211,7 +231,8 @@ pub(super) fn parse(content_type: &str, body: &[u8]) -> Result<Form, FormError> 
             }
             (&body[position..end], end + 4)
         };
-        let content_end = find(body, &separator, content_start).ok_or(FormError::Truncated)?;
+        let content_end =
+            find_delimiter(body, &separator, content_start).ok_or(FormError::Truncated)?;
         position = content_end + separator.len();
         let headers = part_headers(headers)?;
         let content = content_start..content_end;
@@ -336,6 +357,15 @@ pub(super) mod tests {
         );
         let longest = "a".repeat(70);
         assert!(boundary(&format!("multipart/form-data; boundary={longest}")).is_some());
+    }
+
+    #[test]
+    fn boundary_text_inside_the_file_is_not_a_delimiter() {
+        let audio = b"head\r\n--b-not-a-delimiter\r\n--b x\r\n--bb";
+        let bytes = body("b", &[("language", "en")], audio);
+        let form = parse(&content_type("b"), &bytes).unwrap();
+        assert_eq!(form.file(&bytes), audio);
+        assert_eq!(form.language.as_deref(), Some("en"));
     }
 
     #[test]

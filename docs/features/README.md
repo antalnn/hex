@@ -2801,13 +2801,14 @@ Transcription endpoint                     // Windows, Labs › Transcription en
 │   ├── Also GET /v1/models and GET /v1/health; the /v1 prefix is optional; anything else is 404
 │   └── No token and no CORS: loopback only, the port is fixed, nothing else can reach it
 ├── Upload -> Staged in a temp file -> Decoded in pieces of at most 30 s (WebM, Ogg, MP4, MP3, FLAC, WAV)
-│   └── Each piece -> Transcription service -> The dictation engine's loaded model (no second copy)
+│   └── Each piece -> Transcription service -> The dictation engine's model when it holds
+│       that exact model and language; a request language it lacks loads the service's own copy
 ├── Joined transcript -> Global mode (replacements, corrections, rewrite, transformations)
 │   └── Never pastes, writes History, updates Paste Last, or touches the clipboard
 ├── Reply -> json {"text"} | text | verbose_json; errors as {"error":{"message","type"}}
 │   ├── 400 bad upload or response_format, 413 over 64 MiB, 429 another request runs
 │   └── 503 no model ready, 504 over ten minutes, 500 the model failed
-└── Lab off -> Nothing listens on 8787; port taken -> logged, the card says so, Hex runs on
+└── Lab off -> Nothing listens on 8787; port taken -> logged, Hex runs on (the card's notice is not built yet)
 ```
 
 The endpoint ([local_api/openai.rs](../../src/local_api/openai.rs),

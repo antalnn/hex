@@ -41,7 +41,7 @@ static STATUS: AtomicU8 = AtomicU8::new(0);
 
 /// The running app's listener state; [`Status::Off`] where none runs. Labs'
 /// card reads it once the sandbox render is approved (plan item 4).
-#[cfg_attr(not(test), allow(dead_code))]
+#[allow(dead_code)]
 pub(crate) fn status() -> Status {
     match STATUS.load(Ordering::Acquire) {
         1 => Status::Listening,
