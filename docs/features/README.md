@@ -2808,7 +2808,7 @@ Transcription endpoint                     // Windows, Labs › Transcription en
 ├── Reply -> json {"text"} | text | verbose_json; errors as {"error":{"message","type"}}
 │   ├── 400 bad upload or response_format, 413 over 64 MiB, 429 another request runs
 │   └── 503 no model ready, 504 over ten minutes, 500 the model failed
-└── Lab off -> Nothing listens on 8787; port taken -> logged, Hex runs on (the card's notice is not built yet)
+└── Lab off -> Nothing listens on 8787; port taken -> logged, the card says so, Hex runs on
 ```
 
 The endpoint ([local_api/openai.rs](../../src/local_api/openai.rs),

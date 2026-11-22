@@ -40,8 +40,7 @@ pub(crate) enum Status {
 static STATUS: AtomicU8 = AtomicU8::new(0);
 
 /// The running app's listener state; [`Status::Off`] where none runs. Labs'
-/// card reads it once the sandbox render is approved (plan item 4).
-#[allow(dead_code)]
+/// card reads it.
 pub(crate) fn status() -> Status {
     match STATUS.load(Ordering::Acquire) {
         1 => Status::Listening,

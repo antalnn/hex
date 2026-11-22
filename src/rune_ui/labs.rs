@@ -11,6 +11,7 @@ mod group;
 pub(super) mod screenshots;
 mod stop_phrase;
 mod store;
+mod transcription_endpoint;
 mod voice_prompt;
 mod yolo_mode;
 
@@ -1060,6 +1061,11 @@ fn extras(ui: &Ui, p: Paint, entry: &Row, layer: &mut Vec<El>) -> Option<El> {
         ),
         Lab::Feature(Feature::VoicePrompt) => Some(voice_prompt::body(ui, p)),
         Lab::Feature(Feature::StopPhrase) => Some(stop_phrase::body(ui, p)),
+        Lab::Feature(Feature::TranscriptionEndpoint) => Some(transcription_endpoint::body(
+            p,
+            endpoint_state(),
+            crate::local_api::openai::PORT,
+        )),
         // Wayland reports no file drags, so its card offers the file dialog.
         Lab::Feature(Feature::DropTranscribe) => Some(super::drop_transcribe::card(p)),
         #[cfg(all(target_os = "macos", hex_capture))]
@@ -1069,6 +1075,18 @@ fn extras(ui: &Ui, p: Paint, entry: &Row, layer: &mut Vec<El>) -> Option<El> {
             crate::screenshots::system_takes_shortcut(),
         )),
         _ => None,
+    }
+}
+
+/// Where the transcription endpoint's listener stands, as its card says it.
+fn endpoint_state() -> transcription_endpoint::State {
+    use crate::local_api::openai::{Status, status};
+    use transcription_endpoint::State;
+    match status() {
+        Status::Off => State::Off,
+        Status::Listening => State::Listening,
+        Status::PortInUse => State::PortInUse,
+        Status::Failed => State::Failed,
     }
 }
 

@@ -344,3 +344,84 @@ fn the_local_model_files_sheet_draws_above_the_setup_window() {
         "closing the files sheet left the setup window open"
     );
 }
+
+/// `HEX_SANDBOX_SNAPS=<folder>` writes the Transcription endpoint's Labs
+/// card in each state it can show, light and dark.
+#[test]
+#[cfg(target_os = "windows")]
+fn labs_endpoint_card_snapshots() {
+    let Some(folder) = std::env::var_os("HEX_SANDBOX_SNAPS") else {
+        return;
+    };
+    let folder = std::path::PathBuf::from(folder);
+    std::fs::create_dir_all(&folder).unwrap();
+    let Ok(gpu) = rune::render::Gpu::try_new(rune::render::Gpu::instance(), None) else {
+        eprintln!("skipping Labs snapshots: no GPU adapter");
+        return;
+    };
+    let size = (980.0, 360.0);
+    let scale = 2.0;
+    for (label, on, state) in [
+        ("off", false, labs::State::Listening),
+        ("listening", true, labs::State::Listening),
+        ("port-in-use", true, labs::State::PortInUse),
+        ("failed", true, labs::State::Failed),
+    ] {
+        for dark in [false, true] {
+            let mut settings = AppSettings::default();
+            settings.labs.transcription_endpoint = on;
+            let mut state_ui = Ui::with(settings, Service::Fixture(Vec::new()));
+            state_ui.endpoint = state;
+            let env = Env {
+                system_dark: dark,
+                scale,
+            };
+            let text = TextSystem::new(rune_theme_opencode::FONTS, rune_theme_opencode::FAMILIES);
+            let mut rt = Runtime::with_text(state_ui, view, size, env, text);
+            rt.set_srgb_blend(true);
+            rt.poll = Some(Ui::poll);
+            rt.on_key = Some(Ui::on_key);
+            rt.state.pane = Pane::Labs;
+            let width = (size.0 * scale) as u32;
+            let height = (size.1 * scale) as u32;
+            let pixels = crate::rune_ui::offscreen::draw(&gpu, &mut rt, width, height);
+            let theme = if dark { "dark" } else { "light" };
+            let path = folder.join(format!("labs-endpoint-{label}-{theme}.png"));
+            rune::render::write_png(&path, width, height, &pixels).unwrap();
+            println!("wrote {}", path.display());
+        }
+    }
+}
+
+/// Every control in the card has a name, and the two Copy buttons are told
+/// apart by the row that holds them.
+#[test]
+fn the_endpoint_card_names_its_controls() {
+    let mut rt = runtime();
+    rt.state.pane = Pane::Labs;
+    rt.state.settings.labs.transcription_endpoint = true;
+    rt.settle_all();
+    rt.frame(0.0);
+    let tree = rt.accessibility_json();
+    let all = nodes(&tree);
+    let named = |key: &str| {
+        all.iter()
+            .find(|(_, node)| node["key"].as_str() == Some(key))
+            .unwrap_or_else(|| panic!("{key} is missing"))
+            .1["name"]
+            .as_str()
+            .unwrap_or_default()
+            .to_owned()
+    };
+    assert_eq!(named("server-url"), "Server URL: http://127.0.0.1:8787/v1");
+    assert_eq!(
+        named("endpoint-path"),
+        "Endpoint path: /audio/transcriptions"
+    );
+    assert_eq!(named("server-url-copy"), "Copy");
+    assert_eq!(named("endpoint-path-copy"), "Copy");
+    assert_eq!(
+        named("lab-transcription-endpoint"),
+        "Transcription endpoint for other apps"
+    );
+}

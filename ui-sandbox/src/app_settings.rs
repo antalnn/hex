@@ -290,6 +290,7 @@ pub struct LabsSettings {
     pub terminal_paste_shortcut: bool,
     pub gnome_clipboard_restore: bool,
     pub vocabulary_biasing: bool,
+    pub transcription_endpoint: bool,
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]

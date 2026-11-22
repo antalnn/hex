@@ -39,11 +39,13 @@ use platform::{Capabilities, Os, PlatformRequest, PlatformState};
 pub(crate) use rune::ScrollSpec;
 use settings::Capture;
 
-/// One pane of the window. The sandbox carries General and the Models cards.
+/// One pane of the window. The sandbox carries General, the Models cards,
+/// and one Labs card.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum Pane {
     General,
     Models,
+    Labs,
 }
 
 impl Pane {
@@ -51,6 +53,7 @@ impl Pane {
         match self {
             Self::General => tr("General"),
             Self::Models => tr("Models"),
+            Self::Labs => tr("Labs"),
         }
     }
 
@@ -58,6 +61,7 @@ impl Pane {
         match self {
             Self::General => "nav-general",
             Self::Models => "nav-models",
+            Self::Labs => "nav-labs",
         }
     }
 }
@@ -127,6 +131,8 @@ pub(crate) struct Ui {
     pub(crate) general_search: TextEdit,
     pub(crate) advanced: Vec<Pane>,
     pub(crate) labs_open: bool,
+    /// Where the Transcription endpoint's card says the listener stands.
+    pub(crate) endpoint: labs::State,
     pub(crate) capture: Capture,
     pub(crate) vocabulary: vocabulary::VocabularyEditor,
     pub(crate) picker: picker::Picker,
@@ -168,6 +174,7 @@ impl Ui {
             general_search: TextEdit::default(),
             advanced: Vec::new(),
             labs_open: false,
+            endpoint: labs::State::Listening,
             capture: Capture::Idle,
             vocabulary: vocabulary::VocabularyEditor::default(),
             picker: picker::Picker::default(),
@@ -289,17 +296,22 @@ pub(crate) fn view(ui: &Ui, cx: &mut Cx<Ui>) -> El {
             }
             body
         }
+        Pane::Labs => labs::pane(ui, p, &mut layer),
     };
     let switch = controls::segmented(
         p,
         "sandbox-pane",
-        &[tr("General"), tr("Models")],
-        usize::from(ui.pane == Pane::Models),
+        &[tr("General"), tr("Models"), tr("Labs")],
+        match ui.pane {
+            Pane::General => 0,
+            Pane::Models => 1,
+            Pane::Labs => 2,
+        },
         |ui: &mut Ui, index| {
-            ui.pane = if index == 0 {
-                Pane::General
-            } else {
-                Pane::Models
+            ui.pane = match index {
+                0 => Pane::General,
+                1 => Pane::Models,
+                _ => Pane::Labs,
             };
         },
     );
