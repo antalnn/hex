@@ -20,6 +20,7 @@ the other supported systems.
   - [Application exclusion](#application-exclusion)
   - [Paste where the dictation started](#paste-where-the-dictation-started)
   - [Rewrite semantic match](#rewrite-semantic-match)
+  - [Transcription endpoint](#transcription-endpoint)
   - [Other changes](#other-changes)
 - [Getting started](#getting-started)
 - [Build and run](#build-and-run)
@@ -97,6 +98,31 @@ your saved prompts by meaning instead of by name.
 With it off, a full sentence may not match a prompt named `structure`.
 
 With it on, the closest prompt applies; unmatched instructions run as spoken.
+
+### Transcription endpoint
+
+Other apps on your PC can send audio to Hex and get back the finished text.
+Turn on `Transcription endpoint for other apps` in Labs (it is off by default).
+Hex then listens on `http://127.0.0.1:8787/v1` and answers OpenAI-style
+`POST /v1/audio/transcriptions` requests, so any tool that supports an
+OpenAI-compatible speech provider can use it.
+
+For OpenChamber, open Settings > Speech recognition, choose the Server provider
+and set:
+- Server URL: `http://127.0.0.1:8787/v1`
+- Endpoint path: `/audio/transcriptions`
+- API key: empty
+- Model: any name; Hex uses the model selected in General
+
+The audio goes through the same steps as a dictation in Global mode:
+vocabulary and replacements, corrections, AI cleanup and your output
+transformations. The text comes back to the app. Nothing is pasted, saved to
+History or copied to the clipboard, and Hex keeps no audio.
+
+The card in Labs shows whether Hex is listening and has Copy buttons for the
+URL and the path. If another program already uses port 8787, the card says so.
+Only programs on your PC can reach the endpoint, and the port is fixed. Hex
+handles one request at a time. This is a Windows-only feature.
 
 ### Other changes
 
