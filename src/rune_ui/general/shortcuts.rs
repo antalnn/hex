@@ -2,6 +2,7 @@
 //! recorder, its Reset action, and what the desktop's shortcuts portal
 //! granted.
 
+use super::controls::icon_button;
 use super::*;
 use crate::app_settings::HotkeyBinding;
 
@@ -21,6 +22,19 @@ pub(in crate::rune_ui) fn shortcut_rows(
         .gap(4.0)
         .center_y()
         .child(keys_button(ui, p, target));
+    // The optional shortcuts also clear with a click, as well as with the
+    // recorder's Backspace.
+    if s::can_turn_off(target) && s::binding(&ui.settings, target).is_some() {
+        control = control.child(icon_button(
+            p,
+            &format!("clear-{key}"),
+            &rune_theme_opencode::icons::TRASH,
+            tr("Clear shortcut"),
+            move |ui: &mut Ui| {
+                ui.update(|settings| s::turn_off(settings, target));
+            },
+        ));
+    }
     // Paste last dictation's default, offered while the shortcut is
     // something else or off. Cancel's default, Escape, can't be recorded
     // (Escape ends the recorder), so Reset is how it comes back.
