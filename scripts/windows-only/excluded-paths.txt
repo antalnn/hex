@@ -1,0 +1,76 @@
+# Paths the Windows-only branch does not carry, as git pathspecs, one per line.
+# '#' starts a comment. Approved by Anthony on 2026-11-22; used by
+# prune-after-merge.mjs (see scripts/windows-only/README in the fork's docs).
+
+# Linux and macOS code in src/ and crates/capture
+src/linux.rs
+src/linux
+src/macos_rune.rs
+src/macos_rune
+src/application_catalog/linux.rs
+src/application_catalog/macos.rs
+src/audio/hex_microphone/macos_hal.rs
+src/caps_lock_dictation/macos.rs
+src/keyboard_input_sources/macos.rs
+src/meeting/linux.rs
+src/meeting/macos.rs
+src/microphone_activity/linux.rs
+src/net/proxy/macos.rs
+src/rune_hud/macos.rs
+src/updater/linux.rs
+src/updater/macos.rs
+resources/linux
+crates/capture/src/capture/linux.rs
+crates/capture/src/capture/macos.rs
+crates/capture/src/linux
+crates/capture/helper
+
+# iOS and Android apps
+ios
+android
+
+# Linux and macOS packaging, flake and scripts
+nix
+flake.nix
+flake.lock
+packaging/aur
+packaging/homebrew
+packaging/linux
+packaging/macos
+packaging/anomaly.hex.desktop
+packaging/hex.service
+scripts/build-app.sh
+scripts/build-capsule-playground.sh
+scripts/build-hex-microphone-driver.sh
+scripts/build-linux-release.sh
+scripts/build-linux.sh
+scripts/build-service-app.sh
+scripts/check-nix-git-pins.py
+scripts/install-app.sh
+scripts/install-linux.sh
+scripts/macos-signing.sh
+scripts/notarize-app.sh
+scripts/package-linux.sh
+scripts/prepare-service-app.sh
+scripts/publish-app-mirror.sh
+scripts/release-app.sh
+scripts/release-aur.sh
+scripts/release-homebrew.sh
+scripts/smoke-macos-app.sh
+scripts/smoke-service-app.sh
+scripts/sync-meetings-mirror.sh
+scripts/test-app-identity.sh
+scripts/test-check-nix-git-pins.py
+scripts/test-install-linux-release.sh
+scripts/test-linux-dictation.sh
+scripts/test-linux-service.py
+scripts/test-wayland-paste.sh
+scripts/validate-app.sh
+scripts/check-onboarding.sh
+
+# Linux golden images
+tests/golden
+
+# Kept: read by tests that are not cfg-gated (the i18n SOURCES list, apple_cleanup)
+:(exclude)ios/HEXMobile/TranscriptCleanup.swift
+:(exclude)src/macos_rune/status_item.rs
