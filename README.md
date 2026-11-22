@@ -7,6 +7,8 @@ cleanly, so it stays up-to-date with the official release while the fork contain
 quality-of-life changes. The core transcription, models, meetings and dictation pipeline are the
 upstream app.
 
+Work continues on the `personal-windows-only` branch; this branch stays as the full-tree reference.
+
 It is made primarily for Windows and features like [Application exclusion](#application-exclusion)
 and [Paste where the dictation started](#paste-where-the-dictation-started) will not work on
 the other supported systems.
