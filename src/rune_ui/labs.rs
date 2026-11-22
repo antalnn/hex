@@ -701,6 +701,7 @@ fn rows(ui: &Ui) -> Vec<Row> {
     });
     rows.push(row(Feature::ApiProcessing, None));
     rows.push(row(Feature::ApiTimestamps, None));
+    rows.push(row(Feature::TranscriptionEndpoint, None));
     rows.push(row(Feature::SpeakersOnly, None));
     rows.push(row(Feature::KeepMicrophoneOpen, Some(&TIMER)));
     let ultra_locked = Feature::ParakeetUltra.managed().is_none()
@@ -922,6 +923,7 @@ fn row_key(lab: Lab) -> &'static str {
         Feature::YoloMode => "lab-yolo-mode",
         Feature::ApiProcessing => "lab-api-processing",
         Feature::ApiTimestamps => "lab-api-timestamps",
+        Feature::TranscriptionEndpoint => "lab-transcription-endpoint",
         Feature::SpeakersOnly => "lab-speakers-only",
         Feature::KeepMicrophoneOpen => "lab-keep-microphone-open",
         Feature::VoicePrompt => "lab-voice-prompt",

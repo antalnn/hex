@@ -186,6 +186,9 @@ impl Feature {
             Self::ApiTimestamps => {
                 "Let apps using Hex's local API ask when each word or phrase starts and ends, as the speech model heard them"
             }
+            Self::TranscriptionEndpoint => {
+                "Listen on this PC only (127.0.0.1:8787) for OpenAI-style audio uploads from apps such as OpenChamber, and answer with the text a paste in Global mode would give (Windows)"
+            }
             Self::SpeakersOnly => {
                 "Apply \"While dictating\" only when sound plays through speakers; headphones are left alone"
             }

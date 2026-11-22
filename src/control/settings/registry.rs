@@ -793,6 +793,12 @@ pub(super) const KEYS: &[Key] = &[
          in a transcript, as the speech model heard them (timestamps=segment|word)",
     ),
     key(
+        "labs.transcription_endpoint",
+        Kind::Bool,
+        "Labs: Hex listens on 127.0.0.1:8787 for OpenAI-style audio uploads from apps on this PC, \
+         such as OpenChamber, and answers with the text Global mode produces (Windows)",
+    ),
+    key(
         "labs.speakers_only",
         Kind::Bool,
         "Labs: While dictating applies only while the default output is speakers; headphones are \

@@ -73,6 +73,7 @@ impl Feature {
             | Self::RewriteSnippetMatch
             | Self::ApiProcessing
             | Self::ApiTimestamps
+            | Self::TranscriptionEndpoint
             | Self::SpeakersOnly
             | Self::PauseMenu
             | Self::CalendarMenu
@@ -161,6 +162,7 @@ impl Feature {
             Self::LearnFromCorrections | Self::AnnotateAgentTools | Self::AnnotateAgentInstall => {
                 20261121
             }
+            Self::TranscriptionEndpoint => 20261122,
         }
     }
 
@@ -242,7 +244,8 @@ impl Feature {
             Self::TerminalPaste
             | Self::ShareShortcut
             | Self::OpenCodeInWsl
-            | Self::RewriteSnippetMatch => WINDOWS,
+            | Self::RewriteSnippetMatch
+            | Self::TranscriptionEndpoint => WINDOWS,
             Self::SectionKeyAlone => MACOS_LINUX,
             Self::MicrophoneKeyAlone => MACOS,
             Self::GnomeClipboardRestore
@@ -381,6 +384,7 @@ impl Feature {
             Self::OpenCodeInWsl => "opencode-in-wsl",
             Self::ApiProcessing => "api-processing",
             Self::ApiTimestamps => "api-timestamps",
+            Self::TranscriptionEndpoint => "transcription-endpoint",
             Self::SpeakersOnly => "speakers-only",
             Self::PauseMenu => "pause-menu",
             Self::VoicePrompt => "voice-prompt",
@@ -466,6 +470,7 @@ impl Feature {
             Self::OpenCodeInWsl => "labs.opencode_in_wsl",
             Self::ApiProcessing => "labs.api_processing",
             Self::ApiTimestamps => "labs.api_timestamps",
+            Self::TranscriptionEndpoint => "labs.transcription_endpoint",
             Self::SpeakersOnly => "labs.speakers_only",
             Self::PauseMenu => "labs.pause_menu",
             Self::VoicePrompt => "labs.voice_prompt",

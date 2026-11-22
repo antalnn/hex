@@ -95,6 +95,8 @@ pub(crate) struct WindowsDesktopHost {
     foreground: ForeignWindow,
     /// The local API's `/dictations` controls, for whichever listener runs.
     dictations: crate::dictation::service::DictationQueue,
+    /// Labs › Transcription endpoint: the loopback listener for other apps.
+    endpoint: crate::windows::endpoint_host::EndpointHost,
 }
 
 /// Names the event that marks the running Hex app in this login session.
@@ -246,6 +248,10 @@ impl WindowsDesktopHost {
                 .then(|| crate::transcription::app_model_switching::startup_choice(&settings))
                 .flatten(),
         );
+        let endpoint = crate::windows::endpoint_host::EndpointHost::new(
+            crate::local_api::processing::dictation_processor(processing.clone()),
+            &settings,
+        );
         let mut host = Self {
             event_path,
             event_reader,
@@ -276,6 +282,7 @@ impl WindowsDesktopHost {
             local_model,
             foreground: ForeignWindow::default(),
             dictations,
+            endpoint,
         };
         crate::transcription::models::delete_set_aside();
         host.refresh_personal_commands_host();
@@ -664,6 +671,7 @@ impl WindowsDesktopHost {
                 crate::dictation::modes::ModeRuntime::from_settings(current);
         }
         self.sync_local_model_port();
+        self.endpoint.apply(current);
         if previous.ui_language != current.ui_language {
             crate::desktop::i18n::apply(current.ui_language.as_deref());
         }

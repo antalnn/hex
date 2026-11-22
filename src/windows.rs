@@ -2,6 +2,7 @@ pub(crate) mod app;
 pub(crate) mod audio_control;
 pub(crate) mod context;
 pub(crate) mod dictation;
+pub(crate) mod endpoint_host;
 pub(crate) mod gpu_fallback;
 pub(crate) mod input;
 pub(crate) mod login_item;

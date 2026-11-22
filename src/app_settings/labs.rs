@@ -231,6 +231,9 @@ pub struct LabsSettings {
     /// The local API's `timestamps=segment|word` returns the speech model's
     /// own segment and word times.
     pub api_timestamps: bool,
+    /// Hex listens on `127.0.0.1:8787` for OpenAI-style audio uploads from
+    /// apps on this PC and answers with Global mode's text (Windows).
+    pub transcription_endpoint: bool,
     /// "While dictating" applies only while the default output is speakers;
     /// headphones are left alone.
     pub speakers_only: bool,
@@ -435,6 +438,7 @@ impl Default for LabsSettings {
             annotate_agent_install: false,
             api_processing: false,
             api_timestamps: false,
+            transcription_endpoint: false,
             speakers_only: false,
             app_model_switching: false,
             calendar_menu: false,

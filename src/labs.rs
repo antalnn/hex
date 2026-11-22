@@ -178,6 +178,7 @@ impl Feature {
             Self::OpenCodeInWsl => settings.labs.opencode_in_wsl,
             Self::ApiProcessing => settings.labs.api_processing,
             Self::ApiTimestamps => settings.labs.api_timestamps,
+            Self::TranscriptionEndpoint => settings.labs.transcription_endpoint,
             Self::SpeakersOnly => settings.labs.speakers_only,
             Self::CalendarMenu => settings.labs.calendar_menu,
             Self::CalendarSelectAll => settings.labs.calendar_bulk_select,
@@ -265,6 +266,7 @@ impl Feature {
             &mut labs.opencode_in_wsl,
             &mut labs.api_processing,
             &mut labs.api_timestamps,
+            &mut labs.transcription_endpoint,
             &mut labs.speakers_only,
             &mut labs.calendar_menu,
             &mut labs.calendar_bulk_select,
@@ -365,6 +367,7 @@ impl Feature {
             Self::OpenCodeInWsl => settings.labs.opencode_in_wsl = on,
             Self::ApiProcessing => settings.labs.api_processing = on,
             Self::ApiTimestamps => settings.labs.api_timestamps = on,
+            Self::TranscriptionEndpoint => settings.labs.transcription_endpoint = on,
             Self::SpeakersOnly => settings.labs.speakers_only = on,
             Self::CalendarMenu => settings.labs.calendar_menu = on,
             Self::CalendarSelectAll => settings.labs.calendar_bulk_select = on,
@@ -705,6 +708,17 @@ fn drop_transcribe_enabled(settings: &LabsSettings) -> bool {
     settings.drop_transcribe
         && Feature::DropTranscribe.shipped()
         && Feature::DropTranscribe.managed().is_none()
+}
+
+/// Whether `settings` turn on Labs › Transcription endpoint in this build, on
+/// this OS, and before no managed lock holds it off. The app host reads the
+/// saved switch here when it starts or stops the listener, so the state word
+/// needs no bit for it.
+pub(crate) fn transcription_endpoint_enabled(settings: &LabsSettings) -> bool {
+    settings.transcription_endpoint
+        && Feature::TranscriptionEndpoint.shipped()
+        && Feature::TranscriptionEndpoint.on_this_os()
+        && Feature::TranscriptionEndpoint.managed().is_none()
 }
 
 /// Whether `settings` turn on Labs › Copy dictation audio in this build,

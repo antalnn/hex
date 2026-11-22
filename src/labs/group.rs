@@ -98,6 +98,7 @@ impl Feature {
             | Self::OpenCodeInWsl
             | Self::ApiProcessing
             | Self::ApiTimestamps
+            | Self::TranscriptionEndpoint
             | Self::YoloMode
             | Self::CursorContext
             | Self::VoicePrompt

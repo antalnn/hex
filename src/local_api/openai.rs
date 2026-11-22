@@ -7,16 +7,63 @@
 //! program that can reach loopback is already on this PC. It is not the
 //! local API, which keeps its own listener, token and discovery file.
 
+mod backend;
 mod multipart;
 mod reply;
+mod server;
 
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU8, Ordering};
 
 use serde_json::json;
 
 use super::http::HttpResponse;
+pub(crate) use backend::Backend;
 use reply::Format;
 pub(crate) use reply::{Failure, Outcome};
+pub(crate) use server::{Endpoint, StartError};
+
+/// The one port the endpoint listens on, always on `127.0.0.1`.
+pub(crate) const PORT: u16 = 8787;
+
+/// Where the endpoint stands, for Labs' card.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum Status {
+    /// The lab is off, so nothing listens.
+    Off,
+    Listening,
+    /// The lab is on, but another program holds the port.
+    PortInUse,
+    Failed,
+}
+
+static STATUS: AtomicU8 = AtomicU8::new(0);
+
+/// The running app's listener state; [`Status::Off`] where none runs. Labs'
+/// card reads it once the sandbox render is approved (plan item 4).
+#[cfg_attr(not(test), allow(dead_code))]
+pub(crate) fn status() -> Status {
+    match STATUS.load(Ordering::Acquire) {
+        1 => Status::Listening,
+        2 => Status::PortInUse,
+        3 => Status::Failed,
+        _ => Status::Off,
+    }
+}
+
+/// Records the state the host's listener reached. Only the app host calls
+/// this, so tests that start their own listener never change it.
+pub(crate) fn set_status(status: Status) {
+    STATUS.store(
+        match status {
+            Status::Off => 0,
+            Status::Listening => 1,
+            Status::PortInUse => 2,
+            Status::Failed => 3,
+        },
+        Ordering::Release,
+    );
+}
 
 /// One request, read in full: the local API's `read_request` and
 /// `read_body_bounded` supply the parts.

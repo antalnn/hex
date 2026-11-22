@@ -69,6 +69,7 @@ impl Feature {
             Self::OpenCodeInWsl => "OpenCode in WSL",
             Self::ApiProcessing => "Process API transcripts",
             Self::ApiTimestamps => "Timestamps in API transcripts",
+            Self::TranscriptionEndpoint => "Transcription endpoint for other apps",
             Self::SpeakersOnly => "Only on speakers",
             Self::MoreDictationShortcuts => "More dictation shortcuts",
             Self::PauseMenu => "Pause from menu bar",
@@ -260,6 +261,9 @@ impl Feature {
             }
             Self::ApiTimestamps => {
                 "Apps that use Hex's local API can ask when each word or phrase starts and ends"
+            }
+            Self::TranscriptionEndpoint => {
+                "Lets apps on this PC, such as OpenChamber, send audio to Hex and get the finished text back"
             }
             Self::SpeakersOnly => {
                 "Apply \"While dictating\" only when sound plays through speakers. Headphones are left alone."

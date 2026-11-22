@@ -667,6 +667,17 @@
       "title": "Timestamps in API transcripts"
     },
     {
+      "added": "2026-11-22",
+      "group": "output",
+      "groupTitle": "Output",
+      "id": "transcription-endpoint",
+      "oses": [
+        "windows"
+      ],
+      "summary": "Lets apps on this PC, such as OpenChamber, send audio to Hex and get the finished text back",
+      "title": "Transcription endpoint for other apps"
+    },
+    {
       "added": "2026-11-09",
       "group": "dictation",
       "groupTitle": "Dictation",

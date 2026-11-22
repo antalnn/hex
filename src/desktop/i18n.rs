@@ -13,6 +13,7 @@ use strings::TRANSLATIONS;
 
 mod agents;
 mod clock;
+mod endpoint;
 mod failures;
 mod french;
 mod history;
@@ -384,6 +385,7 @@ pub(super) fn all_translations() -> impl Iterator<Item = &'static (&'static str,
         .chain(menu::TRANSLATIONS)
         .chain(history::TRANSLATIONS)
         .chain(screenshots::TRANSLATIONS)
+        .chain(endpoint::TRANSLATIONS)
 }
 
 #[cfg(test)]
