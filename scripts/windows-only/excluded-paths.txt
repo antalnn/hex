@@ -1,6 +1,6 @@
 # Paths the Windows-only branch does not carry, as git pathspecs, one per line.
 # '#' starts a comment. Approved by Anthony on 2026-11-22; used by
-# prune-after-merge.mjs (see scripts/windows-only/README in the fork's docs).
+# prune-after-merge.mjs in this folder.
 
 # Linux and macOS code in src/ and crates/capture
 src/linux.rs

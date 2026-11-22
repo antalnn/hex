@@ -166,7 +166,8 @@ This branch drops whole Linux, macOS, iOS and Android folders and files, listed 
 so a merge stays cheap: the script in step 3 removes the excluded paths again, and
 `node scripts/windows-only/prune-after-merge.mjs --check` lists any that are still tracked. Plain
 `cargo fmt` fails here because it follows modules for the deleted platforms, which is why step 5
-uses `--fmt-check`.
+uses `--fmt-check`. For the same reason `scripts/check` stops at its fmt stage on this branch; run
+the commands in step 5 instead.
 
 ## License
 
