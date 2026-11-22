@@ -884,7 +884,6 @@ pub(super) fn button_enabled(
 }
 
 /// An icon-only Secondary button the height of [`button`].
-#[cfg(target_os = "macos")]
 pub(super) fn icon_button(
     p: Paint,
     key: &str,
